@@ -585,6 +585,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="交互式批量生成并写入记录")
     parser.add_argument("--model", default=DEFAULT_MODEL, help="Gemini 模型名")
     parser.add_argument("--dry-run", action="store_true", help="仅规划，不实际写入")
+    parser.add_argument("--app-id", default="", help="可选，指定应用ID（传入后跳过应用选择交互）")
+    parser.add_argument("--worksheet-ids", default="", help="可选，工作表ID列表（逗号分隔）或 all（跳过工作表选择交互）")
+    parser.add_argument("--rows-per-table", type=int, default=0, help="可选，每张表创建记录数（正整数，传入后跳过数量输入）")
+    parser.add_argument("--delete-history", default="", help="可选，是否删除历史记录：y 或 n（传入后跳过删除确认）")
     args = parser.parse_args()
 
     app_rows = load_app_auth_rows()
@@ -614,26 +618,49 @@ def main() -> None:
     if not apps:
         raise RuntimeError("没有可用应用")
 
-    print("可选应用：")
-    print("序号 | 应用名称 | 应用ID")
-    for i, app in enumerate(apps, start=1):
-        print(f"{i}. {app['appName']} | {app['appId']}")
+    if args.app_id.strip():
+        target = next((a for a in apps if a["appId"] == args.app_id.strip()), None)
+        if not target:
+            raise ValueError(f"--app-id 未匹配到应用: {args.app_id.strip()}")
+        picked_apps = [target]
+    else:
+        print("可选应用：")
+        print("序号 | 应用名称 | 应用ID")
+        for i, app in enumerate(apps, start=1):
+            print(f"{i}. {app['appName']} | {app['appId']}")
 
-    picked_app_idx = choose_indexes(
-        "请选择应用：默认Y全选；输入序号(如 1,2,3 / 1.2.3)；其他任意输入取消: ",
-        len(apps),
-    )
-    if not picked_app_idx:
-        print("已取消。")
-        return
-    picked_apps = [apps[i - 1] for i in picked_app_idx]
+        picked_app_idx = choose_indexes(
+            "请选择应用：默认Y全选；输入序号(如 1,2,3 / 1.2.3)；其他任意输入取消: ",
+            len(apps),
+        )
+        if not picked_app_idx:
+            print("已取消。")
+            return
+        picked_apps = [apps[i - 1] for i in picked_app_idx]
 
     all_selected_targets = []
+    worksheet_id_filter = str(args.worksheet_ids or "").strip()
+    worksheet_id_set = set()
+    if worksheet_id_filter and worksheet_id_filter.lower() != "all":
+        worksheet_id_set = {x.strip() for x in worksheet_id_filter.split(",") if x.strip()}
+
     for app in picked_apps:
         ws_list = fetch_worksheets(app["appKey"], app["sign"])
         if not ws_list:
             print(f"应用无工作表，跳过: {app['appName']} ({app['appId']})")
             continue
+        if worksheet_id_filter.lower() == "all":
+            for ws in ws_list:
+                all_selected_targets.append({"app": app, "worksheet": ws})
+            continue
+        if worksheet_id_set:
+            picked = [ws for ws in ws_list if ws["workSheetId"] in worksheet_id_set]
+            if not picked:
+                raise ValueError(f"--worksheet-ids 在应用[{app['appName']}]下未匹配到任何工作表")
+            for ws in picked:
+                all_selected_targets.append({"app": app, "worksheet": ws})
+            continue
+
         print(f"\n应用：{app['appName']} ({app['appId']})")
         print("序号 | 工作表名称 | 工作表ID")
         for i, ws in enumerate(ws_list, start=1):
@@ -653,15 +680,21 @@ def main() -> None:
         print("没有选中的工作表，结束。")
         return
 
-    while True:
-        cnt_raw = input("请输入每张表要创建的记录数量（正整数）: ").strip()
-        if cnt_raw.isdigit() and int(cnt_raw) > 0:
-            row_count = int(cnt_raw)
-            break
-        print("输入无效，请输入正整数。")
+    if args.rows_per_table and args.rows_per_table > 0:
+        row_count = int(args.rows_per_table)
+    else:
+        while True:
+            cnt_raw = input("请输入每张表要创建的记录数量（正整数）: ").strip()
+            if cnt_raw.isdigit() and int(cnt_raw) > 0:
+                row_count = int(cnt_raw)
+                break
+            print("输入无效，请输入正整数。")
 
     # 最后一个问题：是否清空所选应用 + 所选工作表下历史记录
-    delete_choice = input("最后一个问题：是否删除所选应用和所选表下的所有历史记录？输入 y 删除，任意键取消: ").strip()
+    if args.delete_history.strip():
+        delete_choice = args.delete_history.strip()
+    else:
+        delete_choice = input("最后一个问题：是否删除所选应用和所选表下的所有历史记录？输入 y 删除，任意键取消: ").strip()
     deleted_history_summary = {
         "enabled": False,
         "dry_run": args.dry_run,

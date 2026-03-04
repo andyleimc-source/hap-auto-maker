@@ -31,6 +31,7 @@ def run_step(cmd: list[str], title: str) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="一键执行：规划工作表布局 + 应用工作表布局")
     parser.add_argument("--app-index", type=int, default=0, help="可选，应用序号（免交互）")
+    parser.add_argument("--app-id", default="", help="可选，应用 ID（传入后跳过应用选择交互）")
     parser.add_argument("--requirements", default="", help="额外布局要求")
     parser.add_argument("--model", default="gemini-3-flash-preview", help="Gemini 模型名")
     parser.add_argument("--refresh-auth", action="store_true", help="应用布局前先刷新网页登录认证")
@@ -45,6 +46,8 @@ def main() -> None:
     cmd1 = [sys.executable, str(PLAN_SCRIPT), "--output", str(plan_output), "--model", args.model]
     if args.app_index > 0:
         cmd1.extend(["--app-index", str(args.app_index)])
+    if args.app_id:
+        cmd1.extend(["--app-id", args.app_id])
     if args.requirements:
         cmd1.extend(["--requirements", args.requirements])
     run_step(cmd1, "Step 1/2 规划字段布局")

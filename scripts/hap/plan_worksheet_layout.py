@@ -166,7 +166,13 @@ def discover_apps() -> List[dict]:
     return apps
 
 
-def pick_app_interactive(apps: List[dict], app_index: int = 0) -> dict:
+def pick_app_interactive(apps: List[dict], app_index: int = 0, app_id: str = "") -> dict:
+    if app_id.strip():
+        target = next((a for a in apps if a["appId"] == app_id.strip()), None)
+        if not target:
+            raise ValueError(f"--app-id 未匹配到应用: {app_id}")
+        return target
+
     print("可用应用：")
     print("序号 | 应用名称 | 应用ID")
     for i, app in enumerate(apps, start=1):
@@ -384,13 +390,14 @@ def normalize_plan(raw: dict, worksheet_brief: List[dict]) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description="交互式规划工作表字段布局（size/row/col）")
     parser.add_argument("--app-index", type=int, default=0, help="可选，应用序号（免交互）")
+    parser.add_argument("--app-id", default="", help="可选，应用 ID（传入后跳过应用选择交互）")
     parser.add_argument("--requirements", default="", help="额外布局要求")
     parser.add_argument("--model", default=DEFAULT_MODEL, help="Gemini 模型名")
     parser.add_argument("--output", default="", help="输出 JSON 文件路径")
     args = parser.parse_args()
 
     apps = discover_apps()
-    picked = pick_app_interactive(apps, app_index=args.app_index)
+    picked = pick_app_interactive(apps, app_index=args.app_index, app_id=args.app_id)
 
     app_id = picked["appId"]
     app_name = picked["appName"]

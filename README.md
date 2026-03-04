@@ -54,6 +54,15 @@ python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_create_rows.py
 python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_icon.py
 ```
 
+6. 需求驱动执行（先对话整理需求 -> 再按需求一键执行）
+- 需求对话脚本：`/Users/andy/Desktop/hap_auto/scripts/agent_collect_requirements.py`
+- 需求执行脚本：`/Users/andy/Desktop/hap_auto/scripts/execute_requirements.py`
+- 典型命令：
+```bash
+python3 /Users/andy/Desktop/hap_auto/scripts/agent_collect_requirements.py
+python3 /Users/andy/Desktop/hap_auto/scripts/execute_requirements.py --spec-json /Users/andy/Desktop/hap_auto/data/outputs/requirement_specs/requirement_spec_latest.json
+```
+
 
 三、主要单功能脚本（可用于后续合并/串联）
 
@@ -78,6 +87,7 @@ python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_icon.py
 3.4 造数与记录
 1. `pipeline_create_rows.py`：交互式造数总入口
 2. 关键能力：按依赖顺序创建记录、关联字段二阶段回填、人员字段默认写固定账号 ID、可选清理历史记录后再造数
+3. 非交互参数：支持 `--app-id --worksheet-ids --rows-per-table --delete-history`
 
 3.5 Gemini 相关
 1. `list_gemini_models.py`：列出可用模型
@@ -87,6 +97,10 @@ python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_icon.py
 
 3.6 认证相关
 1. `refresh_auth.py`：刷新网页登录态并更新 `auth_config.py`
+
+3.7 需求 Agent 与执行器
+1. `agent_collect_requirements.py`：终端与 Gemini 多轮对话，输入 `/done` 生成 `workflow_requirement_v1` JSON
+2. `execute_requirements.py`：读取需求 JSON，编排执行应用创建、工作表、icon、布局、导航、造数
 
 
 四、数据与结果目录（关键）
@@ -113,6 +127,10 @@ python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_icon.py
 - `/Users/andy/Desktop/hap_auto/data/outputs/row_seed_plans/`
 - `/Users/andy/Desktop/hap_auto/data/outputs/row_seed_results/`
 
+6. 需求与执行报告
+- `/Users/andy/Desktop/hap_auto/data/outputs/requirement_specs/`
+- `/Users/andy/Desktop/hap_auto/data/outputs/execution_runs/`
+
 
 五、当前开发任务状态
 
@@ -125,3 +143,5 @@ python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_icon.py
 7. 造数前历史记录清理：已完成
 8. 人员字段默认固定账号：已完成
 9. 应用导航风格修改：已完成
+10. 需求对话 Agent（生成标准需求 JSON）：已完成
+11. 需求执行引擎（按 JSON 编排全流程）：已完成

@@ -11,7 +11,7 @@ import json
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import requests
 
@@ -23,6 +23,7 @@ OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 APP_AUTH_DIR = OUTPUT_ROOT / "app_authorizations"
 WORKSHEET_PLAN_DIR = OUTPUT_ROOT / "worksheet_plans"
 WORKSHEET_CREATE_RESULT_DIR = OUTPUT_ROOT / "worksheet_create_results"
+ALLOWED_CARDINALITY = {"1-1", "1-N"}
 
 
 def latest_file(base_dir: Path, pattern: str) -> Optional[Path]:
@@ -197,6 +198,43 @@ def split_fields(fields: List[dict]) -> (List[dict], List[dict]):
     return normal, relation
 
 
+def build_relationship_rules(plan: dict) -> Dict[Tuple[str, str], dict]:
+    """
+    从规划 JSON 的 relationships 构建约束：
+    - 仅允许 1-1 / 1-N
+    - 同一对表（无序对）只保留一条关系规则
+    """
+    relationships = plan.get("relationships", [])
+    if not isinstance(relationships, list):
+        return {}
+
+    rules: Dict[Tuple[str, str], dict] = {}
+    for rel in relationships:
+        if not isinstance(rel, dict):
+            continue
+        src = str(rel.get("from", "")).strip()
+        dst = str(rel.get("to", "")).strip()
+        cardinality = str(rel.get("cardinality", "")).strip().upper()
+        if not src or not dst:
+            continue
+        if cardinality and cardinality not in ALLOWED_CARDINALITY:
+            raise ValueError(f"不支持的关系类型: {cardinality}（仅允许 1-1 或 1-N）")
+        # 缺省按 1-N 处理（常见业务场景）
+        if not cardinality:
+            cardinality = "1-N"
+        key = tuple(sorted((src, dst)))
+        if key in rules:
+            prev = rules[key]
+            if prev["cardinality"] != cardinality:
+                raise ValueError(
+                    f"关系规则冲突: {src}<->{dst} 同时出现 {prev['cardinality']} 与 {cardinality}"
+                )
+            # 同一对表重复定义时保留第一条
+            continue
+        rules[key] = {"from": src, "to": dst, "cardinality": cardinality}
+    return rules
+
+
 def create_worksheet(base_url: str, headers: dict, name: str, fields: List[dict]) -> dict:
     url = base_url.rstrip("/") + CREATE_WS_ENDPOINT
     payload = {
@@ -217,8 +255,11 @@ def add_relation_fields(
     worksheet_name: str,
     relation_fields: List[dict],
     name_to_id: Dict[str, str],
+    relationship_rules: Dict[Tuple[str, str], dict],
+    pair_added: set,
 ) -> dict:
     add_fields = []
+    skipped = []
     for fld in relation_fields:
         target_name = str(fld.get("relation_target", "")).strip()
         if not target_name:
@@ -226,6 +267,29 @@ def add_relation_fields(
         target_id = name_to_id.get(target_name)
         if not target_id:
             raise ValueError(f"工作表[{worksheet_name}] 字段[{fld.get('name')}] 目标表不存在: {target_name}")
+        pair_key = tuple(sorted((worksheet_name, target_name)))
+        rule = relationship_rules.get(pair_key)
+        if rule:
+            # 1-N 强制按规则方向创建，避免双向各建一个关联导致多对多
+            if rule["cardinality"] == "1-N":
+                if not (worksheet_name == rule["from"] and target_name == rule["to"]):
+                    skipped.append(
+                        {
+                            "field": str(fld.get("name", "")).strip() or "关联记录",
+                            "target": target_name,
+                            "reason": "direction_mismatch_for_1-N",
+                        }
+                    )
+                    continue
+        if pair_key in pair_added:
+            skipped.append(
+                {
+                    "field": str(fld.get("name", "")).strip() or "关联记录",
+                    "target": target_name,
+                    "reason": "duplicate_pair_skipped_to_avoid_many_to_many",
+                }
+            )
+            continue
 
         add_fields.append(
             {
@@ -237,9 +301,10 @@ def add_relation_fields(
                 "relation": {"showFields": [], "bidirectional": True},
             }
         )
+        pair_added.add(pair_key)
 
     if not add_fields:
-        return {"success": True, "data": {"worksheetId": worksheet_id}}
+        return {"success": True, "data": {"worksheetId": worksheet_id}, "skipped_relations": skipped}
 
     url = base_url.rstrip("/") + EDIT_WS_ENDPOINT.format(worksheet_id=worksheet_id)
     payload = {"addFields": add_fields}
@@ -247,6 +312,7 @@ def add_relation_fields(
     data = resp.json()
     if not data.get("success"):
         raise RuntimeError(f"补充关联字段失败 [{worksheet_name}]: {data}")
+    data["skipped_relations"] = skipped
     return data
 
 
@@ -287,6 +353,7 @@ def main() -> None:
     worksheets = plan.get("worksheets", [])
     if not isinstance(worksheets, list) or not worksheets:
         raise ValueError("规划 JSON 缺少 worksheets 列表")
+    relationship_rules = build_relationship_rules(plan)
 
     order = plan.get("creation_order", [])
     if isinstance(order, list) and order:
@@ -347,6 +414,7 @@ def main() -> None:
 
     # Phase 2: 回填关联字段
     relation_results = []
+    pair_added = set()
     for item in relations_todo:
         ws_name = item["name"]
         ws_id = item["worksheetId"]
@@ -360,6 +428,8 @@ def main() -> None:
             ws_name,
             relation_fields,
             name_to_id,
+            relationship_rules,
+            pair_added,
         )
         relation_results.append({"name": ws_name, "worksheetId": ws_id, "relation_fields_count": len(relation_fields), "result": result})
 

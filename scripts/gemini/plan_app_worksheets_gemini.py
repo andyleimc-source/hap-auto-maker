@@ -85,7 +85,7 @@ def build_prompt(app_name: str, business_context: str, extra_requirements: str) 
     }}
   ],
   "relationships": [
-    {{"from": "工作表A", "field": "关联字段名", "to": "工作表B", "cardinality": "1-1|1-N|N-N", "description": "关系说明"}}
+    {{"from": "工作表A", "field": "关联字段名", "to": "工作表B", "cardinality": "1-1|1-N", "description": "关系说明"}}
   ],
   "creation_order": ["按创建顺序排列的工作表名"],
   "notes": ["实施建议1", "实施建议2"]
@@ -98,7 +98,8 @@ def build_prompt(app_name: str, business_context: str, extra_requirements: str) 
 4) 当字段 type=SingleSelect 或 MultipleSelect 时，必须填写 option_values，长度 3-8，且每个值是可直接展示的“最终文案”。
 5) option_values 里的值禁止包含示例引导词或模糊词，如：`如`、`例如`、`比如`、`等`、`等等`、`其他等`。
 6) option_values 每个值需为短语（建议 2-8 个字），且同字段内不得重复。
-7) 输出为合法 JSON。
+7) 明确禁止 N-N（多对多）关系，只允许 1-1 或 1-N。
+8) 输出为合法 JSON。
 """.strip()
 
 

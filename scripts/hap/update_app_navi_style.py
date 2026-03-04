@@ -142,6 +142,8 @@ def main() -> None:
     parser.add_argument("--refresh-auth", action="store_true", help="执行前先刷新 Cookie/Authorization")
     parser.add_argument("--headless", action="store_true", help="配合 --refresh-auth 使用，无头模式")
     parser.add_argument("--dry-run", action="store_true", help="仅打印请求，不实际调用")
+    parser.add_argument("--app-id", default="", help="可选，指定 appId（传入后跳过应用选择交互）")
+    parser.add_argument("--pc-navi-style", type=int, default=None, help="可选，指定 pcNaviStyle（传入后跳过样式输入交互）")
     args = parser.parse_args()
 
     if args.refresh_auth:
@@ -177,23 +179,31 @@ def main() -> None:
     if not apps:
         raise RuntimeError("授权记录不可用，无法获取应用列表")
 
-    print("可选应用：")
-    print("序号 | 应用名称 | 应用ID")
-    for i, app in enumerate(apps, start=1):
-        print(f"{i}. {app['name']} | {app['appId']}")
+    if args.app_id.strip():
+        app = next((x for x in apps if x["appId"] == args.app_id.strip()), None)
+        if not app:
+            raise ValueError(f"未找到 appId={args.app_id.strip()} 的应用授权记录")
+    else:
+        print("可选应用：")
+        print("序号 | 应用名称 | 应用ID")
+        for i, a in enumerate(apps, start=1):
+            print(f"{i}. {a['name']} | {a['appId']}")
 
-    pick_raw = input("请输入要编辑的应用序号: ").strip()
-    if not pick_raw.isdigit():
-        print("输入无效，已取消。")
-        return
-    idx = int(pick_raw)
-    if idx < 1 or idx > len(apps):
-        print("序号超出范围，已取消。")
-        return
-    app = apps[idx - 1]
+        pick_raw = input("请输入要编辑的应用序号: ").strip()
+        if not pick_raw.isdigit():
+            print("输入无效，已取消。")
+            return
+        idx = int(pick_raw)
+        if idx < 1 or idx > len(apps):
+            print("序号超出范围，已取消。")
+            return
+        app = apps[idx - 1]
 
-    style_raw = input("请输入 pcNaviStyle（默认 1，回车直接使用默认）: ")
-    pc_navi_style = parse_style_input(style_raw)
+    if args.pc_navi_style is not None:
+        pc_navi_style = parse_style_input(str(args.pc_navi_style))
+    else:
+        style_raw = input("请输入 pcNaviStyle（默认 1，回车直接使用默认）: ")
+        pc_navi_style = parse_style_input(style_raw)
 
     payload = {
         "appId": app["appId"],
@@ -259,4 +269,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
