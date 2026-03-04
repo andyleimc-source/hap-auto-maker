@@ -29,10 +29,13 @@ PLAN_DIR = OUTPUT_ROOT / "row_seed_plans"
 RESULT_DIR = OUTPUT_ROOT / "row_seed_results"
 GEMINI_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "gemini_auth.json"
 DEFAULT_MODEL = "gemini-3-flash-preview"
+DEFAULT_COLLABORATOR_ACCOUNT_ID = "a020cd58-b50b-4fa2-b33c-7dd877c805bd"
 
 APP_INFO_URL = "https://api.mingdao.com/v3/app"
 WORKSHEET_DETAIL_URL = "https://api.mingdao.com/v3/app/worksheets/{worksheet_id}"
 BATCH_CREATE_URL = "https://api.mingdao.com/v3/app/worksheets/{worksheet_id}/rows/batch"
+PATCH_ROW_URL = "https://api.mingdao.com/v3/app/worksheets/{worksheet_id}/rows/{row_id}"
+ROWS_LIST_URL = "https://api.mingdao.com/v3/app/worksheets/{worksheet_id}/rows/list"
 
 
 def now_ts() -> str:
@@ -224,6 +227,7 @@ def simplify_field(field: dict) -> dict:
         "id": str(field.get("id", "")).strip(),
         "name": str(field.get("name", "")).strip(),
         "type": field_type,
+        "subType": int(field.get("subType", 0) or 0),
         "required": bool(field.get("required", False)),
         "readOnly": bool(field.get("isReadOnly", False)),
         "hidden": bool(field.get("isHidden", False)),
@@ -263,7 +267,8 @@ def build_gemini_prompt(app_name: str, worksheet_name: str, row_count: int, fiel
    - SingleSelect: 传 option 的 key（字符串）
    - MultipleSelect: 传 option key 数组
    - Date/DateTime: 传 YYYY-MM-DD 或 YYYY-MM-DD HH:mm
-   - Collaborator/Relation: 传 ID 数组（若无法确定可留空数组）
+   - Collaborator: 传 accountId 数组（例如 ["{DEFAULT_COLLABORATOR_ACCOUNT_ID}"]）
+   - Relation: 传 rowId 数组（本脚本后续会回填，阶段A可留空数组）
    - Checkbox: 0 或 1
 3) 对 required=true 的字段必须给值。
 4) 不要输出无关字段。
@@ -312,7 +317,10 @@ def normalize_value_by_type(value: Any, field: dict) -> Any:
         if str(value).strip() in ("1", "true", "True", "yes", "Y", "y"):
             return 1
         return 0
-    if t in ("Collaborator", "Relation"):
+    if t == "Collaborator":
+        # 业务规则：人员字段统一写固定账号，忽略模型返回
+        return [DEFAULT_COLLABORATOR_ACCOUNT_ID]
+    if t == "Relation":
         if isinstance(value, list):
             return [str(v).strip() for v in value if str(v).strip()]
         if isinstance(value, str) and value.strip():
@@ -358,8 +366,13 @@ def generate_rows_by_gemini(
         out_fields = []
         for f in writable_fields:
             fid = f["id"]
+            if f["type"] == "Collaborator":
+                # 业务规则：只要是人员字段，统一填固定账号
+                out_fields.append({"id": fid, "value": [DEFAULT_COLLABORATOR_ACCOUNT_ID]})
+                continue
             val = field_values.get(fid)
             if val in ("", [], None):
+                # 人员字段默认写入固定账号
                 # 必填字段兜底
                 if f["required"]:
                     t = f["type"]
@@ -375,7 +388,9 @@ def generate_rows_by_gemini(
                         val = 1
                     elif t in ("Date", "DateTime"):
                         val = "2026-01-01"
-                    elif t in ("Collaborator", "Relation"):
+                    elif t == "Collaborator":
+                        val = [DEFAULT_COLLABORATOR_ACCOUNT_ID]
+                    elif t == "Relation":
                         val = []
                     else:
                         val = f"{f['name']}_{i+1}"
@@ -385,6 +400,100 @@ def generate_rows_by_gemini(
 
         normalized_rows.append({"fields": out_fields})
     return normalized_rows
+
+
+def topo_sort_targets(schema_items: List[dict]) -> List[Tuple[str, str]]:
+    """
+    基于 Relation(dataSource) 关系做拓扑排序：
+    - 节点: (appId, workSheetId)
+    - 边: 当前表 -> 目标表（表示当前表依赖目标表，目标表应先创建）
+    """
+    nodes = {(s["appId"], s["workSheetId"]) for s in schema_items}
+    deps: Dict[Tuple[str, str], set] = {n: set() for n in nodes}
+    reverse: Dict[Tuple[str, str], set] = {n: set() for n in nodes}
+    for s in schema_items:
+        cur = (s["appId"], s["workSheetId"])
+        for f in s.get("relationFields", []):
+            target_ws = str(f.get("dataSource", "")).strip()
+            if not target_ws:
+                continue
+            target = (s["appId"], target_ws)
+            if target in nodes and target != cur:
+                deps[cur].add(target)
+                reverse[target].add(cur)
+
+    indegree = {n: len(deps[n]) for n in nodes}
+    queue = [n for n in nodes if indegree[n] == 0]
+    ordered: List[Tuple[str, str]] = []
+    while queue:
+        n = queue.pop(0)
+        ordered.append(n)
+        for child in reverse[n]:
+            indegree[child] -= 1
+            if indegree[child] == 0:
+                queue.append(child)
+
+    if len(ordered) != len(nodes):
+        # 存在环依赖时，保留已排序部分，剩余按输入顺序追加
+        remaining = [n for n in nodes if n not in set(ordered)]
+        ordered.extend(remaining)
+    return ordered
+
+
+def fetch_existing_row_ids(app_key: str, sign: str, worksheet_id: str, limit: int = 200) -> List[str]:
+    headers = {
+        "HAP-Appkey": app_key,
+        "HAP-Sign": sign,
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/plain, */*",
+    }
+    payload = {
+        "pageIndex": 1,
+        "pageSize": min(max(limit, 1), 1000),
+        "includeSystemFields": True,
+        "useFieldIdAsKey": True,
+    }
+    url = ROWS_LIST_URL.format(worksheet_id=worksheet_id)
+    resp = requests.post(url, headers=headers, json=payload, timeout=30)
+    data = resp.json()
+    if not data.get("success"):
+        return []
+    rows = (data.get("data") or {}).get("rows")
+    if not isinstance(rows, list):
+        return []
+    out = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        rid = str(r.get("rowid", "")).strip()
+        if rid:
+            out.append(rid)
+    return out
+
+
+def patch_row_fields(
+    app_key: str,
+    sign: str,
+    worksheet_id: str,
+    row_id: str,
+    fields: List[dict],
+    dry_run: bool,
+) -> dict:
+    if dry_run:
+        return {"dry_run": True, "worksheetId": worksheet_id, "rowId": row_id, "fields": fields}
+    headers = {
+        "HAP-Appkey": app_key,
+        "HAP-Sign": sign,
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/plain, */*",
+    }
+    url = PATCH_ROW_URL.format(worksheet_id=worksheet_id, row_id=row_id)
+    payload = {"fields": fields}
+    resp = requests.patch(url, headers=headers, json=payload, timeout=30)
+    try:
+        return resp.json()
+    except Exception:
+        return {"status_code": resp.status_code, "text": resp.text}
 
 
 def batch_create_rows(app_key: str, sign: str, worksheet_id: str, rows: List[dict], dry_run: bool) -> dict:
@@ -404,6 +513,72 @@ def batch_create_rows(app_key: str, sign: str, worksheet_id: str, rows: List[dic
     except Exception:
         data = {"status_code": resp.status_code, "text": resp.text}
     return data
+
+
+def fetch_row_ids_page(app_key: str, sign: str, worksheet_id: str, page_index: int, page_size: int = 1000) -> List[str]:
+    headers = {
+        "HAP-Appkey": app_key,
+        "HAP-Sign": sign,
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/plain, */*",
+    }
+    payload = {
+        "pageIndex": page_index,
+        "pageSize": page_size,
+        "includeSystemFields": True,
+        "useFieldIdAsKey": True,
+    }
+    url = ROWS_LIST_URL.format(worksheet_id=worksheet_id)
+    resp = requests.post(url, headers=headers, json=payload, timeout=30)
+    data = resp.json()
+    if not data.get("success"):
+        return []
+    rows = (data.get("data") or {}).get("rows")
+    if not isinstance(rows, list):
+        return []
+    row_ids = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        rid = str(r.get("rowid", "")).strip()
+        if rid:
+            row_ids.append(rid)
+    return row_ids
+
+
+def fetch_all_row_ids(app_key: str, sign: str, worksheet_id: str, max_pages: int = 200) -> List[str]:
+    out: List[str] = []
+    for page in range(1, max_pages + 1):
+        page_ids = fetch_row_ids_page(app_key, sign, worksheet_id, page_index=page, page_size=1000)
+        if not page_ids:
+            break
+        out.extend(page_ids)
+        if len(page_ids) < 1000:
+            break
+    # 去重保序
+    uniq = []
+    for rid in out:
+        if rid not in uniq:
+            uniq.append(rid)
+    return uniq
+
+
+def batch_delete_rows(app_key: str, sign: str, worksheet_id: str, row_ids: List[str], dry_run: bool) -> dict:
+    if dry_run:
+        return {"dry_run": True, "worksheetId": worksheet_id, "toDelete": len(row_ids)}
+    headers = {
+        "HAP-Appkey": app_key,
+        "HAP-Sign": sign,
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/plain, */*",
+    }
+    url = BATCH_CREATE_URL.format(worksheet_id=worksheet_id)
+    payload = {"rowIds": row_ids, "permanent": False}
+    resp = requests.delete(url, headers=headers, json=payload, timeout=60)
+    try:
+        return resp.json()
+    except Exception:
+        return {"status_code": resp.status_code, "text": resp.text}
 
 
 def main() -> None:
@@ -485,6 +660,51 @@ def main() -> None:
             break
         print("输入无效，请输入正整数。")
 
+    # 最后一个问题：是否清空所选应用 + 所选工作表下历史记录
+    delete_choice = input("最后一个问题：是否删除所选应用和所选表下的所有历史记录？输入 y 删除，任意键取消: ").strip()
+    deleted_history_summary = {
+        "enabled": False,
+        "dry_run": args.dry_run,
+        "worksheets": [],
+        "totalRowsPlannedDelete": 0,
+        "totalWorksheetCount": 0,
+    }
+    if delete_choice.lower() == "y":
+        deleted_history_summary["enabled"] = True
+        for t in all_selected_targets:
+            app = t["app"]
+            ws = t["worksheet"]
+            ws_id = ws["workSheetId"]
+            existing_row_ids = fetch_all_row_ids(app["appKey"], app["sign"], ws_id)
+            deleted_history_summary["totalRowsPlannedDelete"] += len(existing_row_ids)
+            deleted_history_summary["totalWorksheetCount"] += 1
+            if existing_row_ids:
+                del_resp = batch_delete_rows(
+                    app_key=app["appKey"],
+                    sign=app["sign"],
+                    worksheet_id=ws_id,
+                    row_ids=existing_row_ids,
+                    dry_run=args.dry_run,
+                )
+            else:
+                del_resp = {"success": True, "error_code": 1, "message": "no rows"}
+            deleted_history_summary["worksheets"].append(
+                {
+                    "appId": app["appId"],
+                    "appName": app["appName"],
+                    "workSheetId": ws_id,
+                    "workSheetName": ws["workSheetName"],
+                    "existingRows": len(existing_row_ids),
+                    "response": del_resp,
+                }
+            )
+        print("\n历史记录处理完成（摘要）")
+        print(f"- 删除目标表数: {deleted_history_summary['totalWorksheetCount']}")
+        print(f"- 计划删除记录数: {deleted_history_summary['totalRowsPlannedDelete']}")
+        print(f"- dry-run: {args.dry_run}")
+    else:
+        print("\n已跳过历史记录删除。")
+
     # Step 3: 拉字段结构
     schema_items = []
     for t in all_selected_targets:
@@ -492,11 +712,9 @@ def main() -> None:
         ws = t["worksheet"]
         schema = fetch_worksheet_schema(app["appKey"], app["sign"], ws["workSheetId"])
         simple_fields = [simplify_field(f) for f in schema["fields"] if isinstance(f, dict)]
-        writable_fields = [
-            f
-            for f in simple_fields
-            if f["id"] and not f["readOnly"] and not f["hidden"]
-        ]
+        writable_fields = [f for f in simple_fields if f["id"] and not f["readOnly"] and not f["hidden"]]
+        relation_fields = [f for f in writable_fields if f["type"] == "Relation"]
+        base_fields = [f for f in writable_fields if f["type"] != "Relation"]
         schema_items.append(
             {
                 "appId": app["appId"],
@@ -506,6 +724,8 @@ def main() -> None:
                 "workSheetName": ws["workSheetName"],
                 "fields": simple_fields,
                 "writableFields": writable_fields,
+                "baseWritableFields": base_fields,
+                "relationFields": relation_fields,
             }
         )
 
@@ -517,7 +737,7 @@ def main() -> None:
     write_json(schema_path, schema_payload)
     write_json((SCHEMA_DIR / "row_seed_schema_latest.json").resolve(), schema_payload)
 
-    # Step 4: Gemini 规划记录
+    # Step 4: Gemini 规划记录（仅规划非关联字段；关联字段由真实 rowId 回填）
     client = genai.Client(api_key=load_gemini_api_key())
     plan_items = []
     for s in schema_items:
@@ -527,7 +747,7 @@ def main() -> None:
             app_name=s["appName"],
             worksheet_name=s["workSheetName"],
             row_count=row_count,
-            writable_fields=s["writableFields"],
+            writable_fields=s["baseWritableFields"],
         )
         plan_items.append(
             {
@@ -536,7 +756,8 @@ def main() -> None:
                 "appAuthJson": s["appAuthJson"],
                 "workSheetId": s["workSheetId"],
                 "workSheetName": s["workSheetName"],
-                "rows": rows,
+                "baseRows": rows,
+                "relationFields": s["relationFields"],
             }
         )
     plan_payload = {"rowCountPerWorksheet": row_count, "targets": plan_items}
@@ -544,42 +765,177 @@ def main() -> None:
     write_json(plan_path, plan_payload)
     write_json((PLAN_DIR / "row_seed_plan_latest.json").resolve(), plan_payload)
 
-    # Step 5: 写入
-    app_auth_map = {(a["appId"], a["workSheetId"]): a for a in all_selected_targets}
+    # Step 5: 写入（阶段A：非关联字段；阶段B：回填关联字段）
+    app_auth_map: Dict[Tuple[str, str], dict] = {}
+    invalid_selected_targets: List[dict] = []
+    for item in all_selected_targets:
+        app = item.get("app") if isinstance(item, dict) else None
+        worksheet = item.get("worksheet") if isinstance(item, dict) else None
+        app_id = str(app.get("appId", "")).strip() if isinstance(app, dict) else ""
+        worksheet_id = str(worksheet.get("workSheetId", "")).strip() if isinstance(worksheet, dict) else ""
+        if not app_id or not worksheet_id:
+            invalid_selected_targets.append(item if isinstance(item, dict) else {"raw": str(item)})
+            continue
+        app_auth_map[(app_id, worksheet_id)] = item
+
+    if invalid_selected_targets:
+        print("\n警告：以下选中目标缺少 appId 或 workSheetId，已跳过：")
+        for idx, bad in enumerate(invalid_selected_targets, start=1):
+            print(f"- {idx}. {json.dumps(bad, ensure_ascii=False)}")
+
     results = []
     success_tables = 0
-    for p in plan_items:
+    unmatched_plan_targets = 0
+    unmatched_examples = []
+    # A. 非关联字段写入（按依赖拓扑顺序）
+    plan_map = {(p["appId"], p["workSheetId"]): p for p in plan_items}
+    ordered_keys = topo_sort_targets(schema_items)
+    created_row_ids_map: Dict[Tuple[str, str], List[str]] = {}
+
+    for key in ordered_keys:
+        p = plan_map.get(key)
+        if not p:
+            continue
         key = (p["appId"], p["workSheetId"])
         if key not in app_auth_map:
+            unmatched_plan_targets += 1
+            if len(unmatched_examples) < 10:
+                unmatched_examples.append(
+                    {
+                        "appId": p.get("appId", ""),
+                        "workSheetId": p.get("workSheetId", ""),
+                        "workSheetName": p.get("workSheetName", ""),
+                    }
+                )
             continue
         app = app_auth_map[key]["app"]
         resp = batch_create_rows(
             app_key=app["appKey"],
             sign=app["sign"],
             worksheet_id=p["workSheetId"],
-            rows=p["rows"],
+            rows=p["baseRows"],
             dry_run=args.dry_run,
         )
         ok = bool(resp.get("success")) if isinstance(resp, dict) and "success" in resp else bool(resp.get("dry_run"))
         if ok:
             success_tables += 1
+        created_row_ids = []
+        if isinstance(resp, dict):
+            data = resp.get("data")
+            if isinstance(data, dict) and isinstance(data.get("rowIds"), list):
+                created_row_ids = [str(x).strip() for x in data.get("rowIds", []) if str(x).strip()]
+        created_row_ids_map[key] = created_row_ids
         results.append(
             {
                 "appId": p["appId"],
                 "appName": p["appName"],
                 "workSheetId": p["workSheetId"],
                 "workSheetName": p["workSheetName"],
-                "plannedRows": len(p["rows"]),
+                "plannedRows": len(p["baseRows"]),
+                "phase": "base_create",
                 "response": resp,
             }
         )
+
+    # B. 构建可引用 rowId 池（优先使用新建 rowIds，不足则补充已有 rowIds）
+    row_pool: Dict[Tuple[str, str], List[str]] = {}
+    for key, target in app_auth_map.items():
+        app = target["app"]
+        ws = target["worksheet"]
+        fresh = created_row_ids_map.get(key, [])
+        existed = fetch_existing_row_ids(app["appKey"], app["sign"], ws["workSheetId"], limit=max(200, row_count * 5))
+        merged = []
+        for rid in fresh + existed:
+            if rid and rid not in merged:
+                merged.append(rid)
+        row_pool[key] = merged
+
+    relation_update_success = 0
+    relation_update_total = 0
+    relation_skip_total = 0
+
+    # C. 回填关联字段：仅对当前批次创建出的记录进行 patch
+    for key in ordered_keys:
+        p = plan_map.get(key)
+        if not p or key not in app_auth_map:
+            continue
+        app = app_auth_map[key]["app"]
+        source_ws_id = p["workSheetId"]
+        source_rows = created_row_ids_map.get(key, [])
+        rel_fields = p.get("relationFields", [])
+        if not source_rows or not rel_fields:
+            continue
+
+        for idx, row_id in enumerate(source_rows):
+            patch_fields = []
+            for rf in rel_fields:
+                target_ws_id = str(rf.get("dataSource", "")).strip()
+                fid = str(rf.get("id", "")).strip()
+                if not target_ws_id or not fid:
+                    relation_skip_total += 1
+                    continue
+                target_key = (p["appId"], target_ws_id)
+                target_pool = row_pool.get(target_key, [])
+                if not target_pool:
+                    relation_skip_total += 1
+                    continue
+                if int(rf.get("subType", 1) or 1) == 2:
+                    # 多条关联，取最多2个，尽量避免自循环
+                    refs = []
+                    first = target_pool[idx % len(target_pool)]
+                    refs.append(first)
+                    if len(target_pool) > 1:
+                        second = target_pool[(idx + 1) % len(target_pool)]
+                        if second != first:
+                            refs.append(second)
+                    patch_fields.append({"id": fid, "value": refs})
+                else:
+                    ref = target_pool[idx % len(target_pool)]
+                    patch_fields.append({"id": fid, "value": [ref]})
+
+            if not patch_fields:
+                continue
+            relation_update_total += 1
+            patch_resp = patch_row_fields(
+                app_key=app["appKey"],
+                sign=app["sign"],
+                worksheet_id=source_ws_id,
+                row_id=row_id,
+                fields=patch_fields,
+                dry_run=args.dry_run,
+            )
+            ok = bool(patch_resp.get("success")) if isinstance(patch_resp, dict) and "success" in patch_resp else bool(
+                patch_resp.get("dry_run")
+            )
+            if ok:
+                relation_update_success += 1
+            results.append(
+                {
+                    "appId": p["appId"],
+                    "appName": p["appName"],
+                    "workSheetId": source_ws_id,
+                    "workSheetName": p["workSheetName"],
+                    "rowId": row_id,
+                    "phase": "relation_patch",
+                    "patchedFieldCount": len(patch_fields),
+                    "response": patch_resp,
+                }
+            )
 
     result_payload = {
         "dry_run": args.dry_run,
         "selectedApps": len(picked_apps),
         "selectedWorksheets": len(all_selected_targets),
+        "invalidSelectedTargets": len(invalid_selected_targets),
+        "validSelectedTargets": len(app_auth_map),
+        "unmatchedPlanTargets": unmatched_plan_targets,
+        "unmatchedPlanTargetExamples": unmatched_examples,
         "rowCountPerWorksheet": row_count,
         "successTables": success_tables,
+        "relationUpdateTotal": relation_update_total,
+        "relationUpdateSuccess": relation_update_success,
+        "relationSkipTotal": relation_skip_total,
+        "historyDelete": deleted_history_summary,
         "schemaJson": str(schema_path),
         "planJson": str(plan_path),
         "results": results,
@@ -591,8 +947,15 @@ def main() -> None:
     print("\n执行完成（摘要）")
     print(f"- 选择应用数: {len(picked_apps)}")
     print(f"- 选择工作表数: {len(all_selected_targets)}")
+    print(f"- 有效目标数: {len(app_auth_map)}")
+    print(f"- 无效目标数: {len(invalid_selected_targets)}")
+    print(f"- 匹配失败目标数: {unmatched_plan_targets}")
+    if unmatched_plan_targets > 0:
+        print("- 提示: 存在计划项未匹配，请检查 appId/workSheetId 映射一致性")
     print(f"- 每表记录数: {row_count}")
     print(f"- 成功表数: {success_tables}/{len(all_selected_targets)}")
+    print(f"- 关联回填成功: {relation_update_success}/{relation_update_total}")
+    print(f"- 关联回填跳过字段数: {relation_skip_total}")
     print(f"- 字段结构文件: {schema_path}")
     print(f"- 记录规划文件: {plan_path}")
     print(f"- 执行结果文件: {result_path}")
