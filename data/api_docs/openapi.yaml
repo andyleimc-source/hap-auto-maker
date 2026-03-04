@@ -1,0 +1,294 @@
+openapi: 3.0.0
+info:
+  title: HAP 组织授权开放接口文档
+  description: 
+    $ref: './description.md'
+
+servers:
+  - url: 'https://api.mingdao.com'
+
+# 导航标签
+tags:
+  - name: user
+    x-displayName: 用户
+  - name: department
+    x-displayName: 部门
+  - name: position
+    x-displayName: 职位
+  - name: orgRole
+    x-displayName: 组织角色
+  - name: structure
+    x-displayName: 汇报关系
+  - name: app
+    x-displayName: 应用
+  - name: todo
+    x-displayName: 流程待办
+  - name: usage
+    x-displayName: 使用分析
+  - name: log
+    x-displayName: 日志
+
+# 接口
+paths:
+  # 用户
+  /v2/user/upsertUsers:
+    servers:
+    - url: 'https://api.mingdao.com/generalintegrate'
+    $ref: './paths/user/upsertUsers.yaml'
+  /v2/user/upsertUser:
+    servers:
+    - url: 'https://api.mingdao.com/generalintegrate'
+    $ref: './paths/user/upsertUser.yaml'
+  /v2/user/removeUser:
+    servers:
+    - url: 'https://api.mingdao.com/generalintegrate'
+    $ref: './paths/user/removeUser.yaml'
+  /v2/user/addUserRelation:
+    servers:
+    - url: 'https://api.mingdao.com/generalintegrate'
+    $ref: './paths/user/addUserRelation.yaml'
+  /v2/user/getUserRelation:
+    servers:
+    - url: 'https://api.mingdao.com/generalintegrate'
+    $ref: './paths/user/getUserRelation.yaml'
+  /v2/user/getUserRelations:
+    servers:
+    - url: 'https://api.mingdao.com/generalintegrate'
+    $ref: './paths/user/getUserRelations.yaml'
+  /v2/user/getUserInfoByCorpUserId:
+    servers:
+    - url: 'https://api.mingdao.com/generalintegrate'
+    $ref: './paths/user/getUserInfoByCorpUserId.yaml'
+  /v2/user/getUser:
+    servers:
+    - url: 'https://api.mingdao.com/generalintegrate'
+    $ref: './paths/user/getUser.yaml'
+  /v2/user/getUsers:
+    servers:
+    - url: 'https://api.mingdao.com/generalintegrate'
+    $ref: './paths/user/getUsers.yaml' 
+  /v2/user/getUserRelationByAccountId:
+    servers:
+    - url: 'https://api.mingdao.com/generalintegrate'
+    $ref: './paths/user/getUserRelationByAccountId.yaml' 
+  /v2/user/getUserRelationByAccountIds:
+    servers:
+    - url: 'https://api.mingdao.com/generalintegrate'
+    $ref: './paths/user/getUserRelationByAccountIds.yaml' 
+  /v2/user/removeUserRelations:
+    servers:
+    - url: 'https://api.mingdao.com/generalintegrate'
+    $ref: './paths/user/removeUserRelations.yaml' 
+  /v2/user/removeUserRelationByAccountIds:
+    servers:
+    - url: 'https://api.mingdao.com/generalintegrate'
+    $ref: './paths/user/removeUserRelationByAccountIds.yaml'
+  /generalintegrate/v2/ExternalPortal/GetUsers:
+    servers:
+    - url: 'https://api.mingdao.com/generalintegrate'
+    $ref: './paths/user/getExternalPortalUsers.yaml'
+
+  # 部门
+  /v2/department/syncAllDepartments:
+    servers:
+    - url: 'https://api.mingdao.com/generalintegrate'
+    $ref: './paths/department/syncAllDepartments.yaml' 
+  /v2/department/upsertDepartment:
+    servers:
+    - url: 'https://api.mingdao.com/generalintegrate'
+    $ref: './paths/department/upsertDepartment.yaml' 
+  /v2/department/removeDepartment:
+    servers:
+    - url: 'https://api.mingdao.com/generalintegrate'
+    $ref: './paths/department/removeDepartment.yaml' 
+  /v2/department/editDepartmentCharger:
+    servers:
+    - url: 'https://api.mingdao.com/generalintegrate'
+    $ref: './paths/department/editDepartmentCharger.yaml' 
+  /v2/department/addDepartmentRelation:
+    servers:
+    - url: 'https://api.mingdao.com/generalintegrate'
+    $ref: './paths/department/addDepartmentRelation.yaml' 
+  /v2/department/getDepartmentByCorpDepartmentId:
+    servers:
+    - url: 'https://api.mingdao.com/generalintegrate'
+    $ref: './paths/department/getDepartmentByCorpDepartmentId.yaml' 
+  /v2/department/getDepartmentRelationByDepartmentId:
+    servers:
+    - url: 'https://api.mingdao.com/generalintegrate'
+    $ref: './paths/department/getDepartmentRelationByDepartmentId.yaml' 
+  /v2/department/getDepartmentRelationByDepartmentIds:
+    servers:
+    - url: 'https://api.mingdao.com/generalintegrate'
+    $ref: './paths/department/getDepartmentRelationByDepartmentIds.yaml' 
+  /v2/department/getDepartmentRelation:
+    servers:
+    - url: 'https://api.mingdao.com/generalintegrate'
+    $ref: './paths/department/getDepartmentRelation.yaml' 
+  /v2/department/getDepartmentRelations:
+    servers:
+    - url: 'https://api.mingdao.com/generalintegrate'
+    $ref: './paths/department/getDepartmentRelations.yaml' 
+  /v2/department/removeDepartmentRelations:
+    servers:
+    - url: 'https://api.mingdao.com/generalintegrate'
+    $ref: './paths/department/removeDepartmentRelations.yaml' 
+  /v2/department/removeDepartmentRelationByDepartmentIds:
+    servers:
+    - url: 'https://api.mingdao.com/generalintegrate'
+    $ref: './paths/department/removeDepartmentRelationByDepartmentIds.yaml' 
+
+  # 职位
+  /v2/position/upsertPositions:
+    servers:
+    - url: 'https://api.mingdao.com/generalintegrate'
+    $ref: './paths/position/upsertPositions.yaml' 
+  /v2/position/removePositions:
+    servers:
+    - url: 'https://api.mingdao.com/generalintegrate'
+    $ref: './paths/position/removePositions.yaml' 
+  /v2/position/editPositionByJobId:
+    servers:
+    - url: 'https://api.mingdao.com/generalintegrate'
+    $ref: './paths/position/editPositionByJobId.yaml' 
+  /v2/position/getPositions:
+    servers:
+    - url: 'https://api.mingdao.com/generalintegrate'
+    $ref: './paths/position/getPositions.yaml' 
+  /v2/position/getPositionRelation:
+    servers:
+    - url: 'https://api.mingdao.com/generalintegrate'
+    $ref: './paths/position/getPositionRelation.yaml' 
+  /v2/position/getPositionRelations:
+    servers:
+    - url: 'https://api.mingdao.com/generalintegrate'
+    $ref: './paths/position/getPositionRelations.yaml' 
+
+  # 组织角色
+  /v2/OrgRole/SyncOrgRoles:
+    servers:
+    - url: 'https://api.mingdao.com/generalintegrate'
+    $ref: './paths/orgRole/syncOrgRoles.yaml' 
+  /v2/OrgRole/RemoveOrgRoles:
+    servers:
+    - url: 'https://api.mingdao.com/generalintegrate'
+    $ref: './paths/orgRole/removeOrgRoles.yaml' 
+  /v2/OrgRole/GetOrgRoleRelations:
+    servers:
+    - url: 'https://api.mingdao.com/generalintegrate'
+    $ref: './paths/orgRole/getOrgRoleRelations.yaml' 
+  /v2/OrgRole/SyncOrgRoleUserRelations:
+    servers:
+    - url: 'https://api.mingdao.com/generalintegrate'
+    $ref: './paths/orgRole/syncOrgRoleUserRelations.yaml'
+  /v2/OrgRole/SyncUserOrgRoleRelations:
+    servers:
+    - url: 'https://api.mingdao.com/generalintegrate'
+    $ref: './paths/orgRole/syncUserOrgRoleRelations.yaml'
+  /v2/OrgRole/GetOrgRoles:
+    servers:
+    - url: 'https://api.mingdao.com/generalintegrate'
+    $ref: './paths/orgRole/getOrgRoles.yaml'
+  /v2/OrgRole/GetOrgRoleAccounts:
+    servers:
+    - url: 'https://api.mingdao.com/generalintegrate'
+    $ref: './paths/orgRole/getOrgRoleAccounts.yaml'
+  /v2/OrgRole/UpsertOrgRoleGroup:
+    servers:
+    - url: 'https://api.mingdao.com/generalintegrate'
+    $ref: './paths/orgRole/UpsertOrgRoleGroup.yaml'
+  /v2/OrgRole/GetOrgRoleGroups:
+    servers:
+    - url: 'https://api.mingdao.com/generalintegrate'
+    $ref: './paths/orgRole/GetOrgRoleGroups.yaml'
+  /v2/OrgRole/RemoveOrgRoleGroup:
+    servers:
+    - url: 'https://api.mingdao.com/generalintegrate'
+    $ref: './paths/orgRole/RemoveOrgRoleGroup.yaml'
+
+
+  # 汇报关系
+  /v2/open/structure/GetSubordinateIds:
+    $ref: './paths/structure/getSubordinateIds.yaml'
+  /v2/open/structure/addStructures:
+    $ref: './paths/structure/addStructures.yaml'
+  /v2/open/structure/removeStructures:
+    $ref: './paths/structure/removeStructures.yaml'
+  /v2/open/structure/replaceStructure:
+    $ref: './paths/structure/replaceStructure.yaml'
+  /v2/open/structure/addStructuresByAccountId:
+    $ref: './paths/structure/addStructuresByAccountId.yaml'
+  /v2/open/structure/removeStructuresByAccountId:
+    $ref: './paths/structure/removeStructuresByAccountId.yaml'
+  /v2/open/structure/replaceStructureByAccountId:
+    $ref: './paths/structure/replaceStructureByAccountId.yaml'
+  
+  # 应用
+  /v1/open/app/create:
+    $ref: './paths/app/create.yaml'
+  /v1/open/app/createLink:
+    $ref: './paths/app/createLink.yaml'
+  /v1/open/app/edit:
+    $ref: './paths/app/edit.yaml'
+  /v1/open/app/delete:
+    $ref: './paths/app/delete.yaml'
+  /v1/open/app/getByProject:
+    $ref: './paths/app/getByProject.yaml'
+  /v1/open/app/getAppAuthorize:
+    $ref: './paths/app/getAppAuthorize.yaml'
+  /v1/open/app/copy:
+    $ref: './paths/app/copy.yaml'
+  /v1/open/App/ProjectGroups:
+    $ref: './paths/app/projectGroups.yaml'
+  /v1/open/app/AddGroup:
+    $ref: './paths/app/addGroup.yaml'
+  /v1/open/App/EditGroup:
+    $ref: './paths/app/editGroup.yaml'
+  /v1/open/App/DeleteGroup:
+    $ref: './paths/app/deleteGroup.yaml'
+  /v1/open/App/AddToGroup:
+    $ref: './paths/app/addToGroup.yaml'
+  /v1/open/App/Upload:
+    $ref: './paths/app/upload.yaml'
+  /v1/open/app/Import:
+    $ref: './paths/app/import.yaml'
+  /v1/open/App/ImportUpgrade:
+    $ref: './paths/app/importUpgrade.yaml'
+  /v1/open/App/Transmit:
+    $ref: './paths/app/transmit.yaml'
+
+  # 流程待办
+  /workflow/v1/instance/getTodoCount:
+    $ref: './paths/todo/getTodoCount.yaml'
+  /workflow/v1/instance/getTodoList:
+    $ref: './paths/todo/getTodoList.yaml'
+  /workflow/v1/instance/batch:
+    $ref: './paths/todo/batchApproval.yaml'
+  /workflow/delegation/getList:
+    $ref: './paths/todo/getDelegationList.yaml'
+  /workflow/delegation/add:
+    $ref: './paths/todo/addDelegation.yaml'
+  /delegation/update:
+    $ref: './paths/todo/updateDelegation.yaml'
+  /workflow/v1/instance/get:
+    $ref: './paths/todo/getInstance.yaml'
+  /workflow/instance/revoke:
+    $ref: './paths/todo/revokeWorkflowInstance.yaml'
+  /workflow/instance/overrule:
+    $ref: './paths/todo/overruleWorkflowInstance.yaml'
+  /workflow/v1/instance/endInstance:
+    $ref: './paths/todo/endWorkflowInstance.yaml'  
+  /workflow/instance/operation:
+    $ref: './paths/todo/operation.yaml'    
+      
+  # 使用分析
+  /v1/open/App/AllUsageOverviewStatistics:
+    $ref: './paths/usage/appStatistics.yaml'
+  /v1/open/App/AppUsageOverviewStatistics:
+    $ref: './paths/usage/appOverview.yaml'
+
+  # 日志
+  /v1/open/app/GetGlobalLogs:
+    $ref: './paths/log/getGlobalLogs.yaml'
+  /v1/open/ActionLog/GetLoginLogs:
+    $ref: './paths/log/getLoginLogs.yaml'

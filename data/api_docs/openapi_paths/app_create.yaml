@@ -1,0 +1,47 @@
+post:
+  summary: 创建应用
+  operationId: createapp
+  tags:
+    - app
+  requestBody:
+    description: 请求参数
+    content:
+      application/json:
+        schema:
+          allOf: 
+            -  $ref: ../../schemas/base/request/baseRequestBody.yaml
+            - type: object
+              properties:
+                name:
+                  type: string
+                  description: 应用名称
+                icon:
+                  type: string
+                  description: 图标名称，如：0_lego
+                color:
+                  type: string
+                  description: 主题颜色，如：#00bcd4
+                ownerId:
+                  type: string
+                  description: 应用拥有者HAP账号Id
+                groupIds:
+                  type: array
+                  description: 应用分组Id列表
+                  items:
+                    type: string
+              required:
+                - name
+                - ownerId
+  responses:
+    "200":
+      content:
+        application/json:
+          schema:
+            allOf: 
+              - $ref: ../../schemas/base/response/baseResponseV_.yaml
+              - type: object
+                properties:
+                  data:
+                    type: object
+                    description: 应用信息
+                    $ref: "../../schemas/app/response/appSimpleModel.yaml"

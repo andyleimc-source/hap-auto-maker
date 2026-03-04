@@ -1,0 +1,18 @@
+type: object
+properties:
+  appKey:
+    type: string
+  sign:
+    type: string
+    description: 签名
+  timestamp:
+    type: integer
+    description: 时间戳
+  projectId:
+    type: string
+    description: HAP组织Id
+required: 
+  - appKey
+  - sign
+  - timestamp
+  - projectId

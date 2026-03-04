@@ -1,0 +1,6 @@
+.DS_Store
+__pycache__/
+*.pyc
+config/auth_config.py
+config/login_credentials.py
+cache/
