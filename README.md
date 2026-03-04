@@ -1,37 +1,127 @@
 项目目标：
-创建并自动化管理 HAP 应用及其工作表。
+创建并自动化管理 HAP 应用、工作表、字段布局、图标与测试数据。
 
 
-Pipeline 用法：
+一、脚本分层说明
 
-1. 创建应用流水线（创建应用 -> 获取授权 -> 智能匹配应用 icon -> 更新应用 icon）
+1. 入口脚本层（推荐直接运行）
+- 目录：`/Users/andy/Desktop/hap_auto/scripts/`
+- 说明：这些脚本是稳定入口，内部通过 `runpy` 转发到 `scripts/hap/` 或 `scripts/gemini/`。
 
-- 脚本：`scripts/pipeline_create_app.py`
+2. 业务实现层
+- HAP 业务实现：`/Users/andy/Desktop/hap_auto/scripts/hap/`
+- Gemini 业务实现：`/Users/andy/Desktop/hap_auto/scripts/gemini/`
 
+3. 认证脚本层
+- 目录：`/Users/andy/Desktop/hap_auto/scripts/auth/`
+- 说明：负责刷新网页登录态（Cookie/Authorization）。
+
+
+二、主要 Pipeline（推荐）
+
+1. 创建应用流水线（创建应用 -> 获取授权 -> 匹配应用 icon -> 更新应用 icon）
+- 入口脚本：`/Users/andy/Desktop/hap_auto/scripts/pipeline_create_app.py`
+- 典型命令：
 ```bash
 python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_create_app.py --name "应用名"
 ```
 
 2. 工作表流水线（规划工作表 -> 创建工作表 -> 匹配并更新工作表 icon）
-
-- 脚本：`scripts/pipeline_worksheets.py`
-
+- 入口脚本：`/Users/andy/Desktop/hap_auto/scripts/pipeline_worksheets.py`
+- 典型命令：
 ```bash
 python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_worksheets.py
 ```
 
-3. 删除应用
-
-- 脚本：`scripts/delete_app.py`
-
-```bash
-python3 /Users/andy/Desktop/hap_auto/scripts/delete_app.py --delete-all
-```
-
-4. 字段布局流水线（选择应用 -> 规划字段布局 -> 应用字段布局）
-
-- 脚本：`scripts/pipeline_worksheet_layout.py`
-
+3. 字段布局流水线（选择应用 -> 规划字段布局 -> 应用布局）
+- 入口脚本：`/Users/andy/Desktop/hap_auto/scripts/pipeline_worksheet_layout.py`
+- 典型命令：
 ```bash
 python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_worksheet_layout.py
 ```
+
+4. 造数流水线（选应用/选表 -> Gemini 造数 -> 批量写入 -> 关联回填）
+- 入口脚本：`/Users/andy/Desktop/hap_auto/scripts/pipeline_create_rows.py`
+- 典型命令：
+```bash
+python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_create_rows.py
+```
+
+5. 工作表 icon 流水线（拉清单 -> 匹配 icon -> 批量更新）
+- 入口脚本：`/Users/andy/Desktop/hap_auto/scripts/pipeline_icon.py`
+- 典型命令：
+```bash
+python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_icon.py
+```
+
+
+三、主要单功能脚本（可用于后续合并/串联）
+
+3.1 应用管理
+1. `create_app.py`：创建应用
+2. `get_app_authorize.py`：获取应用授权并落盘
+3. `delete_app.py`：删除应用（支持全删/按序号删）
+4. `update_app_icons.py`：批量更新应用 icon
+5. `update_app_navi_style.py`：修改应用导航风格 `pcNaviStyle`
+6. `list_apps_for_icon.py`：拉取应用清单（供 icon 匹配）
+
+3.2 工作表管理
+1. `plan_app_worksheets_gemini.py`：Gemini 规划工作表结构
+2. `create_worksheets_from_plan.py`：根据规划创建工作表（当前默认双向关联）
+3. `list_app_worksheets.py`：拉取某应用下工作表清单
+4. `update_worksheet_icons.py`：批量更新工作表 icon
+
+3.3 字段布局
+1. `plan_worksheet_layout.py`：规划每个字段在表单中的布局
+2. `apply_worksheet_layout.py`：应用字段布局（调用网页端接口）
+
+3.4 造数与记录
+1. `pipeline_create_rows.py`：交互式造数总入口
+2. 关键能力：按依赖顺序创建记录、关联字段二阶段回填、人员字段默认写固定账号 ID、可选清理历史记录后再造数
+
+3.5 Gemini 相关
+1. `list_gemini_models.py`：列出可用模型
+2. `match_app_icons_gemini.py`：应用名匹配 icon
+3. `match_worksheet_icons_gemini.py`：工作表名匹配 icon
+4. `plan_app_worksheets_gemini.py`：工作表规划
+
+3.6 认证相关
+1. `refresh_auth.py`：刷新网页登录态并更新 `auth_config.py`
+
+
+四、数据与结果目录（关键）
+
+1. 授权文件
+- `/Users/andy/Desktop/hap_auto/data/outputs/app_authorizations/`
+
+2. 工作表规划与创建结果
+- `/Users/andy/Desktop/hap_auto/data/outputs/worksheet_plans/`
+- `/Users/andy/Desktop/hap_auto/data/outputs/worksheet_create_results/`
+
+3. 字段布局规划与执行结果
+- `/Users/andy/Desktop/hap_auto/data/outputs/worksheet_layout_plans/`
+- `/Users/andy/Desktop/hap_auto/data/outputs/worksheet_layout_apply_results/`
+
+4. icon 匹配与更新结果
+- `/Users/andy/Desktop/hap_auto/data/outputs/app_icon_match_plans/`
+- `/Users/andy/Desktop/hap_auto/data/outputs/app_icon_updates/`
+- `/Users/andy/Desktop/hap_auto/data/outputs/worksheet_icon_match_plans/`
+- `/Users/andy/Desktop/hap_auto/data/outputs/worksheet_icon_updates/`
+
+5. 造数结果
+- `/Users/andy/Desktop/hap_auto/data/outputs/row_seed_schemas/`
+- `/Users/andy/Desktop/hap_auto/data/outputs/row_seed_plans/`
+- `/Users/andy/Desktop/hap_auto/data/outputs/row_seed_results/`
+
+
+五、当前开发任务状态
+
+1. 创建应用流水线：已完成
+2. 工作表流水线：已完成
+3. 删除应用（全删/按序号删）：已完成
+4. 字段布局流水线：已完成
+5. 造数流水线：已完成
+6. 关联字段回填与顺序控制：已完成
+7. 造数前历史记录清理：已完成
+8. 人员字段默认固定账号：已完成
+9. 应用导航风格修改：已完成

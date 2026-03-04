@@ -234,7 +234,7 @@ def add_relation_fields(
                 "required": to_required(fld.get("required", False)),
                 "dataSource": target_id,
                 "subType": 1,  # 单条关联
-                "relation": {"showFields": [], "bidirectional": False},
+                "relation": {"showFields": [], "bidirectional": True},
             }
         )
 
