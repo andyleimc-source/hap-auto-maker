@@ -9,7 +9,7 @@ Pipeline 用法：
 - 脚本：`scripts/pipeline_create_app.py`
 
 ```bash
-python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_create_app.py --name "中文应用名"
+python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_create_app.py --name "应用名"
 ```
 
 2. 工作表流水线（规划工作表 -> 创建工作表 -> 匹配并更新工作表 icon）

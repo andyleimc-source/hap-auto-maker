@@ -169,16 +169,15 @@ def fetch_app_name(app_key: str, sign: str) -> str:
 
 def enrich_app_names(apps: List[Dict[str, object]]) -> None:
     for app in apps:
-        if str(app.get("name", "")).strip():
-            continue
         app_key = str(app.get("appKey", "")).strip()
         sign = str(app.get("sign", "")).strip()
-        if not app_key or not sign:
-            continue
-        try:
-            name = fetch_app_name(app_key=app_key, sign=sign)
-        except Exception:
-            name = ""
+        name = ""
+        if app_key and sign:
+            try:
+                name = fetch_app_name(app_key=app_key, sign=sign)
+            except Exception:
+                name = ""
+        # 强制优先使用实时应用名；失败时回退到本地字段
         if name:
             app["name"] = name
 
