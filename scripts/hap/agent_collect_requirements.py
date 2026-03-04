@@ -9,11 +9,13 @@
 
 import argparse
 import json
+import os
 import subprocess
 import sys
+import textwrap
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from google import genai
 from google.genai import types
@@ -32,9 +34,13 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 SPEC_DIR = OUTPUT_ROOT / "requirement_specs"
 GEMINI_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "gemini_auth.json"
-# 用户指定优先模型；若不可用则自动回退到官方稳定 Pro
-DEFAULT_MODEL = "gemini-3.1-pro"
-FALLBACK_MODELS = ("gemini-2.5-pro",)
+# 用户指定优先模型；若不可用则自动回退到已验证可用模型
+DEFAULT_MODEL = "gemini-3.1-pro-preview"
+FALLBACK_MODELS = (
+    "gemini-3-pro-preview",
+    "gemini-3-flash-preview",
+    "gemini-2.5-pro",
+)
 EXECUTE_REQUIREMENTS_SCRIPT = BASE_DIR / "scripts" / "execute_requirements.py"
 
 
@@ -95,9 +101,59 @@ def make_config(response_mime_type: str, temperature: float, seed: Optional[int]
 
 
 def read_user_input(prompt_text: str) -> str:
-    if pt_prompt is not None and sys.stdin.isatty() and sys.stdout.isatty():
+    term = (os.environ.get("TERM") or "").strip().lower()
+    use_prompt_toolkit = (
+        pt_prompt is not None
+        and sys.stdin.isatty()
+        and sys.stdout.isatty()
+        and term not in ("", "dumb")
+    )
+    if use_prompt_toolkit:
         return pt_prompt(prompt_text)
     return input(prompt_text)
+
+
+def clean_terminal_text(text: str) -> str:
+    if not text:
+        return ""
+    # 去除 ANSI 控制序列，避免终端显示错位/截断感
+    import re
+
+    text = re.sub(r"\x1B\[[0-?]*[ -/]*[@-~]", "", text)
+    return text.replace("\r", "")
+
+
+def print_wrapped(prefix: str, text: str) -> None:
+    if sys.stdout.isatty():
+        try:
+            cols = os.get_terminal_size().columns
+        except OSError:
+            cols = 100
+    else:
+        cols = 100
+    cols = max(40, cols)
+    body_width = max(20, cols - len(prefix))
+    lines = []
+    for part in clean_terminal_text(text).splitlines() or [""]:
+        if not part.strip():
+            lines.append("")
+            continue
+        lines.extend(
+            textwrap.wrap(
+                part,
+                width=body_width,
+                break_long_words=False,
+                break_on_hyphens=False,
+                replace_whitespace=False,
+                drop_whitespace=False,
+            )
+        )
+    if not lines:
+        lines = [""]
+    print(f"{prefix}{lines[0]}")
+    align = " " * len(prefix)
+    for ln in lines[1:]:
+        print(f"{align}{ln}")
 
 
 def create_chat_with_fallback(client: genai.Client, model: str, temperature: float, seed: Optional[int]):
@@ -138,6 +194,45 @@ def generate_with_fallback(
     raise RuntimeError("Gemini 生成失败")
 
 
+def send_chat_with_fallback(
+    client: genai.Client,
+    chat,
+    current_model: str,
+    prompt: str,
+    temperature: float,
+    seed: Optional[int],
+) -> Tuple[object, object, str]:
+    """
+    发送聊天消息；若当前模型在 send_message 阶段失败（常见 404/NOT_FOUND），
+    自动回退到候选模型并重试一次。
+    返回: (response, chat_obj, model_name)
+    """
+    try:
+        resp = chat.send_message(prompt)
+        return resp, chat, current_model
+    except Exception as exc:
+        msg = str(exc)
+        recoverable = (
+            "NOT_FOUND" in msg
+            or "is not found" in msg
+            or "not supported for generateContent" in msg
+        )
+        if not recoverable:
+            raise
+
+        tried = [current_model] + [m for m in FALLBACK_MODELS if m != current_model]
+        for m in tried[1:]:
+            print(f"聊天模型 {current_model} 不可用，自动回退到 {m} ...")
+            try:
+                chat_config = make_config(response_mime_type="text/plain", temperature=temperature, seed=seed)
+                new_chat = client.chats.create(model=m, config=chat_config)
+                resp = new_chat.send_message(prompt)
+                return resp, new_chat, m
+            except Exception:
+                continue
+        raise
+
+
 def build_chat_prompt(transcript: List[Dict[str, str]], latest_user_input: str) -> str:
     lines = []
     for turn in transcript[-30:]:
@@ -156,7 +251,12 @@ def build_chat_prompt(transcript: List[Dict[str, str]], latest_user_input: str) 
 
 要求：
 1) 用中文回复，简洁直接。
-2) 如果信息不完整，优先追问关键缺口（应用目标、是否新建、工作表规划要求、icon、布局、导航、造数数量）。
+2) 采用“默认优先”策略：以下项若用户未明确指定，不要追问，直接使用默认值。
+   - 导航布局: 左侧（pcNaviStyle=1）
+   - 测试数据: 每表 3 条
+   - 主题色: random
+3) 如果信息不完整，只追问关键缺口（应用名称/行业场景、是否需要工作表规划、业务范围、是否需要造数）。
+4) 避免一次提太多问题，优先单问单答。
 3) 不输出 JSON；这是聊天阶段。
 """.strip()
 
@@ -195,7 +295,7 @@ def build_spec_prompt(transcript: List[Dict[str, str]]) -> str:
     "enabled": true,
     "business_context": "业务背景",
     "requirements": "工作表规划要求",
-    "model": "gemini-2.5-pro",
+    "model": "gemini-3.1-pro-preview",
     "icon_update": {{
       "enabled": true,
       "refresh_auth": false
@@ -210,7 +310,7 @@ def build_spec_prompt(transcript: List[Dict[str, str]]) -> str:
     "enabled": true,
     "rows_per_table": 3,
     "delete_history_before_seed": false,
-    "model": "gemini-2.5-pro"
+    "model": "gemini-3.1-pro-preview"
   }},
   "execution": {{
     "fail_fast": true,
@@ -223,6 +323,9 @@ def build_spec_prompt(transcript: List[Dict[str, str]]) -> str:
 2) app.name 若未明确，给出合理占位名：CRM自动化应用。
 3) rows_per_table 必须是正整数。
 4) 不要新增未定义顶层字段。
+5) 若对话中未明确提到导航布局，固定 app.navi_style.pcNaviStyle=1。
+6) 若对话中未明确提到测试数据条数，固定 seed_data.rows_per_table=3。
+7) 若对话中未明确提到主题色，固定 app.color_mode=random。
 """.strip()
 
 
@@ -242,6 +345,9 @@ def normalize_spec(raw: dict) -> dict:
     app.setdefault("group_ids", "69a794589860d96373beeb4d")
     app.setdefault("icon_mode", "gemini_match")
     app.setdefault("color_mode", "random")
+    # 默认主题色策略：未明确时强制 random
+    if not str(app.get("color_mode", "")).strip():
+        app["color_mode"] = "random"
     navi = app.get("navi_style") if isinstance(app.get("navi_style"), dict) else {}
     navi.setdefault("enabled", True)
     navi.setdefault("pcNaviStyle", 1)
@@ -249,6 +355,8 @@ def normalize_spec(raw: dict) -> dict:
         navi["pcNaviStyle"] = int(navi.get("pcNaviStyle", 1))
     except Exception:
         navi["pcNaviStyle"] = 1
+    # 默认导航布局：左侧
+    navi["pcNaviStyle"] = 1 if not isinstance(navi.get("pcNaviStyle"), int) else navi["pcNaviStyle"]
     app["navi_style"] = navi
     spec["app"] = app
 
@@ -256,7 +364,7 @@ def normalize_spec(raw: dict) -> dict:
     ws.setdefault("enabled", True)
     ws.setdefault("business_context", "通用企业管理场景")
     ws.setdefault("requirements", "")
-    ws.setdefault("model", "gemini-2.5-pro")
+    ws.setdefault("model", "gemini-3.1-pro-preview")
     icon_update = ws.get("icon_update") if isinstance(ws.get("icon_update"), dict) else {}
     icon_update.setdefault("enabled", True)
     icon_update.setdefault("refresh_auth", False)
@@ -275,8 +383,11 @@ def normalize_spec(raw: dict) -> dict:
         seed["rows_per_table"] = max(1, int(seed.get("rows_per_table", 3)))
     except Exception:
         seed["rows_per_table"] = 3
+    # 默认测试数据：每表 3 条
+    if not seed.get("rows_per_table"):
+        seed["rows_per_table"] = 3
     seed.setdefault("delete_history_before_seed", False)
-    seed.setdefault("model", "gemini-2.5-pro")
+    seed.setdefault("model", "gemini-3.1-pro-preview")
     spec["seed_data"] = seed
 
     execution = spec.get("execution") if isinstance(spec.get("execution"), dict) else {}
@@ -323,6 +434,13 @@ def main() -> None:
     client = genai.Client(api_key=api_key)
     output_path = Path(args.output).expanduser().resolve() if args.output else None
     chat, actual_model = create_chat_with_fallback(client, args.model, args.temperature, args.seed)
+    if readline is not None:
+        try:
+            readline.parse_and_bind("set editing-mode emacs")
+            readline.parse_and_bind("set enable-keypad on")
+            readline.parse_and_bind("set keymap emacs")
+        except Exception:
+            pass
 
     transcript: List[Dict[str, str]] = []
     print(f"需求对话已启动（模型: {actual_model}）。输入 /done 生成并执行；/save 立即保存；/show 查看摘要；/exit 退出。")
@@ -379,10 +497,18 @@ def main() -> None:
         transcript.append({"role": "user", "text": cmd})
         turns += 1
         prompt = build_chat_prompt(transcript, latest_user_input=cmd)
-        resp = chat.send_message(prompt)
+        resp, chat, actual_model = send_chat_with_fallback(
+            client=client,
+            chat=chat,
+            current_model=actual_model,
+            prompt=prompt,
+            temperature=args.temperature,
+            seed=args.seed,
+        )
         reply = (resp.text or "").strip() or "请继续补充你的需求，我会整理成可执行 JSON。"
         transcript.append({"role": "assistant", "text": reply})
-        print(f"\nAgent: {reply}")
+        print()
+        print_wrapped("Agent: ", reply)
 
 
 if __name__ == "__main__":

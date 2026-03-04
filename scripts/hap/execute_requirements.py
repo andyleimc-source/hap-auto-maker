@@ -84,7 +84,7 @@ def normalize_spec(raw: dict) -> dict:
     ws.setdefault("enabled", True)
     ws.setdefault("business_context", "通用企业管理场景")
     ws.setdefault("requirements", "")
-    ws.setdefault("model", "gemini-2.5-pro")
+    ws.setdefault("model", "gemini-3.1-pro-preview")
     icon_update = ws.get("icon_update") if isinstance(ws.get("icon_update"), dict) else {}
     icon_update.setdefault("enabled", True)
     icon_update.setdefault("refresh_auth", False)
@@ -104,7 +104,7 @@ def normalize_spec(raw: dict) -> dict:
     except Exception:
         seed["rows_per_table"] = 3
     seed.setdefault("delete_history_before_seed", False)
-    seed.setdefault("model", "gemini-2.5-pro")
+    seed.setdefault("model", "gemini-3.1-pro-preview")
     spec["seed_data"] = seed
 
     execution = spec.get("execution") if isinstance(spec.get("execution"), dict) else {}
@@ -316,7 +316,7 @@ def main() -> None:
             "--group-ids",
             str(app.get("group_ids", "69a794589860d96373beeb4d")),
             "--gemini-model",
-            str(ws.get("model", "gemini-2.5-pro")),
+            str(ws.get("model", "gemini-3.1-pro-preview")),
         ]
         if str(app.get("icon_mode", "gemini_match")) != "gemini_match":
             cmd1.append("--skip-smart-icon")
@@ -372,7 +372,7 @@ def main() -> None:
             "--requirements",
             str(ws.get("requirements", "")),
             "--model",
-            str(ws.get("model", "gemini-2.5-pro")),
+            str(ws.get("model", "gemini-3.1-pro-preview")),
             "--output",
             str(plan_output),
         ]
@@ -410,7 +410,7 @@ def main() -> None:
             "--app-id",
             app_id,
             "--model",
-            str(ws.get("model", "gemini-2.5-pro")),
+            str(ws.get("model", "gemini-3.1-pro-preview")),
         ]
         if ws["icon_update"].get("refresh_auth", False):
             cmd3.append("--refresh-auth")
@@ -430,7 +430,7 @@ def main() -> None:
             "--app-id",
             app_id,
             "--model",
-            str(ws.get("model", "gemini-2.5-pro")),
+            str(ws.get("model", "gemini-3.1-pro-preview")),
         ]
         layout_req = str(ws["layout"].get("requirements", "")).strip()
         if layout_req:
@@ -479,7 +479,7 @@ def main() -> None:
             "--delete-history",
             "y" if bool(seed.get("delete_history_before_seed", False)) else "n",
             "--model",
-            str(seed.get("model", "gemini-2.5-pro")),
+            str(seed.get("model", "gemini-3.1-pro-preview")),
         ]
         ok6 = execute_step(6, "seed", "批量造数并回填关联", cmd6)
         if fail_fast and (not ok6):
