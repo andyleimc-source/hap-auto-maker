@@ -22,6 +22,7 @@ DEFAULT_BASE_URL = "https://api.mingdao.com"
 ENDPOINT = "/v1/open/app/delete"
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 APP_AUTH_DIR = OUTPUT_ROOT / "app_authorizations"
+APP_INFO_URL = "https://api.mingdao.com/v3/app"
 
 
 def load_org_auth() -> dict:
@@ -60,6 +61,8 @@ def extract_apps_from_outputs(output_dir: Path) -> List[Dict[str, object]]:
                         "name": "",
                         "createTime": "",
                         "creator": "",
+                        "appKey": "",
+                        "sign": "",
                         "files": [],
                     },
                 )
@@ -90,9 +93,17 @@ def extract_apps_from_outputs(output_dir: Path) -> List[Dict[str, object]]:
                                 "name": "",
                                 "createTime": "",
                                 "creator": "",
+                                "appKey": "",
+                                "sign": "",
                                 "files": [],
                             },
                         )
+                        app_key = row.get("appKey")
+                        sign = row.get("sign")
+                        if isinstance(app_key, str) and app_key.strip():
+                            app["appKey"] = app_key.strip()
+                        if isinstance(sign, str) and sign.strip():
+                            app["sign"] = sign.strip()
                         if app_name:
                             app["name"] = app_name
                         if create_time:
@@ -118,9 +129,17 @@ def extract_apps_from_outputs(output_dir: Path) -> List[Dict[str, object]]:
                         "name": "",
                         "createTime": "",
                         "creator": "",
+                        "appKey": "",
+                        "sign": "",
                         "files": [],
                     },
                 )
+                app_key = rows.get("appKey")
+                sign = rows.get("sign")
+                if isinstance(app_key, str) and app_key.strip():
+                    app["appKey"] = app_key.strip()
+                if isinstance(sign, str) and sign.strip():
+                    app["sign"] = sign.strip()
                 if app_name:
                     app["name"] = app_name
                 if create_time:
@@ -130,6 +149,38 @@ def extract_apps_from_outputs(output_dir: Path) -> List[Dict[str, object]]:
                 if str(json_file) not in app["files"]:
                     app["files"].append(str(json_file))
     return [apps[k] for k in sorted(apps.keys())]
+
+
+def fetch_app_name(app_key: str, sign: str) -> str:
+    headers = {
+        "HAP-Appkey": app_key,
+        "HAP-Sign": sign,
+        "Accept": "application/json, text/plain, */*",
+    }
+    resp = requests.get(APP_INFO_URL, headers=headers, timeout=20)
+    data = resp.json()
+    if not data.get("success"):
+        return ""
+    app = data.get("data", {})
+    if not isinstance(app, dict):
+        return ""
+    return str(app.get("name", "")).strip()
+
+
+def enrich_app_names(apps: List[Dict[str, object]]) -> None:
+    for app in apps:
+        if str(app.get("name", "")).strip():
+            continue
+        app_key = str(app.get("appKey", "")).strip()
+        sign = str(app.get("sign", "")).strip()
+        if not app_key or not sign:
+            continue
+        try:
+            name = fetch_app_name(app_key=app_key, sign=sign)
+        except Exception:
+            name = ""
+        if name:
+            app["name"] = name
 
 
 def collect_all_json_files(root: Path) -> List[str]:
@@ -223,13 +274,15 @@ def main() -> None:
         # 兼容旧目录：若新目录为空，尝试读取 outputs 根目录历史文件
         if not apps:
             apps = extract_apps_from_outputs(OUTPUT_ROOT)
+        enrich_app_names(apps)
         print(f"发现应用数量: {len(apps)}")
-        print("序号 | 创建时间 | 应用ID | 创建人")
+        print("序号 | 应用名称 | 创建时间 | 应用ID | 创建人")
         for idx, app in enumerate(apps, start=1):
+            app_name = app.get("name") or "(未知)"
             create_time = app.get("createTime") or "(未知)"
             app_id = app.get("appId")
             creator = app.get("creator") or "(未知)"
-            print(f"{idx}. {create_time} | {app_id} | {creator}")
+            print(f"{idx}. {app_name} | {create_time} | {app_id} | {creator}")
 
         if not apps:
             print("未发现可删除应用，流程结束。")

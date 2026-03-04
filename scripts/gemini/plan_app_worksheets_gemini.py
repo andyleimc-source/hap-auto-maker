@@ -134,8 +134,20 @@ def main() -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    print(json.dumps(plan, ensure_ascii=False, indent=2))
-    print(f"\n已保存: {output_path}")
+    worksheets = plan.get("worksheets", [])
+    relationships = plan.get("relationships", [])
+    creation_order = plan.get("creation_order", [])
+    app_name = str(plan.get("app_name", args.app_name)).strip() or args.app_name
+    summary = str(plan.get("summary", "")).strip()
+
+    print("规划完成（概览）")
+    print(f"- 应用: {app_name}")
+    if summary:
+        print(f"- 概述: {summary}")
+    print(f"- 工作表数量: {len(worksheets) if isinstance(worksheets, list) else 0}")
+    print(f"- 关系数量: {len(relationships) if isinstance(relationships, list) else 0}")
+    print(f"- 创建顺序项数: {len(creation_order) if isinstance(creation_order, list) else 0}")
+    print(f"- 结果文件: {output_path}")
 
 
 if __name__ == "__main__":
