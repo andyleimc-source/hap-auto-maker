@@ -87,6 +87,14 @@ def parse_select_options(description: str) -> List[dict]:
     if not text:
         return [{"value": "选项1", "index": 1}, {"value": "选项2", "index": 2}]
     parts = [p.strip() for p in re.split(r"[/、,，;；|]", text) if p.strip()]
+    cleaned_parts = []
+    for p in parts:
+        # 清理示例引导词，避免出现“如：转介绍”“例如xx”等脏选项
+        p = re.sub(r"^(如|例如|比如)\s*[:：]\s*", "", p).strip()
+        p = re.sub(r"(等|等等)$", "", p).strip()
+        if p:
+            cleaned_parts.append(p)
+    parts = cleaned_parts
     # 去重并限制数量
     seen = set()
     uniq = []
@@ -99,6 +107,28 @@ def parse_select_options(description: str) -> List[dict]:
     if len(uniq) < 2:
         uniq = ["选项1", "选项2"]
     return [{"value": v, "index": i + 1} for i, v in enumerate(uniq)]
+
+
+def parse_select_options_from_field(field: dict) -> List[dict]:
+    # 优先使用 Gemini 输出的结构化 option_values
+    option_values = field.get("option_values")
+    if isinstance(option_values, list):
+        vals = []
+        for v in option_values:
+            if not isinstance(v, str):
+                continue
+            t = v.strip()
+            if not t:
+                continue
+            t = re.sub(r"^(如|例如|比如)\s*[:：]\s*", "", t).strip()
+            t = re.sub(r"(等|等等)$", "", t).strip()
+            if t and t not in vals:
+                vals.append(t)
+            if len(vals) >= 10:
+                break
+        if len(vals) >= 2:
+            return [{"value": v, "index": i + 1} for i, v in enumerate(vals)]
+    return parse_select_options(str(field.get("description", "")))
 
 
 def to_required(v) -> bool:
@@ -125,7 +155,7 @@ def build_field_payload(field: dict, is_first_text_title: bool) -> dict:
     if ftype == "Number":
         payload["precision"] = 2
     elif ftype in ("SingleSelect", "MultipleSelect"):
-        payload["options"] = parse_select_options(str(field.get("description", "")))
+        payload["options"] = parse_select_options_from_field(field)
     elif ftype == "Collaborator":
         payload["subType"] = 0  # 单选成员
     elif ftype == "Relation":

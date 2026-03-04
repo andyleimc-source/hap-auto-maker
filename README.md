@@ -27,3 +27,11 @@ python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_worksheets.py
 ```bash
 python3 /Users/andy/Desktop/hap_auto/scripts/delete_app.py --delete-all
 ```
+
+4. 字段布局流水线（选择应用 -> 规划字段布局 -> 应用字段布局）
+
+- 脚本：`scripts/pipeline_worksheet_layout.py`
+
+```bash
+python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_worksheet_layout.py
+```

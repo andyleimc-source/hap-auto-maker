@@ -79,7 +79,7 @@ def build_prompt(app_name: str, business_context: str, extra_requirements: str) 
       "name": "工作表名",
       "purpose": "用途",
       "fields": [
-        {{"name": "字段名", "type": "Text|Number|SingleSelect|MultipleSelect|Date|DateTime|Collaborator|Relation|Attachment", "required": true, "description": "说明", "relation_target": "当type=Relation时填写目标工作表名，否则为空"}}
+        {{"name": "字段名", "type": "Text|Number|SingleSelect|MultipleSelect|Date|DateTime|Collaborator|Relation|Attachment", "required": true, "description": "说明", "relation_target": "当type=Relation时填写目标工作表名，否则为空", "option_values": ["当type为SingleSelect或MultipleSelect时必须提供纯净选项值数组，否则为空数组"]}}
       ],
       "depends_on": ["依赖的工作表名"]
     }}
@@ -95,7 +95,10 @@ def build_prompt(app_name: str, business_context: str, extra_requirements: str) 
 1) creation_order 必须满足 depends_on 的依赖拓扑顺序。
 2) worksheets 中涉及 Relation 的 relation_target 必须在 worksheets 中存在。
 3) 字段类型仅允许上述枚举。
-4) 输出为合法 JSON。
+4) 当字段 type=SingleSelect 或 MultipleSelect 时，必须填写 option_values，长度 3-8，且每个值是可直接展示的“最终文案”。
+5) option_values 里的值禁止包含示例引导词或模糊词，如：`如`、`例如`、`比如`、`等`、`等等`、`其他等`。
+6) option_values 每个值需为短语（建议 2-8 个字），且同字段内不得重复。
+7) 输出为合法 JSON。
 """.strip()
 
 
