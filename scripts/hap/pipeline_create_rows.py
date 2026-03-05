@@ -32,14 +32,45 @@ RESULT_DIR = OUTPUT_ROOT / "row_seed_results"
 COUNT_PLAN_DIR = OUTPUT_ROOT / "row_seed_count_plans"
 REL_CONTEXT_DIR = OUTPUT_ROOT / "row_relation_contexts"
 REL_PLAN_DIR = OUTPUT_ROOT / "row_relation_plans"
+CONSISTENCY_CONTEXT_DIR = OUTPUT_ROOT / "row_consistency_contexts"
+CONSISTENCY_RESULT_DIR = OUTPUT_ROOT / "parent_child_consistency_results"
 GEMINI_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "gemini_auth.json"
 COUNT_PLAN_SCRIPT = BASE_DIR / "scripts" / "gemini" / "plan_row_seed_counts_gemini.py"
 REL_PLAN_SCRIPT = BASE_DIR / "scripts" / "gemini" / "plan_row_relation_links_gemini.py"
+CONSISTENCY_ENFORCE_SCRIPT = BASE_DIR / "scripts" / "hap" / "enforce_parent_child_consistency.py"
 DEFAULT_MODEL = "gemini-3-flash-preview"
 DEFAULT_COLLABORATOR_ACCOUNT_ID = "a020cd58-b50b-4fa2-b33c-7dd877c805bd"
 COUNT_RULES = {"core": 6, "mid": 12, "secondary": 18}
 SECONDARY_NAME_HINTS = ("明细", "日志", "流水", "记录", "详情", "item")
 CORE_NAME_HINTS = ("订单", "客户", "合同", "产品", "商机", "线索", "发票", "项目", "员工", "供应商")
+QUANTITY_NAME_HINTS = ("数量", "库存", "入库", "出库", "发货", "收货", "领用", "退货", "件数")
+UNIT_NAME_HINTS = ("计量单位", "单位", "量单位")
+DECIMAL_FRIENDLY_UNITS = ("千克", "公斤", "kg", "克", "g", "升", "l", "毫升", "ml")
+INTEGER_FRIENDLY_UNITS = (
+    "件",
+    "箱",
+    "个",
+    "包",
+    "袋",
+    "盒",
+    "台",
+    "份",
+    "只",
+    "支",
+    "瓶",
+    "条",
+    "块",
+    "头",
+    "根",
+    "张",
+    "套",
+    "桶",
+    "盘",
+    "本",
+    "棵",
+    "颗",
+    "粒",
+)
 
 APP_INFO_URL = "https://api.mingdao.com/v3/app"
 WORKSHEET_DETAIL_URL = "https://api.mingdao.com/v3/app/worksheets/{worksheet_id}"
@@ -172,6 +203,13 @@ def looks_core_table(name: str, inbound_rel_count: int) -> bool:
     return False
 
 
+def is_root_non_child_table(schema_item: dict) -> bool:
+    rels = schema_item.get("relationFields", [])
+    if not isinstance(rels, list):
+        return True
+    return len(rels) == 0
+
+
 def infer_inbound_relation_counts(schema_items: List[dict]) -> Dict[str, int]:
     ws_ids = {str(s.get("workSheetId", "")).strip() for s in schema_items if str(s.get("workSheetId", "")).strip()}
     inbound: Dict[str, int] = {}
@@ -195,6 +233,10 @@ def fallback_count_entry(schema_item: dict, inbound_relation_count: int) -> dict
         tier = "secondary"
         seed_count = COUNT_RULES[tier]
         judgement = "表名命中明细/日志类特征，按次要表处理"
+    elif is_root_non_child_table(schema_item):
+        tier = "core"
+        seed_count = COUNT_RULES[tier]
+        judgement = "非关联子表（根表）按基础表处理，固定取最小样本量"
     elif looks_core_table(ws_name, inbound_relation_count):
         tier = "core"
         seed_count = COUNT_RULES[tier]
@@ -297,11 +339,21 @@ def normalize_count_plan(schema_items: List[dict], plan_payload: dict) -> dict:
         except Exception:
             seed_count = minimum
         seed_count = max(seed_count, minimum)
+        ws_name = str(schema_map[ws_id]["workSheetName"]).strip()
+        if (not looks_secondary_table(ws_name)) and is_root_non_child_table(schema_map[ws_id]):
+            tier = "core"
+            minimum = COUNT_RULES[tier]
+            seed_count = COUNT_RULES[tier]
+            judgement = "非关联子表（根表）强制按 core=6 处理"
+        else:
+            seed_count = max(seed_count, minimum)
+            judgement = str(item.get("judgement", "")).strip() or "Gemini 判断"
+
         out = {
             "workSheetId": ws_id,
-            "workSheetName": schema_map[ws_id]["workSheetName"],
+            "workSheetName": ws_name,
             "tier": tier,
-            "judgement": str(item.get("judgement", "")).strip() or "Gemini 判断",
+            "judgement": judgement,
             "seedCount": seed_count,
         }
         confidence = item.get("confidence")
@@ -554,6 +606,76 @@ def build_relation_link_map(relation_plan_payload: dict) -> Dict[Tuple[str, str,
     return rel_map
 
 
+def build_consistency_context_payload(schema_items: List[dict], app_auth_map: Dict[Tuple[str, str], dict]) -> dict:
+    apps = []
+    app_seen = set()
+    for _, item in app_auth_map.items():
+        app = item.get("app") if isinstance(item, dict) else None
+        if not isinstance(app, dict):
+            continue
+        app_id = str(app.get("appId", "")).strip()
+        if not app_id or app_id in app_seen:
+            continue
+        app_seen.add(app_id)
+        apps.append(
+            {
+                "appId": app_id,
+                "appName": str(app.get("appName", "")).strip(),
+                "appKey": str(app.get("appKey", "")).strip(),
+                "sign": str(app.get("sign", "")).strip(),
+            }
+        )
+
+    worksheets = []
+    for s in schema_items:
+        worksheets.append(
+            {
+                "appId": str(s.get("appId", "")).strip(),
+                "workSheetId": str(s.get("workSheetId", "")).strip(),
+                "workSheetName": str(s.get("workSheetName", "")).strip(),
+                "fields": s.get("fields", []),
+                "relationFields": s.get("relationFields", []),
+            }
+        )
+    app_id = apps[0]["appId"] if apps else ""
+    app_name = apps[0]["appName"] if apps else ""
+    return {
+        "appId": app_id,
+        "appName": app_name,
+        "strategyVersion": "row_consistency_context_v1",
+        "apps": apps,
+        "worksheets": worksheets,
+    }
+
+
+def run_consistency_enforce_script(
+    context_path: Path,
+    model: str,
+    dry_run: bool,
+    output_path: Path,
+    constraint_plan_json: str = "",
+) -> dict:
+    cmd = [
+        sys.executable,
+        str(CONSISTENCY_ENFORCE_SCRIPT),
+        "--context-json",
+        str(context_path),
+        "--model",
+        model,
+        "--output",
+        str(output_path),
+    ]
+    if constraint_plan_json.strip():
+        cmd.extend(["--constraint-plan-json", constraint_plan_json.strip()])
+    if dry_run:
+        cmd.append("--dry-run")
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "").strip()
+        raise RuntimeError(f"父子一致性脚本执行失败: {err}")
+    return load_json(output_path)
+
+
 def load_app_auth_rows() -> List[dict]:
     rows: List[dict] = []
     files = sorted(APP_AUTH_DIR.glob("app_authorize_*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
@@ -705,16 +827,110 @@ def build_gemini_prompt(app_name: str, worksheet_name: str, row_count: int, fiel
    - Checkbox: 0 或 1
 3) 对 required=true 的字段必须给值。
 4) 不要输出无关字段。
+5) 数量类字段（如 含“数量/库存/入库/出库”等）应优先输出整数；只有单位为千克/克/升/毫升时才允许小数。
 """.strip()
+
+
+def field_name_has_hint(name: str, hints: Tuple[str, ...]) -> bool:
+    text = str(name or "").strip()
+    lower = text.lower()
+    for hint in hints:
+        if hint in text or hint in lower:
+            return True
+    return False
+
+
+def is_quantity_field(field: dict) -> bool:
+    return field_name_has_hint(str(field.get("name", "")).strip(), QUANTITY_NAME_HINTS)
+
+
+def is_unit_field(field: dict) -> bool:
+    return field_name_has_hint(str(field.get("name", "")).strip(), UNIT_NAME_HINTS)
+
+
+def to_float_or_none(value: Any) -> Optional[float]:
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        x = value.strip().replace(",", "")
+        if not x:
+            return None
+        try:
+            return float(x)
+        except Exception:
+            return None
+    return None
+
+
+def quantize_number(value: float, decimals: int) -> Any:
+    if decimals <= 0:
+        return int(round(float(value)))
+    return round(float(value), decimals)
+
+
+def normalize_unit_text(unit_text: str) -> str:
+    return str(unit_text or "").strip().lower().replace(" ", "")
+
+
+def quantity_decimals_by_unit(unit_text: str) -> int:
+    if not unit_text:
+        return 0
+    norm = normalize_unit_text(unit_text)
+    for u in DECIMAL_FRIENDLY_UNITS:
+        if normalize_unit_text(u) in norm:
+            return 2
+    for u in INTEGER_FRIENDLY_UNITS:
+        if normalize_unit_text(u) in norm:
+            return 0
+    return 0
+
+
+def resolve_row_unit_text(field_values: Dict[str, Any], writable_fields: List[dict]) -> str:
+    for f in writable_fields:
+        if not is_unit_field(f):
+            continue
+        fid = str(f.get("id", "")).strip()
+        if not fid:
+            continue
+        raw = field_values.get(fid)
+        if raw in ("", None, []):
+            continue
+        if str(f.get("type", "")).strip() == "SingleSelect":
+            key = str(raw).strip()
+            options = f.get("options") if isinstance(f.get("options"), list) else []
+            for opt in options:
+                if not isinstance(opt, dict):
+                    continue
+                if str(opt.get("key", "")).strip() == key:
+                    val = str(opt.get("value", "")).strip()
+                    if val:
+                        return val
+        text = str(raw).strip()
+        if text:
+            return text
+    return ""
+
+
+def normalize_number_for_field(raw_value: Any, field: dict, row_unit_text: str) -> Any:
+    num = to_float_or_none(raw_value)
+    if num is None:
+        num = 1.0
+    if is_quantity_field(field):
+        return quantize_number(num, quantity_decimals_by_unit(row_unit_text))
+    if float(num).is_integer():
+        return int(round(num))
+    return round(num, 2)
 
 
 def normalize_value_by_type(value: Any, field: dict) -> Any:
     t = field["type"]
     if t == "Number":
-        try:
-            return float(value)
-        except Exception:
+        num = to_float_or_none(value)
+        if num is None:
             return 1
+        if float(num).is_integer():
+            return int(round(num))
+        return round(num, 2)
     if t == "SingleSelect":
         option_keys = [o["key"] for o in field.get("options", [])]
         option_values = [o["value"] for o in field.get("options", [])]
@@ -796,6 +1012,7 @@ def generate_rows_by_gemini(
                 if fid in field_map:
                     field_values[fid] = normalize_value_by_type(it.get("value", ""), field_map[fid])
 
+        row_unit_text = resolve_row_unit_text(field_values, writable_fields)
         out_fields = []
         for f in writable_fields:
             fid = f["id"]
@@ -829,6 +1046,8 @@ def generate_rows_by_gemini(
                         val = f"{f['name']}_{i+1}"
                 else:
                     continue
+            if f["type"] == "Number":
+                val = normalize_number_for_field(val, f, row_unit_text)
             out_fields.append({"id": fid, "value": val})
 
         normalized_rows.append({"fields": out_fields})
@@ -1024,6 +1243,8 @@ def main() -> None:
     parser.add_argument("--rows-per-table", type=int, default=0, help="可选，每张表创建记录数（正整数，传入后跳过数量输入）")
     parser.add_argument("--seed-count-plan-json", default="", help="可选，造数数量分析 JSON 路径（auto 模式可传）")
     parser.add_argument("--relation-plan-json", default="", help="可选，关联映射规划 JSON 路径（不传则自动规划）")
+    parser.add_argument("--consistency-plan-json", default="", help="可选，父子一致性约束 JSON 路径（不传则自动规划）")
+    parser.add_argument("--skip-consistency", action="store_true", help="跳过父子运算一致性修正阶段")
     parser.add_argument("--delete-history", default="", help="可选，是否删除历史记录：y 或 n（传入后跳过删除确认）")
     args = parser.parse_args()
 
@@ -1502,6 +1723,33 @@ def main() -> None:
                 }
             )
 
+    # E. 父子运算一致性修正（数量/金额等跨表运算约束）
+    consistency_enabled = not args.skip_consistency
+    consistency_context_path: Optional[Path] = None
+    consistency_result_path: Optional[Path] = None
+    consistency_result: dict = {}
+    consistency_error = ""
+    try:
+        consistency_context_payload = build_consistency_context_payload(schema_items=schema_items, app_auth_map=app_auth_map)
+        CONSISTENCY_CONTEXT_DIR.mkdir(parents=True, exist_ok=True)
+        consistency_context_path = (CONSISTENCY_CONTEXT_DIR / f"row_consistency_context_{now_ts()}.json").resolve()
+        write_json(consistency_context_path, consistency_context_payload)
+        write_json((CONSISTENCY_CONTEXT_DIR / "row_consistency_context_latest.json").resolve(), consistency_context_payload)
+        if consistency_enabled:
+            CONSISTENCY_RESULT_DIR.mkdir(parents=True, exist_ok=True)
+            consistency_result_path = (CONSISTENCY_RESULT_DIR / f"parent_child_consistency_result_{now_ts()}.json").resolve()
+            consistency_result = run_consistency_enforce_script(
+                context_path=consistency_context_path,
+                model=args.model,
+                dry_run=args.dry_run,
+                output_path=consistency_result_path,
+                constraint_plan_json=args.consistency_plan_json,
+            )
+            write_json((CONSISTENCY_RESULT_DIR / "parent_child_consistency_result_latest.json").resolve(), consistency_result)
+    except Exception as exc:
+        consistency_error = str(exc)
+        print(f"父子一致性阶段失败：{consistency_error}")
+
     result_payload = {
         "dry_run": args.dry_run,
         "selectedApps": len(picked_apps),
@@ -1522,6 +1770,17 @@ def main() -> None:
         "relationPlanStats": relation_plan_payload.get("stats", {}),
         "relationPlanHitFieldLinks": relation_plan_hit_fields,
         "relationFallbackFieldLinks": relation_fallback_fields,
+        "consistencyEnabled": consistency_enabled,
+        "consistencyContextJson": str(consistency_context_path) if consistency_context_path else "",
+        "consistencyResultJson": str(consistency_result_path) if consistency_result_path else "",
+        "consistencyError": consistency_error,
+        "consistencySummary": {
+            "constraintCount": consistency_result.get("constraintCount", 0) if isinstance(consistency_result, dict) else 0,
+            "checkCount": consistency_result.get("checkCount", 0) if isinstance(consistency_result, dict) else 0,
+            "violationCount": consistency_result.get("violationCount", 0) if isinstance(consistency_result, dict) else 0,
+            "patchRowCount": consistency_result.get("patchRowCount", 0) if isinstance(consistency_result, dict) else 0,
+            "patchSuccessCount": consistency_result.get("patchSuccessCount", 0) if isinstance(consistency_result, dict) else 0,
+        },
         "relationUpdateTotal": relation_update_total,
         "relationUpdateSuccess": relation_update_success,
         "relationSkipTotal": relation_skip_total,
@@ -1555,6 +1814,16 @@ def main() -> None:
     print(f"- 关系上下文文件: {relation_context_path}")
     if relation_plan_path:
         print(f"- 关系规划文件: {relation_plan_path}")
+    if consistency_enabled:
+        if consistency_error:
+            print(f"- 父子一致性阶段失败: {consistency_error}")
+        else:
+            print(f"- 父子一致性约束数: {consistency_result.get('constraintCount', 0)}")
+            print(f"- 父子一致性校验次数: {consistency_result.get('checkCount', 0)}")
+            print(f"- 父子一致性违规数: {consistency_result.get('violationCount', 0)}")
+            print(f"- 父子一致性修正行数: {consistency_result.get('patchRowCount', 0)}")
+            if consistency_result_path:
+                print(f"- 父子一致性结果文件: {consistency_result_path}")
     print(f"- 字段结构文件: {schema_path}")
     print(f"- 记录规划文件: {plan_path}")
     print(f"- 执行结果文件: {result_path}")

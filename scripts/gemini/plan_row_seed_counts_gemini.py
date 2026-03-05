@@ -209,8 +209,9 @@ def build_prompt(table_inputs: List[dict]) -> str:
 2) tier 只能是 core/mid/secondary。
 3) seedCount 必须为正整数，且满足下限：core>=6, mid>=12, secondary>=18。
 4) 明细、日志、流水、记录、详情、item 这类明显次要表，优先判定为 secondary，seedCount 建议 18。
-5) 主实体或被多个表依赖的基础主表，优先判定为 core，seedCount 建议 6。
-6) 其他一般判定为 mid，seedCount 建议 12。
+5) 如果 outboundRelationCount=0（不是任何表的关联子表/根表），优先判定为 core，seedCount 固定建议 6。
+6) 主实体或被多个表依赖的基础主表，优先判定为 core，seedCount 建议 6。
+7) 其他一般判定为 mid，seedCount 建议 12。
 """.strip()
 
 
@@ -238,6 +239,14 @@ def looks_core(name: str, inbound_count: int) -> bool:
     return False
 
 
+def looks_root_non_child(table_item: dict) -> bool:
+    try:
+        outbound = int(table_item.get("outboundRelationCount", 0) or 0)
+    except Exception:
+        outbound = 0
+    return outbound <= 0
+
+
 def fallback_single(table_item: dict) -> dict:
     ws_name = str(table_item.get("workSheetName", "")).strip()
     inbound_count = int(table_item.get("inboundRelationCount", 0) or 0)
@@ -247,6 +256,11 @@ def fallback_single(table_item: dict) -> dict:
         seed_count = RULES[tier]
         judgement = "表名命中明细/日志类特征，按次要表处理"
         signals = ["name:secondary_hint"]
+    elif looks_root_non_child(table_item):
+        tier = "core"
+        seed_count = RULES[tier]
+        judgement = "非关联子表（根表）按基础表处理，固定取最小样本量"
+        signals = ["root_non_child"]
     elif looks_core(ws_name, inbound_count):
         tier = "core"
         seed_count = RULES[tier]
@@ -287,12 +301,21 @@ def normalize_analysis(raw: dict, table_index: Dict[str, dict]) -> List[dict]:
         except Exception:
             seed_count = min_count
         seed_count = max(seed_count, min_count)
+        ws_name = str(src.get("workSheetName", "")).strip()
+
+        # 根表强制 core=6，避免流程主表被放大到 mid=12。
+        if (not looks_secondary(ws_name)) and looks_root_non_child(src):
+            tier = "core"
+            seed_count = RULES[tier]
+            judgement = "非关联子表（根表）强制按 core=6 处理"
+        else:
+            judgement = str(item.get("judgement", "")).strip() or "Gemini 判断"
 
         out = {
             "workSheetId": ws_id,
-            "workSheetName": src["workSheetName"],
+            "workSheetName": ws_name,
             "tier": tier,
-            "judgement": str(item.get("judgement", "")).strip() or "Gemini 判断",
+            "judgement": judgement,
             "seedCount": seed_count,
         }
         conf = item.get("confidence")
