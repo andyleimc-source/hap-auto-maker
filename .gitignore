@@ -4,3 +4,6 @@ __pycache__/
 config/auth_config.py
 config/login_credentials.py
 cache/
+
+# 运行产出物（无需入库）
+data/outputs/

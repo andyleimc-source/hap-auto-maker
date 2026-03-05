@@ -253,7 +253,7 @@ def build_chat_prompt(transcript: List[Dict[str, str]], latest_user_input: str) 
 1) 用中文回复，简洁直接。
 2) 采用“默认优先”策略：以下项若用户未明确指定，不要追问，直接使用默认值。
    - 导航布局: 左侧（pcNaviStyle=1）
-   - 测试数据: 每表 3 条
+   - 测试数据: 按表性质自动分层数量（基础>=6，中间>=12，次要>=18）
    - 主题色: random
 3) 如果信息不完整，只追问关键缺口（应用名称/行业场景、是否需要工作表规划、业务范围、是否需要造数）。
 4) 避免一次提太多问题，优先单问单答。
@@ -308,7 +308,8 @@ def build_spec_prompt(transcript: List[Dict[str, str]]) -> str:
   }},
   "seed_data": {{
     "enabled": true,
-    "rows_per_table": 3,
+    "row_count_mode": "auto",
+    "rows_per_table": 0,
     "delete_history_before_seed": false,
     "model": "gemini-3.1-pro-preview"
   }},
@@ -321,10 +322,10 @@ def build_spec_prompt(transcript: List[Dict[str, str]]) -> str:
 规则：
 1) 缺失项按上述默认值补齐。
 2) app.name 若未明确，给出合理占位名：CRM自动化应用。
-3) rows_per_table 必须是正整数。
+3) row_count_mode 仅允许 auto|fixed；rows_per_table 必须为非负整数。
 4) 不要新增未定义顶层字段。
 5) 若对话中未明确提到导航布局，固定 app.navi_style.pcNaviStyle=1。
-6) 若对话中未明确提到测试数据条数，固定 seed_data.rows_per_table=3。
+6) 若对话中未明确提到测试数据条数，固定 seed_data.row_count_mode=auto 且 rows_per_table=0。
 7) 若对话中未明确提到主题色，固定 app.color_mode=random。
 """.strip()
 
@@ -378,14 +379,23 @@ def normalize_spec(raw: dict) -> dict:
 
     seed = spec.get("seed_data") if isinstance(spec.get("seed_data"), dict) else {}
     seed.setdefault("enabled", True)
-    seed.setdefault("rows_per_table", 3)
+    seed.setdefault("row_count_mode", "auto")
+    seed.setdefault("rows_per_table", 0)
     try:
-        seed["rows_per_table"] = max(1, int(seed.get("rows_per_table", 3)))
+        seed_rows = int(seed.get("rows_per_table", 0))
     except Exception:
-        seed["rows_per_table"] = 3
-    # 默认测试数据：每表 3 条
-    if not seed.get("rows_per_table"):
-        seed["rows_per_table"] = 3
+        seed_rows = 0
+    if seed_rows < 0:
+        seed_rows = 0
+    seed_mode = str(seed.get("row_count_mode", "")).strip().lower()
+    if seed_mode not in ("auto", "fixed"):
+        seed_mode = "fixed" if seed_rows > 0 else "auto"
+    if seed_rows > 0:
+        seed_mode = "fixed"
+    if seed_mode == "fixed" and seed_rows <= 0:
+        seed_rows = 3
+    seed["row_count_mode"] = seed_mode
+    seed["rows_per_table"] = seed_rows
     seed.setdefault("delete_history_before_seed", False)
     seed.setdefault("model", "gemini-3.1-pro-preview")
     spec["seed_data"] = seed

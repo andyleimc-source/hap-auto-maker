@@ -40,7 +40,7 @@ python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_worksheets.py
 python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_worksheet_layout.py
 ```
 
-4. 造数流水线（选应用/选表 -> Gemini 造数 -> 批量写入 -> 关联回填）
+4. 造数流水线（选应用/选表 -> 数量策略分析 -> Gemini 造数 -> 语义关系规划 -> 批量写入 -> 关联回填）
 - 入口脚本：`/Users/andy/Desktop/hap_auto/scripts/pipeline_create_rows.py`
 - 典型命令：
 ```bash
@@ -105,16 +105,26 @@ python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_worksheet_layout.py \
 python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_create_rows.py
 ```
 
-7) 造数（非交互，适合重复执行）
+7) 造数（非交互，自动按表性质分析数量）
 ```bash
 python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_create_rows.py \
   --app-id <你的appId> \
   --worksheet-ids all \
+  --row-count-mode auto \
+  --delete-history n
+```
+
+8) 造数（非交互，固定数量覆盖）
+```bash
+python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_create_rows.py \
+  --app-id <你的appId> \
+  --worksheet-ids all \
+  --row-count-mode fixed \
   --rows-per-table 3 \
   --delete-history n
 ```
 
-8) 删除应用
+9) 删除应用
 
 批量删除（先列出应用，再输入 Y 全删 或 1,2,3 按序号删）：
 ```bash
@@ -122,7 +132,7 @@ python3 /Users/andy/Desktop/hap_auto/scripts/delete_app.py --delete-all
 ```
 
 
-9) 工作表 icon 重新匹配并更新
+10) 工作表 icon 重新匹配并更新
 ```bash
 python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_icon.py \
   --app-auth-json /Users/andy/Desktop/hap_auto/data/outputs/app_authorizations/app_authorize_<你的appId>.json \
@@ -152,14 +162,16 @@ python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_icon.py \
 
 3.4 造数与记录
 1. `pipeline_create_rows.py`：交互式造数总入口
-2. 关键能力：按依赖顺序创建记录、关联字段二阶段回填、人员字段默认写固定账号 ID、可选清理历史记录后再造数
-3. 非交互参数：支持 `--app-id --worksheet-ids --rows-per-table --delete-history`
+2. 关键能力：按依赖顺序创建记录、关联字段二阶段回填、人员字段默认写固定账号 ID、可选清理历史记录后再造数、按表性质自动分析造数数量、按语义规划关联映射（避免随机关联）
+3. 非交互参数：支持 `--app-id --worksheet-ids --row-count-mode --rows-per-table --seed-count-plan-json --relation-plan-json --delete-history`
 
 3.5 Gemini 相关
 1. `list_gemini_models.py`：列出可用模型
 2. `match_app_icons_gemini.py`：应用名匹配 icon
 3. `match_worksheet_icons_gemini.py`：工作表名匹配 icon
 4. `plan_app_worksheets_gemini.py`：工作表规划
+5. `plan_row_seed_counts_gemini.py`：按工作表性质分析造数层级与数量（输出 row_seed_count_plan JSON）
+6. `plan_row_relation_links_gemini.py`：按源记录语义规划关联字段映射（输出 row_relation_plan JSON）
 
 3.6 认证相关
 1. `refresh_auth.py`：刷新网页登录态并更新 `auth_config.py`
@@ -167,6 +179,18 @@ python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_icon.py \
 3.7 需求 Agent 与执行器
 1. `agent_collect_requirements.py`：终端与 Gemini 多轮对话，输入 `/done` 生成 `workflow_requirement_v1` JSON
 2. `execute_requirements.py`：读取需求 JSON，编排执行应用创建、工作表、icon、布局、导航、造数
+3. `seed_data` 推荐结构（动态数量默认）：
+```json
+{
+  "seed_data": {
+    "enabled": true,
+    "row_count_mode": "auto",
+    "rows_per_table": 0,
+    "delete_history_before_seed": false,
+    "model": "gemini-3.1-pro-preview"
+  }
+}
+```
 
 
 四、数据与结果目录（关键）
@@ -190,6 +214,9 @@ python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_icon.py \
 
 5. 造数结果
 - `/Users/andy/Desktop/hap_auto/data/outputs/row_seed_schemas/`
+- `/Users/andy/Desktop/hap_auto/data/outputs/row_seed_count_plans/`
+- `/Users/andy/Desktop/hap_auto/data/outputs/row_relation_contexts/`
+- `/Users/andy/Desktop/hap_auto/data/outputs/row_relation_plans/`
 - `/Users/andy/Desktop/hap_auto/data/outputs/row_seed_plans/`
 - `/Users/andy/Desktop/hap_auto/data/outputs/row_seed_results/`
 

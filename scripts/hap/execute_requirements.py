@@ -98,11 +98,24 @@ def normalize_spec(raw: dict) -> dict:
 
     seed = spec.get("seed_data") if isinstance(spec.get("seed_data"), dict) else {}
     seed.setdefault("enabled", True)
-    seed.setdefault("rows_per_table", 3)
+    seed.setdefault("row_count_mode", "auto")
+    seed.setdefault("rows_per_table", 0)
     try:
-        seed["rows_per_table"] = max(1, int(seed.get("rows_per_table", 3)))
+        seed_rows = int(seed.get("rows_per_table", 0))
     except Exception:
-        seed["rows_per_table"] = 3
+        seed_rows = 0
+    if seed_rows < 0:
+        seed_rows = 0
+    mode = str(seed.get("row_count_mode", "")).strip().lower()
+    if mode not in ("auto", "fixed"):
+        mode = "fixed" if seed_rows > 0 else "auto"
+    # 显式给 rows_per_table 时，优先固定值模式
+    if seed_rows > 0:
+        mode = "fixed"
+    if mode == "fixed" and seed_rows <= 0:
+        seed_rows = 3
+    seed["row_count_mode"] = mode
+    seed["rows_per_table"] = seed_rows
     seed.setdefault("delete_history_before_seed", False)
     seed.setdefault("model", "gemini-3.1-pro-preview")
     spec["seed_data"] = seed
@@ -467,6 +480,9 @@ def main() -> None:
 
     # Step 6: 造数
     if seed.get("enabled", True):
+        row_count_mode = str(seed.get("row_count_mode", "auto")).strip().lower()
+        if row_count_mode not in ("auto", "fixed"):
+            row_count_mode = "auto"
         cmd6 = [
             sys.executable,
             str(SCRIPT_PIPELINE_ROWS),
@@ -474,13 +490,15 @@ def main() -> None:
             app_id,
             "--worksheet-ids",
             "all",
-            "--rows-per-table",
-            str(int(seed.get("rows_per_table", 3))),
+            "--row-count-mode",
+            row_count_mode,
             "--delete-history",
             "y" if bool(seed.get("delete_history_before_seed", False)) else "n",
             "--model",
             str(seed.get("model", "gemini-3.1-pro-preview")),
         ]
+        if row_count_mode == "fixed":
+            cmd6.extend(["--rows-per-table", str(int(seed.get("rows_per_table", 3)))])
         ok6 = execute_step(6, "seed", "批量造数并回填关联", cmd6)
         if fail_fast and (not ok6):
             out = save_report()

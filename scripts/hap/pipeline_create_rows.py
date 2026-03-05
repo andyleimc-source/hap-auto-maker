@@ -13,6 +13,8 @@
 import argparse
 import json
 import re
+import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -27,9 +29,17 @@ APP_AUTH_DIR = OUTPUT_ROOT / "app_authorizations"
 SCHEMA_DIR = OUTPUT_ROOT / "row_seed_schemas"
 PLAN_DIR = OUTPUT_ROOT / "row_seed_plans"
 RESULT_DIR = OUTPUT_ROOT / "row_seed_results"
+COUNT_PLAN_DIR = OUTPUT_ROOT / "row_seed_count_plans"
+REL_CONTEXT_DIR = OUTPUT_ROOT / "row_relation_contexts"
+REL_PLAN_DIR = OUTPUT_ROOT / "row_relation_plans"
 GEMINI_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "gemini_auth.json"
+COUNT_PLAN_SCRIPT = BASE_DIR / "scripts" / "gemini" / "plan_row_seed_counts_gemini.py"
+REL_PLAN_SCRIPT = BASE_DIR / "scripts" / "gemini" / "plan_row_relation_links_gemini.py"
 DEFAULT_MODEL = "gemini-3-flash-preview"
 DEFAULT_COLLABORATOR_ACCOUNT_ID = "a020cd58-b50b-4fa2-b33c-7dd877c805bd"
+COUNT_RULES = {"core": 6, "mid": 12, "secondary": 18}
+SECONDARY_NAME_HINTS = ("明细", "日志", "流水", "记录", "详情", "item")
+CORE_NAME_HINTS = ("订单", "客户", "合同", "产品", "商机", "线索", "发票", "项目", "员工", "供应商")
 
 APP_INFO_URL = "https://api.mingdao.com/v3/app"
 WORKSHEET_DETAIL_URL = "https://api.mingdao.com/v3/app/worksheets/{worksheet_id}"
@@ -119,6 +129,429 @@ def choose_indexes(prompt: str, items_count: int) -> Optional[List[int]]:
     if not picked:
         return None
     return picked
+
+
+def normalize_row_count_mode(value: str) -> str:
+    v = str(value or "").strip().lower()
+    if v in ("fixed", "auto"):
+        return v
+    return "auto"
+
+
+def resolve_plan_json(value: str, base_dir: Path, pattern: str) -> Path:
+    if value:
+        p = Path(value).expanduser()
+        if p.is_absolute() and p.exists():
+            return p.resolve()
+        if p.exists():
+            return p.resolve()
+        candidate = (base_dir / value).resolve()
+        if candidate.exists():
+            return candidate
+        raise FileNotFoundError(f"找不到文件: {value}（也未在 {base_dir} 找到）")
+    latest = latest_file(base_dir, pattern)
+    if not latest:
+        raise FileNotFoundError(f"未找到匹配文件: {pattern}（目录: {base_dir}）")
+    return latest.resolve()
+
+
+def looks_secondary_table(name: str) -> bool:
+    lower = name.lower()
+    for hint in SECONDARY_NAME_HINTS:
+        if hint in name or hint in lower:
+            return True
+    return False
+
+
+def looks_core_table(name: str, inbound_rel_count: int) -> bool:
+    if inbound_rel_count >= 2:
+        return True
+    for hint in CORE_NAME_HINTS:
+        if hint in name:
+            return True
+    return False
+
+
+def infer_inbound_relation_counts(schema_items: List[dict]) -> Dict[str, int]:
+    ws_ids = {str(s.get("workSheetId", "")).strip() for s in schema_items if str(s.get("workSheetId", "")).strip()}
+    inbound: Dict[str, int] = {}
+    for s in schema_items:
+        rels = s.get("relationFields", [])
+        if not isinstance(rels, list):
+            continue
+        for rel in rels:
+            if not isinstance(rel, dict):
+                continue
+            ds = str(rel.get("dataSource", "")).strip()
+            if ds and ds in ws_ids:
+                inbound[ds] = inbound.get(ds, 0) + 1
+    return inbound
+
+
+def fallback_count_entry(schema_item: dict, inbound_relation_count: int) -> dict:
+    ws_name = str(schema_item.get("workSheetName", "")).strip()
+    ws_id = str(schema_item.get("workSheetId", "")).strip()
+    if looks_secondary_table(ws_name):
+        tier = "secondary"
+        seed_count = COUNT_RULES[tier]
+        judgement = "表名命中明细/日志类特征，按次要表处理"
+    elif looks_core_table(ws_name, inbound_relation_count):
+        tier = "core"
+        seed_count = COUNT_RULES[tier]
+        judgement = "被多表依赖或主实体语义明显，按基础表处理"
+    else:
+        tier = "mid"
+        seed_count = COUNT_RULES[tier]
+        judgement = "未命中强特征，按中间层处理"
+    return {
+        "workSheetId": ws_id,
+        "workSheetName": ws_name,
+        "tier": tier,
+        "judgement": judgement,
+        "seedCount": seed_count,
+        "signals": ["local_fallback"],
+    }
+
+
+def build_fixed_count_plan(schema_items: List[dict], fixed_count: int) -> dict:
+    analyses = []
+    for s in schema_items:
+        analyses.append(
+            {
+                "workSheetId": s["workSheetId"],
+                "workSheetName": s["workSheetName"],
+                "tier": "core",
+                "judgement": f"固定数量模式，使用 rows_per_table={fixed_count}",
+                "seedCount": max(1, int(fixed_count)),
+                "signals": ["fixed_mode"],
+            }
+        )
+    app_id = str(schema_items[0].get("appId", "")).strip() if schema_items else ""
+    app_name = str(schema_items[0].get("appName", "")).strip() if schema_items else ""
+    return {
+        "appId": app_id,
+        "appName": app_name,
+        "sourceSchemaJson": "",
+        "strategyVersion": "row_seed_count_fixed_v1",
+        "rules": {"core_min": 1, "mid_min": 1, "secondary_min": 1},
+        "tableAnalyses": analyses,
+    }
+
+
+def build_local_fallback_plan(schema_items: List[dict], source_schema_json: str) -> dict:
+    inbound = infer_inbound_relation_counts(schema_items)
+    analyses = [fallback_count_entry(s, inbound.get(str(s.get("workSheetId", "")).strip(), 0)) for s in schema_items]
+    app_id = str(schema_items[0].get("appId", "")).strip() if schema_items else ""
+    app_name = str(schema_items[0].get("appName", "")).strip() if schema_items else ""
+    return {
+        "appId": app_id,
+        "appName": app_name,
+        "sourceSchemaJson": source_schema_json,
+        "strategyVersion": "row_seed_count_local_fallback_v1",
+        "rules": {
+            "core_min": COUNT_RULES["core"],
+            "mid_min": COUNT_RULES["mid"],
+            "secondary_min": COUNT_RULES["secondary"],
+        },
+        "tableAnalyses": analyses,
+    }
+
+
+def run_count_plan_script(schema_path: Path, model: str, output_path: Path) -> dict:
+    cmd = [
+        sys.executable,
+        str(COUNT_PLAN_SCRIPT),
+        "--schema-json",
+        str(schema_path),
+        "--model",
+        model,
+        "--output",
+        str(output_path),
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "").strip()
+        raise RuntimeError(f"数量分析脚本执行失败: {err}")
+    return load_json(output_path)
+
+
+def normalize_count_plan(schema_items: List[dict], plan_payload: dict) -> dict:
+    analyses_raw = plan_payload.get("tableAnalyses")
+    analyses_raw = analyses_raw if isinstance(analyses_raw, list) else []
+    by_ws_id: Dict[str, dict] = {}
+    inbound = infer_inbound_relation_counts(schema_items)
+    schema_map = {str(s.get("workSheetId", "")).strip(): s for s in schema_items}
+
+    for item in analyses_raw:
+        if not isinstance(item, dict):
+            continue
+        ws_id = str(item.get("workSheetId", "")).strip()
+        if not ws_id or ws_id not in schema_map:
+            continue
+        tier = str(item.get("tier", "")).strip().lower()
+        if tier not in COUNT_RULES:
+            tier = "mid"
+        minimum = COUNT_RULES[tier]
+        try:
+            seed_count = int(item.get("seedCount", minimum))
+        except Exception:
+            seed_count = minimum
+        seed_count = max(seed_count, minimum)
+        out = {
+            "workSheetId": ws_id,
+            "workSheetName": schema_map[ws_id]["workSheetName"],
+            "tier": tier,
+            "judgement": str(item.get("judgement", "")).strip() or "Gemini 判断",
+            "seedCount": seed_count,
+        }
+        confidence = item.get("confidence")
+        if isinstance(confidence, (int, float)):
+            out["confidence"] = max(0.0, min(1.0, float(confidence)))
+        signals = item.get("signals")
+        if isinstance(signals, list):
+            out["signals"] = [str(x).strip() for x in signals if str(x).strip()]
+        by_ws_id[ws_id] = out
+
+    for ws_id, schema_item in schema_map.items():
+        if ws_id not in by_ws_id:
+            by_ws_id[ws_id] = fallback_count_entry(schema_item, inbound.get(ws_id, 0))
+
+    ordered = [by_ws_id[str(s["workSheetId"]).strip()] for s in schema_items]
+    app_id = str(schema_items[0].get("appId", "")).strip() if schema_items else ""
+    app_name = str(schema_items[0].get("appName", "")).strip() if schema_items else ""
+    return {
+        "appId": str(plan_payload.get("appId", "")).strip() or app_id,
+        "appName": str(plan_payload.get("appName", "")).strip() or app_name,
+        "sourceSchemaJson": str(plan_payload.get("sourceSchemaJson", "")).strip(),
+        "strategyVersion": str(plan_payload.get("strategyVersion", "")).strip() or "row_seed_count_v1",
+        "rules": {
+            "core_min": COUNT_RULES["core"],
+            "mid_min": COUNT_RULES["mid"],
+            "secondary_min": COUNT_RULES["secondary"],
+        },
+        "tableAnalyses": ordered,
+    }
+
+
+def build_row_count_maps(schema_items: List[dict], count_plan: dict) -> Tuple[Dict[Tuple[str, str], int], List[dict]]:
+    analysis_by_ws_id = {}
+    analyses = count_plan.get("tableAnalyses")
+    if isinstance(analyses, list):
+        for row in analyses:
+            if isinstance(row, dict):
+                ws_id = str(row.get("workSheetId", "")).strip()
+                if ws_id:
+                    analysis_by_ws_id[ws_id] = row
+    row_count_map: Dict[Tuple[str, str], int] = {}
+    row_count_rows: List[dict] = []
+    for s in schema_items:
+        ws_id = s["workSheetId"]
+        key = (s["appId"], ws_id)
+        analysis = analysis_by_ws_id.get(ws_id, {})
+        try:
+            count = int(analysis.get("seedCount", 0))
+        except Exception:
+            count = 0
+        if count <= 0:
+            count = COUNT_RULES["mid"]
+        row_count_map[key] = count
+        row_count_rows.append(
+            {
+                "appId": s["appId"],
+                "appName": s["appName"],
+                "workSheetId": ws_id,
+                "workSheetName": s["workSheetName"],
+                "tier": str(analysis.get("tier", "")).strip() or "mid",
+                "seedCount": count,
+                "judgement": str(analysis.get("judgement", "")).strip(),
+            }
+        )
+    return row_count_map, row_count_rows
+
+
+def stringify_display_value(value: Any) -> str:
+    if isinstance(value, list):
+        parts = [stringify_display_value(v) for v in value]
+        parts = [x for x in parts if x]
+        return ",".join(parts[:3])
+    if isinstance(value, dict):
+        text = str(value.get("name") or value.get("value") or value.get("title") or "").strip()
+        if text:
+            return text
+        return ""
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def extract_display_and_signals_from_fields(fields: List[dict], title_field_id: str) -> Tuple[str, List[str]]:
+    values_by_id = {}
+    signals: List[str] = []
+    for it in fields:
+        if not isinstance(it, dict):
+            continue
+        fid = str(it.get("id", "")).strip()
+        val = it.get("value")
+        text = stringify_display_value(val)
+        if fid:
+            values_by_id[fid] = text
+        if text:
+            signals.append(text)
+    display_text = values_by_id.get(title_field_id, "") if title_field_id else ""
+    if not display_text and signals:
+        display_text = signals[0]
+    uniq_signals = []
+    for s in signals:
+        if s and s not in uniq_signals:
+            uniq_signals.append(s)
+    return display_text, uniq_signals[:8]
+
+
+def get_title_field_id(schema_item: dict) -> str:
+    for f in schema_item.get("fields", []) or []:
+        if isinstance(f, dict) and bool(f.get("isTitle", False)):
+            return str(f.get("id", "")).strip()
+    return ""
+
+
+def build_fresh_row_briefs(plan_item: dict, schema_item: dict, created_row_ids: List[str]) -> List[dict]:
+    title_field_id = get_title_field_id(schema_item)
+    base_rows = plan_item.get("baseRows") if isinstance(plan_item.get("baseRows"), list) else []
+    out = []
+    usable = min(len(base_rows), len(created_row_ids))
+    for i in range(usable):
+        rid = str(created_row_ids[i]).strip()
+        if not rid:
+            continue
+        row = base_rows[i] if isinstance(base_rows[i], dict) else {}
+        row_fields = row.get("fields") if isinstance(row.get("fields"), list) else []
+        display_text, signals = extract_display_and_signals_from_fields(row_fields, title_field_id)
+        out.append(
+            {
+                "rowId": rid,
+                "displayText": display_text or f"row_{i+1}",
+                "textSignals": signals,
+                "sourceIndex": i,
+            }
+        )
+    return out
+
+
+def build_relation_context(
+    schema_items: List[dict],
+    plan_items: List[dict],
+    created_row_ids_map: Dict[Tuple[str, str], List[str]],
+    row_pool: Dict[Tuple[str, str], List[str]],
+) -> dict:
+    schema_map = {(s["appId"], s["workSheetId"]): s for s in schema_items}
+    plan_map = {(p["appId"], p["workSheetId"]): p for p in plan_items}
+
+    fresh_brief_map: Dict[Tuple[str, str], List[dict]] = {}
+    for key, row_ids in created_row_ids_map.items():
+        schema_item = schema_map.get(key, {})
+        plan_item = plan_map.get(key, {})
+        fresh_brief_map[key] = build_fresh_row_briefs(plan_item, schema_item, row_ids)
+
+    sources = []
+    targets = []
+    for key, schema_item in schema_map.items():
+        app_id, ws_id = key
+        ws_name = schema_item["workSheetName"]
+        relation_fields = schema_item.get("relationFields", [])
+        source_rows = fresh_brief_map.get(key, [])
+        if relation_fields and source_rows:
+            sources.append(
+                {
+                    "appId": app_id,
+                    "workSheetId": ws_id,
+                    "workSheetName": ws_name,
+                    "relationFields": [
+                        {
+                            "id": str(rf.get("id", "")).strip(),
+                            "name": str(rf.get("name", "")).strip(),
+                            "dataSource": str(rf.get("dataSource", "")).strip(),
+                            "subType": int(rf.get("subType", 1) or 1),
+                        }
+                        for rf in relation_fields
+                        if isinstance(rf, dict) and str(rf.get("id", "")).strip() and str(rf.get("dataSource", "")).strip()
+                    ],
+                    "rows": source_rows,
+                }
+            )
+
+        # 构建 target 候选：优先使用本批 fresh 行的展示文案，历史行用 rowId 占位
+        fresh_label = {str(x.get("rowId", "")).strip(): str(x.get("displayText", "")).strip() for x in fresh_brief_map.get(key, [])}
+        merged_rows = []
+        for rid in row_pool.get(key, []):
+            rid = str(rid).strip()
+            if not rid:
+                continue
+            merged_rows.append(
+                {
+                    "rowId": rid,
+                    "displayText": fresh_label.get(rid, rid),
+                }
+            )
+            if len(merged_rows) >= 300:
+                break
+        targets.append(
+            {
+                "appId": app_id,
+                "workSheetId": ws_id,
+                "workSheetName": ws_name,
+                "rows": merged_rows,
+            }
+        )
+
+    app_id = str(schema_items[0].get("appId", "")).strip() if schema_items else ""
+    app_name = str(schema_items[0].get("appName", "")).strip() if schema_items else ""
+    return {
+        "appId": app_id,
+        "appName": app_name,
+        "strategyVersion": "row_relation_context_v1",
+        "sources": sources,
+        "targets": targets,
+    }
+
+
+def run_relation_plan_script(input_path: Path, model: str, output_path: Path) -> dict:
+    cmd = [
+        sys.executable,
+        str(REL_PLAN_SCRIPT),
+        "--input-json",
+        str(input_path),
+        "--model",
+        model,
+        "--output",
+        str(output_path),
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "").strip()
+        raise RuntimeError(f"关系规划脚本执行失败: {err}")
+    return load_json(output_path)
+
+
+def build_relation_link_map(relation_plan_payload: dict) -> Dict[Tuple[str, str, str], List[str]]:
+    links = relation_plan_payload.get("links") if isinstance(relation_plan_payload.get("links"), list) else []
+    rel_map: Dict[Tuple[str, str, str], List[str]] = {}
+    for link in links:
+        if not isinstance(link, dict):
+            continue
+        src_ws = str(link.get("sourceWorksheetId", "")).strip()
+        src_row = str(link.get("sourceRowId", "")).strip()
+        if not src_ws or not src_row:
+            continue
+        field_links = link.get("fieldLinks") if isinstance(link.get("fieldLinks"), list) else []
+        for fl in field_links:
+            if not isinstance(fl, dict):
+                continue
+            fid = str(fl.get("fieldId", "")).strip()
+            ids = fl.get("targetRowIds") if isinstance(fl.get("targetRowIds"), list) else []
+            target_ids = [str(x).strip() for x in ids if str(x).strip()]
+            if fid and target_ids:
+                rel_map[(src_ws, src_row, fid)] = target_ids
+    return rel_map
 
 
 def load_app_auth_rows() -> List[dict]:
@@ -587,7 +1020,10 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true", help="仅规划，不实际写入")
     parser.add_argument("--app-id", default="", help="可选，指定应用ID（传入后跳过应用选择交互）")
     parser.add_argument("--worksheet-ids", default="", help="可选，工作表ID列表（逗号分隔）或 all（跳过工作表选择交互）")
+    parser.add_argument("--row-count-mode", default="auto", help="造数数量模式：auto|fixed（默认 auto）")
     parser.add_argument("--rows-per-table", type=int, default=0, help="可选，每张表创建记录数（正整数，传入后跳过数量输入）")
+    parser.add_argument("--seed-count-plan-json", default="", help="可选，造数数量分析 JSON 路径（auto 模式可传）")
+    parser.add_argument("--relation-plan-json", default="", help="可选，关联映射规划 JSON 路径（不传则自动规划）")
     parser.add_argument("--delete-history", default="", help="可选，是否删除历史记录：y 或 n（传入后跳过删除确认）")
     args = parser.parse_args()
 
@@ -680,13 +1116,14 @@ def main() -> None:
         print("没有选中的工作表，结束。")
         return
 
+    row_count_mode = normalize_row_count_mode(args.row_count_mode)
     if args.rows_per_table and args.rows_per_table > 0:
-        row_count = int(args.rows_per_table)
-    else:
+        row_count_mode = "fixed"
+    if row_count_mode == "fixed" and (not args.rows_per_table or args.rows_per_table <= 0):
         while True:
             cnt_raw = input("请输入每张表要创建的记录数量（正整数）: ").strip()
             if cnt_raw.isdigit() and int(cnt_raw) > 0:
-                row_count = int(cnt_raw)
+                args.rows_per_table = int(cnt_raw)
                 break
             print("输入无效，请输入正整数。")
 
@@ -771,7 +1208,8 @@ def main() -> None:
         print(f"\n已跳过 {skipped_relation_fields_total} 个非单条关联字段（仅回填 subType=1）。")
 
     schema_payload = {
-        "rowCountPerWorksheet": row_count,
+        "rowCountMode": row_count_mode,
+        "rowCountPerWorksheet": int(args.rows_per_table) if row_count_mode == "fixed" else None,
         "skippedRelationFieldsTotal": skipped_relation_fields_total,
         "targets": schema_items,
     }
@@ -779,10 +1217,48 @@ def main() -> None:
     write_json(schema_path, schema_payload)
     write_json((SCHEMA_DIR / "row_seed_schema_latest.json").resolve(), schema_payload)
 
-    # Step 4: Gemini 规划记录（仅规划非关联字段；关联字段由真实 rowId 回填）
+    # Step 4: 决定每张表造数数量（fixed/auto）
+    count_plan_payload = {}
+    row_count_plan_path: Optional[Path] = None
+    if row_count_mode == "fixed":
+        fixed_count = max(1, int(args.rows_per_table or 1))
+        count_plan_payload = build_fixed_count_plan(schema_items, fixed_count)
+        COUNT_PLAN_DIR.mkdir(parents=True, exist_ok=True)
+        row_count_plan_path = (COUNT_PLAN_DIR / f"row_seed_count_plan_fixed_{now_ts()}.json").resolve()
+        write_json(row_count_plan_path, count_plan_payload)
+        write_json((COUNT_PLAN_DIR / "row_seed_count_plan_latest.json").resolve(), count_plan_payload)
+    else:
+        try:
+            if args.seed_count_plan_json.strip():
+                provided_plan = resolve_plan_json(args.seed_count_plan_json.strip(), COUNT_PLAN_DIR, "row_seed_count_plan_*.json")
+                raw_plan = load_json(provided_plan)
+                count_plan_payload = normalize_count_plan(schema_items, raw_plan)
+                COUNT_PLAN_DIR.mkdir(parents=True, exist_ok=True)
+                row_count_plan_path = (COUNT_PLAN_DIR / f"row_seed_count_plan_normalized_{now_ts()}.json").resolve()
+            else:
+                COUNT_PLAN_DIR.mkdir(parents=True, exist_ok=True)
+                row_count_plan_path = (COUNT_PLAN_DIR / f"row_seed_count_plan_{now_ts()}.json").resolve()
+                raw_plan = run_count_plan_script(schema_path=schema_path, model=args.model, output_path=row_count_plan_path)
+                count_plan_payload = normalize_count_plan(schema_items, raw_plan)
+            if row_count_plan_path:
+                write_json(row_count_plan_path, count_plan_payload)
+            # 统一写 latest，便于下游复用
+            write_json((COUNT_PLAN_DIR / "row_seed_count_plan_latest.json").resolve(), count_plan_payload)
+        except Exception as exc:
+            print(f"数量自动分析失败，改用本地兜底规则：{exc}")
+            count_plan_payload = build_local_fallback_plan(schema_items, str(schema_path))
+            row_count_plan_path = (COUNT_PLAN_DIR / f"row_seed_count_plan_fallback_{now_ts()}.json").resolve()
+            write_json(row_count_plan_path, count_plan_payload)
+            write_json((COUNT_PLAN_DIR / "row_seed_count_plan_latest.json").resolve(), count_plan_payload)
+
+    row_count_by_ws, row_count_by_worksheet = build_row_count_maps(schema_items, count_plan_payload)
+
+    # Step 5: Gemini 规划记录（仅规划非关联字段；关联字段由真实 rowId 回填）
     client = genai.Client(api_key=load_gemini_api_key())
     plan_items = []
     for s in schema_items:
+        ws_key = (s["appId"], s["workSheetId"])
+        row_count = row_count_by_ws.get(ws_key, COUNT_RULES["mid"])
         rows = generate_rows_by_gemini(
             client=client,
             model=args.model,
@@ -798,16 +1274,23 @@ def main() -> None:
                 "appAuthJson": s["appAuthJson"],
                 "workSheetId": s["workSheetId"],
                 "workSheetName": s["workSheetName"],
+                "rowCount": row_count,
                 "baseRows": rows,
                 "relationFields": s["relationFields"],
             }
         )
-    plan_payload = {"rowCountPerWorksheet": row_count, "targets": plan_items}
+    plan_payload = {
+        "rowCountMode": row_count_mode,
+        "rowCountPerWorksheet": int(args.rows_per_table) if row_count_mode == "fixed" else None,
+        "rowCountByWorksheet": row_count_by_worksheet,
+        "rowCountPlanJson": str(row_count_plan_path) if row_count_plan_path else "",
+        "targets": plan_items,
+    }
     plan_path = (PLAN_DIR / f"row_seed_plan_{now_ts()}.json").resolve()
     write_json(plan_path, plan_payload)
     write_json((PLAN_DIR / "row_seed_plan_latest.json").resolve(), plan_payload)
 
-    # Step 5: 写入（阶段A：非关联字段；阶段B：回填关联字段）
+    # Step 6: 写入（阶段A：非关联字段；阶段B：回填关联字段）
     app_auth_map: Dict[Tuple[str, str], dict] = {}
     invalid_selected_targets: List[dict] = []
     for item in all_selected_targets:
@@ -885,18 +1368,56 @@ def main() -> None:
         app = target["app"]
         ws = target["worksheet"]
         fresh = created_row_ids_map.get(key, [])
-        existed = fetch_existing_row_ids(app["appKey"], app["sign"], ws["workSheetId"], limit=max(200, row_count * 5))
+        planned_count = max(1, int(row_count_by_ws.get(key, COUNT_RULES["mid"])))
+        existed = fetch_existing_row_ids(app["appKey"], app["sign"], ws["workSheetId"], limit=max(200, planned_count * 5))
         merged = []
         for rid in fresh + existed:
             if rid and rid not in merged:
                 merged.append(rid)
         row_pool[key] = merged
 
+    # C. 生成关系映射计划（语义优先；失败则退化到旧规则）
+    relation_context_payload = build_relation_context(
+        schema_items=schema_items,
+        plan_items=plan_items,
+        created_row_ids_map=created_row_ids_map,
+        row_pool=row_pool,
+    )
+    REL_CONTEXT_DIR.mkdir(parents=True, exist_ok=True)
+    relation_context_path = (REL_CONTEXT_DIR / f"row_relation_context_{now_ts()}.json").resolve()
+    write_json(relation_context_path, relation_context_payload)
+    write_json((REL_CONTEXT_DIR / "row_relation_context_latest.json").resolve(), relation_context_payload)
+
+    relation_plan_path: Optional[Path] = None
+    relation_plan_payload: dict = {"links": [], "stats": {"totalFieldLinks": 0, "modelHitFieldLinks": 0, "fallbackFieldLinks": 0}}
+    relation_plan_error = ""
+    has_relation_sources = bool(relation_context_payload.get("sources"))
+    if has_relation_sources:
+        try:
+            if args.relation_plan_json.strip():
+                relation_plan_path = resolve_plan_json(args.relation_plan_json.strip(), REL_PLAN_DIR, "row_relation_plan_*.json")
+                relation_plan_payload = load_json(relation_plan_path)
+            else:
+                REL_PLAN_DIR.mkdir(parents=True, exist_ok=True)
+                relation_plan_path = (REL_PLAN_DIR / f"row_relation_plan_{now_ts()}.json").resolve()
+                relation_plan_payload = run_relation_plan_script(
+                    input_path=relation_context_path,
+                    model=args.model,
+                    output_path=relation_plan_path,
+                )
+            write_json((REL_PLAN_DIR / "row_relation_plan_latest.json").resolve(), relation_plan_payload)
+        except Exception as exc:
+            relation_plan_error = str(exc)
+            print(f"关系规划失败，将退化为索引回填：{relation_plan_error}")
+    relation_link_map = build_relation_link_map(relation_plan_payload)
+
     relation_update_success = 0
     relation_update_total = 0
     relation_skip_total = 0
+    relation_plan_hit_fields = 0
+    relation_fallback_fields = 0
 
-    # C. 回填关联字段：仅对当前批次创建出的记录进行 patch
+    # D. 回填关联字段：仅对当前批次创建出的记录进行 patch
     for key in ordered_keys:
         p = plan_map.get(key)
         if not p or key not in app_auth_map:
@@ -921,6 +1442,21 @@ def main() -> None:
                 if not target_pool:
                     relation_skip_total += 1
                     continue
+                target_pool_set = set(target_pool)
+                planned_refs = relation_link_map.get((source_ws_id, row_id, fid), [])
+                if planned_refs:
+                    cleaned = []
+                    for rid in planned_refs:
+                        if rid in target_pool_set and rid not in cleaned:
+                            cleaned.append(rid)
+                    if int(rf.get("subType", 1) or 1) == 2:
+                        cleaned = cleaned[:2]
+                    else:
+                        cleaned = cleaned[:1]
+                    if cleaned:
+                        patch_fields.append({"id": fid, "value": cleaned})
+                        relation_plan_hit_fields += 1
+                        continue
                 if int(rf.get("subType", 1) or 1) == 2:
                     # 多条关联，取最多2个，尽量避免自循环
                     refs = []
@@ -931,9 +1467,11 @@ def main() -> None:
                         if second != first:
                             refs.append(second)
                     patch_fields.append({"id": fid, "value": refs})
+                    relation_fallback_fields += 1
                 else:
                     ref = target_pool[idx % len(target_pool)]
                     patch_fields.append({"id": fid, "value": [ref]})
+                    relation_fallback_fields += 1
 
             if not patch_fields:
                 continue
@@ -972,9 +1510,18 @@ def main() -> None:
         "validSelectedTargets": len(app_auth_map),
         "unmatchedPlanTargets": unmatched_plan_targets,
         "unmatchedPlanTargetExamples": unmatched_examples,
-        "rowCountPerWorksheet": row_count,
+        "rowCountMode": row_count_mode,
+        "rowCountPlanJson": str(row_count_plan_path) if row_count_plan_path else "",
+        "rowCountPerWorksheet": int(args.rows_per_table) if row_count_mode == "fixed" else None,
+        "rowCountByWorksheet": row_count_by_worksheet,
         "successTables": success_tables,
         "skippedRelationFieldsTotal": skipped_relation_fields_total,
+        "relationContextJson": str(relation_context_path),
+        "relationPlanJson": str(relation_plan_path) if relation_plan_path else "",
+        "relationPlanError": relation_plan_error,
+        "relationPlanStats": relation_plan_payload.get("stats", {}),
+        "relationPlanHitFieldLinks": relation_plan_hit_fields,
+        "relationFallbackFieldLinks": relation_fallback_fields,
         "relationUpdateTotal": relation_update_total,
         "relationUpdateSuccess": relation_update_success,
         "relationSkipTotal": relation_skip_total,
@@ -995,10 +1542,19 @@ def main() -> None:
     print(f"- 匹配失败目标数: {unmatched_plan_targets}")
     if unmatched_plan_targets > 0:
         print("- 提示: 存在计划项未匹配，请检查 appId/workSheetId 映射一致性")
-    print(f"- 每表记录数: {row_count}")
+    print(f"- 造数模式: {row_count_mode}")
+    if row_count_mode == "fixed":
+        print(f"- 每表记录数: {int(args.rows_per_table)}")
+    else:
+        print(f"- 数量分析文件: {row_count_plan_path}")
     print(f"- 成功表数: {success_tables}/{len(all_selected_targets)}")
     print(f"- 关联回填成功: {relation_update_success}/{relation_update_total}")
+    print(f"- 关系规划命中字段: {relation_plan_hit_fields}")
+    print(f"- 关系回退字段: {relation_fallback_fields}")
     print(f"- 关联回填跳过字段数: {relation_skip_total}")
+    print(f"- 关系上下文文件: {relation_context_path}")
+    if relation_plan_path:
+        print(f"- 关系规划文件: {relation_plan_path}")
     print(f"- 字段结构文件: {schema_path}")
     print(f"- 记录规划文件: {plan_path}")
     print(f"- 执行结果文件: {result_path}")
