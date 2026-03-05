@@ -219,7 +219,7 @@ def refresh(headless: bool = False) -> None:
     print("\n💾 回写 auth_config.py ...")
     update_auth_config(account_id, authorization, cookie_str)
 
-    print("\n🎉 认证刷新完成！现在可以正常调用 create_worksheet_view.py 了")
+    print("\n🎉 认证刷新完成！现在可以正常调用需要认证的 HAP 脚本了")
     print("=" * 60)
 
 

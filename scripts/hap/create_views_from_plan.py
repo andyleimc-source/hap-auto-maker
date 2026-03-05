@@ -1,0 +1,326 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+按视图规划 JSON 创建工作表视图。
+"""
+
+import argparse
+import importlib.util
+import json
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+import requests
+
+BASE_DIR = Path(__file__).resolve().parents[2]
+OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
+VIEW_PLAN_DIR = OUTPUT_ROOT / "view_plans"
+VIEW_CREATE_RESULT_DIR = OUTPUT_ROOT / "view_create_results"
+AUTH_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "auth_config.py"
+SAVE_VIEW_URL = "https://www.mingdao.com/api/Worksheet/SaveWorksheetView"
+
+
+def now_ts() -> str:
+    return datetime.now().strftime("%Y%m%d_%H%M%S")
+
+
+def latest_file(base_dir: Path, pattern: str) -> Optional[Path]:
+    files = sorted(base_dir.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
+    return files[0] if files else None
+
+
+def load_json(path: Path) -> dict:
+    if not path.exists():
+        raise FileNotFoundError(f"文件不存在: {path}")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def write_json(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def resolve_plan_json(value: str) -> Path:
+    if value:
+        p = Path(value).expanduser()
+        if p.is_absolute() and p.exists():
+            return p.resolve()
+        if p.exists():
+            return p.resolve()
+        candidate = (VIEW_PLAN_DIR / value).resolve()
+        if candidate.exists():
+            return candidate
+        raise FileNotFoundError(f"找不到规划文件: {value}")
+    p = latest_file(VIEW_PLAN_DIR, "view_plan_*.json")
+    if not p:
+        raise FileNotFoundError(f"未找到规划文件（目录: {VIEW_PLAN_DIR}）")
+    return p.resolve()
+
+
+def load_auth_config(path: Path) -> dict:
+    if not path.exists():
+        raise FileNotFoundError(f"认证文件不存在: {path}")
+    spec = importlib.util.spec_from_file_location("auth_config_runtime", str(path))
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"无法加载认证文件: {path}")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    account_id = str(getattr(mod, "ACCOUNT_ID", "")).strip()
+    authorization = str(getattr(mod, "AUTHORIZATION", "")).strip()
+    cookie = str(getattr(mod, "COOKIE", "")).strip()
+    if not account_id or not authorization or not cookie:
+        raise ValueError(f"auth_config.py 缺少 ACCOUNT_ID/AUTHORIZATION/COOKIE: {path}")
+    return {"accountId": account_id, "authorization": authorization, "cookie": cookie}
+
+
+def normalize_advanced_setting(view_type: str, value: Any) -> dict:
+    if isinstance(value, dict):
+        raw = dict(value)
+    else:
+        raw = {}
+    if "enablerules" not in raw:
+        raw["enablerules"] = "1"
+    if "coverstyle" not in raw:
+        if str(view_type) == "3":
+            raw["coverstyle"] = '{"position":"2"}'
+        else:
+            raw["coverstyle"] = '{"position":"1","style":3}'
+    out = {}
+    for k, v in raw.items():
+        if isinstance(v, (dict, list)):
+            out[str(k)] = json.dumps(v, ensure_ascii=False, separators=(",", ":"))
+        elif isinstance(v, bool):
+            out[str(k)] = "1" if v else "0"
+        elif v is None:
+            out[str(k)] = ""
+        else:
+            out[str(k)] = str(v)
+    return out
+
+
+def build_create_payload(app_id: str, worksheet_id: str, view: dict) -> dict:
+    view_type = str(view.get("viewType", "0")).strip() or "0"
+    display_controls = view.get("displayControls")
+    if not isinstance(display_controls, list):
+        display_controls = []
+    display_controls = [str(x).strip() for x in display_controls if str(x).strip()]
+
+    payload = {
+        "viewId": "",
+        "appId": app_id,
+        "worksheetId": worksheet_id,
+        "viewType": view_type,
+        "name": str(view.get("name", "")).strip() or f"视图_{view_type}",
+        "displayControls": display_controls,
+        "sortType": 0,
+        "coverType": 0,
+        "controls": [],
+        "filters": [],
+        "sortCid": "",
+        "showControlName": True,
+        "advancedSetting": normalize_advanced_setting(view_type, view.get("advancedSetting")),
+    }
+
+    cover_cid = str(view.get("coverCid", "")).strip()
+    if cover_cid:
+        payload["coverCid"] = cover_cid
+    view_control = str(view.get("viewControl", "")).strip()
+    if view_control:
+        payload["viewControl"] = view_control
+    return payload
+
+
+def build_update_payload(app_id: str, worksheet_id: str, view_id: str, update: dict) -> dict:
+    payload = {"appId": app_id, "worksheetId": worksheet_id, "viewId": view_id}
+    for k, v in update.items():
+        if k in ("appId", "worksheetId", "viewId"):
+            continue
+        if k == "advancedSetting":
+            payload[k] = normalize_advanced_setting("", v)
+        else:
+            payload[k] = v
+    return payload
+
+
+def build_web_headers(auth: dict, app_id: str, worksheet_id: str, view_id: str = "") -> dict:
+    referer = f"https://www.mingdao.com/app/{app_id}/{worksheet_id}"
+    if view_id:
+        referer = f"{referer}/{view_id}"
+    return {
+        "Accept": "application/json, text/plain, */*",
+        "Content-Type": "application/json",
+        "accountid": auth["accountId"],
+        "Authorization": auth["authorization"],
+        "Cookie": auth["cookie"],
+        "Origin": "https://www.mingdao.com",
+        "Referer": referer,
+        "X-Requested-With": "XMLHttpRequest",
+    }
+
+
+def post_web_api(url: str, payload: dict, auth: dict, app_id: str, worksheet_id: str, view_id: str = "") -> dict:
+    headers = build_web_headers(auth, app_id=app_id, worksheet_id=worksheet_id, view_id=view_id)
+    resp = requests.post(url, headers=headers, json=payload, timeout=30)
+    try:
+        return resp.json()
+    except Exception:
+        return {"status_code": resp.status_code, "text": resp.text}
+
+
+def save_view(payload: dict, auth: dict, app_id: str, worksheet_id: str, dry_run: bool) -> dict:
+    if dry_run:
+        return {"dry_run": True, "payload": payload}
+    return post_web_api(SAVE_VIEW_URL, payload, auth, app_id=app_id, worksheet_id=worksheet_id)
+    headers = {
+        "Accept": "application/json, text/plain, */*",
+        "Content-Type": "application/json",
+        "accountid": auth["accountId"],
+        "Authorization": auth["authorization"],
+        "Cookie": auth["cookie"],
+        "Origin": "https://www.mingdao.com",
+        "Referer": f"https://www.mingdao.com/app/{app_id}/{worksheet_id}",
+        "X-Requested-With": "XMLHttpRequest",
+    }
+    resp = requests.post(SAVE_VIEW_URL, headers=headers, json=payload, timeout=30)
+    try:
+        data = resp.json()
+    except Exception:
+        data = {"status_code": resp.status_code, "text": resp.text}
+    return data
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="执行视图规划 JSON，批量创建工作表视图")
+    parser.add_argument("--plan-json", default="", help="视图规划 JSON 路径（默认取最新）")
+    parser.add_argument("--auth-config", default=str(AUTH_CONFIG_PATH), help="认证配置 auth_config.py 路径")
+    parser.add_argument("--app-ids", default="", help="可选，仅执行指定 appId（逗号分隔）")
+    parser.add_argument("--worksheet-ids", default="", help="可选，仅执行指定 worksheetId（逗号分隔）")
+    parser.add_argument("--dry-run", action="store_true", help="仅演练，不实际调用接口")
+    parser.add_argument("--output", default="", help="输出结果 JSON 路径")
+    args = parser.parse_args()
+
+    plan_path = resolve_plan_json(args.plan_json)
+    plan = load_json(plan_path)
+    auth = load_auth_config(Path(args.auth_config).expanduser().resolve())
+
+    wanted_app_ids = {x.strip() for x in str(args.app_ids).split(",") if x.strip()}
+    wanted_ws_ids = {x.strip() for x in str(args.worksheet_ids).split(",") if x.strip()}
+
+    apps = plan.get("apps")
+    if not isinstance(apps, list) or not apps:
+        raise ValueError(f"规划文件缺少 apps 列表: {plan_path}")
+
+    result = {
+        "executedAt": datetime.now().isoformat(timespec="seconds"),
+        "planJson": str(plan_path),
+        "dryRun": bool(args.dry_run),
+        "apps": [],
+        "summary": {
+            "appCount": 0,
+            "worksheetCount": 0,
+            "plannedViewCount": 0,
+            "createdViewCount": 0,
+            "updateCallCount": 0,
+            "failedCount": 0,
+        },
+    }
+
+    for app in apps:
+        if not isinstance(app, dict):
+            continue
+        app_id = str(app.get("appId", "")).strip()
+        app_name = str(app.get("appName", "")).strip() or app_id
+        if not app_id:
+            continue
+        if wanted_app_ids and app_id not in wanted_app_ids:
+            continue
+
+        ws_list = app.get("worksheets")
+        if not isinstance(ws_list, list):
+            ws_list = []
+
+        app_result = {"appId": app_id, "appName": app_name, "worksheets": []}
+        for ws in ws_list:
+            if not isinstance(ws, dict):
+                continue
+            ws_id = str(ws.get("worksheetId", "")).strip()
+            ws_name = str(ws.get("worksheetName", "")).strip() or ws_id
+            if not ws_id:
+                continue
+            if wanted_ws_ids and ws_id not in wanted_ws_ids:
+                continue
+            views = ws.get("views")
+            if not isinstance(views, list):
+                views = []
+            ws_result = {"worksheetId": ws_id, "worksheetName": ws_name, "views": []}
+            result["summary"]["worksheetCount"] += 1
+            result["summary"]["plannedViewCount"] += len(views)
+
+            for view in views:
+                if not isinstance(view, dict):
+                    continue
+                create_payload = build_create_payload(app_id, ws_id, view)
+                create_resp = save_view(create_payload, auth, app_id, ws_id, args.dry_run)
+
+                view_result = {
+                    "name": create_payload["name"],
+                    "viewType": create_payload["viewType"],
+                    "createPayload": create_payload,
+                    "createResponse": create_resp,
+                    "createdViewId": "",
+                    "updates": [],
+                    "success": False,
+                }
+
+                created_view_id = ""
+                if args.dry_run:
+                    created_view_id = "__DRY_RUN_VIEW_ID__"
+                    view_result["success"] = True
+                else:
+                    if isinstance(create_resp, dict) and int(create_resp.get("state", 0) or 0) == 1:
+                        created_view_id = str((create_resp.get("data") or {}).get("viewId", "")).strip()
+                        view_result["success"] = bool(created_view_id)
+                    if not view_result["success"]:
+                        result["summary"]["failedCount"] += 1
+                view_result["createdViewId"] = created_view_id
+
+                post_updates = view.get("postCreateUpdates")
+                if not isinstance(post_updates, list):
+                    post_updates = []
+                if created_view_id:
+                    for upd in post_updates:
+                        if not isinstance(upd, dict):
+                            continue
+                        upd_payload = build_update_payload(app_id, ws_id, created_view_id, upd)
+                        upd_resp = save_view(upd_payload, auth, app_id, ws_id, args.dry_run)
+                        view_result["updates"].append({"payload": upd_payload, "response": upd_resp})
+                        result["summary"]["updateCallCount"] += 1
+
+                if view_result["success"]:
+                    result["summary"]["createdViewCount"] += 1
+
+                ws_result["views"].append(view_result)
+            app_result["worksheets"].append(ws_result)
+        if app_result["worksheets"]:
+            result["apps"].append(app_result)
+
+    result["summary"]["appCount"] = len(result["apps"])
+
+    if args.output:
+        out_path = Path(args.output).expanduser().resolve()
+    else:
+        out_path = (VIEW_CREATE_RESULT_DIR / f"view_create_result_{now_ts()}.json").resolve()
+    write_json(out_path, result)
+
+    print(f"执行完成: {out_path}")
+    print(f"- 应用数: {result['summary']['appCount']}")
+    print(f"- 工作表数: {result['summary']['worksheetCount']}")
+    print(f"- 计划视图数: {result['summary']['plannedViewCount']}")
+    print(f"- 创建成功视图数: {result['summary']['createdViewCount']}")
+    print(f"- 更新调用次数: {result['summary']['updateCallCount']}")
+    print(f"- 失败次数: {result['summary']['failedCount']}")
+
+
+if __name__ == "__main__":
+    main()

@@ -12,10 +12,11 @@
 
 import argparse
 import json
+import random
 import re
 import subprocess
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -81,6 +82,18 @@ ROWS_LIST_URL = "https://api.mingdao.com/v3/app/worksheets/{worksheet_id}/rows/l
 
 def now_ts() -> str:
     return datetime.now().strftime("%Y%m%d_%H%M%S")
+
+
+def random_recent_date_str(is_datetime: bool = False) -> str:
+    """
+    生成最近 7 天内（含今天）的随机日期/日期时间字符串。
+    """
+    day_offset = random.randint(0, 6)
+    dt = datetime.now() - timedelta(days=day_offset)
+    if is_datetime:
+        dt = dt.replace(hour=random.randint(0, 23), minute=random.randint(0, 59), second=0, microsecond=0)
+        return dt.strftime("%Y-%m-%d %H:%M")
+    return dt.strftime("%Y-%m-%d")
 
 
 def latest_file(base_dir: Path, pattern: str) -> Optional[Path]:
@@ -961,7 +974,8 @@ def normalize_value_by_type(value: Any, field: dict) -> Any:
             out = [option_keys[0]]
         return out
     if t in ("Date", "DateTime"):
-        return str(value).strip()
+        # 业务规则：日期类字段统一使用最近 7 天内随机日期
+        return random_recent_date_str(is_datetime=(t == "DateTime"))
     if t == "Checkbox":
         if str(value).strip() in ("1", "true", "True", "yes", "Y", "y"):
             return 1
@@ -1037,7 +1051,7 @@ def generate_rows_by_gemini(
                     elif t == "Checkbox":
                         val = 1
                     elif t in ("Date", "DateTime"):
-                        val = "2026-01-01"
+                        val = random_recent_date_str(is_datetime=(t == "DateTime"))
                     elif t == "Collaborator":
                         val = [DEFAULT_COLLABORATOR_ACCOUNT_ID]
                     elif t == "Relation":
