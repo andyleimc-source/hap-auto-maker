@@ -10,6 +10,7 @@ import base64
 import hashlib
 import json
 import random
+import re
 import sys
 import time
 from pathlib import Path
@@ -23,27 +24,23 @@ DEFAULT_BASE_URL = "https://api.mingdao.com"
 ENDPOINT = "/v1/open/app/create"
 DEFAULT_GROUP_IDS = "69a794589860d96373beeb4d"
 ICON_JSON_PATH = BASE_DIR / "data" / "assets" / "icons" / "icon.json"
-COLOR_POOL = [
-    "#00bcd4",
-    "#4caf50",
-    "#2196f3",
-    "#ff9800",
-    "#e91e63",
-    "#9c27b0",
-    "#3f51b5",
+COLOR_POLICY_PATH = BASE_DIR / "config" / "policies" / "theme_color_policy.json"
+DEFAULT_COLOR_POOL = [
+    "#00BCD4",
+    "#4CAF50",
+    "#2196F3",
+    "#FF9800",
+    "#E91E63",
+    "#9C27B0",
+    "#3F51B5",
     "#009688",
-    "#8bc34a",
-    "#ffc107",
-    "#ff5722",
+    "#FF5722",
     "#795548",
-    "#607d8b",
-    "#f44336",
-    "#673ab7",
-    "#03a9f4",
-    "#cddc39",
-    "#ffeb3b",
-    "#ff6f61",
-    "#26a69a",
+    "#607D8B",
+    "#F44336",
+    "#673AB7",
+    "#03A9F4",
+    "#26A69A",
 ]
 
 
@@ -93,6 +90,90 @@ def pick_random_icon() -> str:
     return random.choice(file_names)
 
 
+def normalize_hex_color(color: str) -> str:
+    c = (color or "").strip().upper()
+    if not c:
+        return ""
+    if not c.startswith("#"):
+        c = f"#{c}"
+    if re.fullmatch(r"#[0-9A-F]{6}", c):
+        return c
+    return ""
+
+
+def hex_to_rgb(color: str) -> tuple[int, int, int]:
+    c = normalize_hex_color(color)
+    if not c:
+        raise ValueError(f"非法颜色值: {color}")
+    return int(c[1:3], 16), int(c[3:5], 16), int(c[5:7], 16)
+
+
+def _channel_to_linear(v: int) -> float:
+    x = v / 255.0
+    return x / 12.92 if x <= 0.04045 else ((x + 0.055) / 1.055) ** 2.4
+
+
+def relative_luminance(color: str) -> float:
+    r, g, b = hex_to_rgb(color)
+    rl, gl, bl = _channel_to_linear(r), _channel_to_linear(g), _channel_to_linear(b)
+    return 0.2126 * rl + 0.7152 * gl + 0.0722 * bl
+
+
+def contrast_ratio_with_white(color: str) -> float:
+    # 白字对背景色的对比度： (L1+0.05)/(L2+0.05)，L1为白色1.0
+    lum = relative_luminance(color)
+    return 1.05 / (lum + 0.05)
+
+
+def load_color_policy() -> dict:
+    if not COLOR_POLICY_PATH.exists():
+        return {}
+    data = json.loads(COLOR_POLICY_PATH.read_text(encoding="utf-8"))
+    return data if isinstance(data, dict) else {}
+
+
+def pick_random_safe_color() -> str:
+    policy = load_color_policy()
+    candidates = policy.get("candidate_colors")
+    if not isinstance(candidates, list) or not candidates:
+        candidates = DEFAULT_COLOR_POOL
+    normalized_candidates = []
+    for c in candidates:
+        n = normalize_hex_color(str(c))
+        if n:
+            normalized_candidates.append(n)
+
+    excluded = set()
+    for c in policy.get("exclude_hex", []) if isinstance(policy.get("exclude_hex"), list) else []:
+        n = normalize_hex_color(str(c))
+        if n:
+            excluded.add(n)
+
+    rule = policy.get("white_text_accessibility", {}) if isinstance(policy.get("white_text_accessibility"), dict) else {}
+    enabled = bool(rule.get("enabled", True))
+    min_contrast = float(rule.get("min_contrast_ratio", 4.5))
+    max_luminance = float(rule.get("max_luminance", 0.18))
+
+    safe_colors = []
+    for c in normalized_candidates:
+        if c in excluded:
+            continue
+        if not enabled:
+            safe_colors.append(c)
+            continue
+        lum = relative_luminance(c)
+        cr = contrast_ratio_with_white(c)
+        if lum <= max_luminance and cr >= min_contrast:
+            safe_colors.append(c)
+
+    if safe_colors:
+        return random.choice(safe_colors)
+    if normalized_candidates:
+        # 如果策略过严导致全被过滤，退回候选池，保证可用性
+        return random.choice(normalized_candidates)
+    return "#00BCD4"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="创建 HAP 应用")
     parser.add_argument("--name", required=True, help="应用名称")
@@ -127,8 +208,9 @@ def main() -> None:
 
     color_value = args.color.strip() if args.color else ""
     if not color_value:
-        color_value = random.choice(COLOR_POOL)
-        print(f"随机选择 color: {color_value}", file=sys.stderr)
+        color_value = pick_random_safe_color()
+        cr = contrast_ratio_with_white(color_value)
+        print(f"随机选择 color: {color_value} (white-contrast={cr:.2f})", file=sys.stderr)
 
     timestamp_ms = int(time.time() * 1000)
     sign = build_sign(app_key, secret_key, timestamp_ms)

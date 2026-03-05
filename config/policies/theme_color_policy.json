@@ -1,0 +1,32 @@
+{
+  "version": "v1",
+  "description": "应用主题色随机策略（优先保证白色文字可读性）",
+  "white_text_accessibility": {
+    "enabled": true,
+    "min_contrast_ratio": 4.5,
+    "max_luminance": 0.18
+  },
+  "exclude_hex": [
+    "#FFEB3B",
+    "#FFC107",
+    "#CDDC39",
+    "#8BC34A"
+  ],
+  "candidate_colors": [
+    "#00BCD4",
+    "#4CAF50",
+    "#2196F3",
+    "#FF9800",
+    "#E91E63",
+    "#9C27B0",
+    "#3F51B5",
+    "#009688",
+    "#FF5722",
+    "#795548",
+    "#607D8B",
+    "#F44336",
+    "#673AB7",
+    "#03A9F4",
+    "#26A69A"
+  ]
+}

@@ -99,7 +99,9 @@ def build_prompt(app_name: str, business_context: str, extra_requirements: str) 
 5) option_values 里的值禁止包含示例引导词或模糊词，如：`如`、`例如`、`比如`、`等`、`等等`、`其他等`。
 6) option_values 每个值需为短语（建议 2-8 个字），且同字段内不得重复。
 7) 明确禁止 N-N（多对多）关系，只允许 1-1 或 1-N。
-8) 输出为合法 JSON。
+8) 当 relationships.cardinality=1-N 时，语义固定为：from=“1”的一端，to=“N”的一端。
+9) 当 relationships.cardinality=1-N 时，Relation 字段应定义在 to 表，relation_target 指向 from 表；同一对表禁止 A->B 与 B->A 同时出现 Relation 字段。
+10) 输出为合法 JSON。
 """.strip()
 
 

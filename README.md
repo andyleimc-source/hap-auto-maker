@@ -76,7 +76,7 @@ python3 /Users/andy/Desktop/hap_auto/scripts/execute_requirements.py --spec-json
 
 3.2 工作表管理
 1. `plan_app_worksheets_gemini.py`：Gemini 规划工作表结构
-2. `create_worksheets_from_plan.py`：根据规划创建工作表（当前默认双向关联）
+2. `create_worksheets_from_plan.py`：根据规划创建工作表（1对N 双向显示：N端单选、1端多选，并校验避免异常 N-N）
 3. `list_app_worksheets.py`：拉取某应用下工作表清单
 4. `update_worksheet_icons.py`：批量更新工作表 icon
 
