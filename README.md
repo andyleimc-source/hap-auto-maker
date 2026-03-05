@@ -64,6 +64,72 @@ python3 /Users/andy/Desktop/hap_auto/scripts/execute_requirements.py --spec-json
 ```
 
 
+二点五、命令速查（可直接复制）
+
+先进入项目目录：
+```bash
+cd /Users/andy/Desktop/hap_auto
+```
+
+1) 需求对话 + /done 自动执行全流程
+```bash
+python3 /Users/andy/Desktop/hap_auto/scripts/agent_collect_requirements.py
+```
+
+2) 只执行已有需求 JSON（不走对话）
+```bash
+python3 /Users/andy/Desktop/hap_auto/scripts/execute_requirements.py \
+  --spec-json /Users/andy/Desktop/hap_auto/data/outputs/requirement_specs/requirement_spec_latest.json
+```
+
+3) 创建应用（含授权和应用 icon）
+```bash
+python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_create_app.py \
+  --name "医院后勤管理系统"
+```
+
+4) 工作表规划 + 建表 + 工作表 icon
+```bash
+python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_worksheets.py
+```
+
+5) 字段布局规划 + 应用布局
+```bash
+python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_worksheet_layout.py \
+  --app-id <你的appId> \
+  --requirements "按业务角色优化表单布局"
+```
+
+6) 造数（交互式）
+```bash
+python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_create_rows.py
+```
+
+7) 造数（非交互，适合重复执行）
+```bash
+python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_create_rows.py \
+  --app-id <你的appId> \
+  --worksheet-ids all \
+  --rows-per-table 3 \
+  --delete-history n
+```
+
+8) 删除应用
+
+批量删除（先列出应用，再输入 Y 全删 或 1,2,3 按序号删）：
+```bash
+python3 /Users/andy/Desktop/hap_auto/scripts/delete_app.py --delete-all
+```
+
+
+9) 工作表 icon 重新匹配并更新
+```bash
+python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_icon.py \
+  --app-auth-json /Users/andy/Desktop/hap_auto/data/outputs/app_authorizations/app_authorize_<你的appId>.json \
+  --app-id <你的appId>
+```
+
+
 三、主要单功能脚本（可用于后续合并/串联）
 
 3.1 应用管理

@@ -747,6 +747,9 @@ def main() -> None:
         simple_fields = [simplify_field(f) for f in schema["fields"] if isinstance(f, dict)]
         writable_fields = [f for f in simple_fields if f["id"] and not f["readOnly"] and not f["hidden"]]
         relation_fields = [f for f in writable_fields if f["type"] == "Relation"]
+        # 仅回填 subType=1（单条）关系字段；跳过系统自动生成的反向多条字段，避免把 n 端写脏为多关联。
+        relation_fields_to_patch = [f for f in relation_fields if int(f.get("subType", 0) or 0) == 1]
+        skipped_relation_fields = [f for f in relation_fields if int(f.get("subType", 0) or 0) != 1]
         base_fields = [f for f in writable_fields if f["type"] != "Relation"]
         schema_items.append(
             {
@@ -758,12 +761,18 @@ def main() -> None:
                 "fields": simple_fields,
                 "writableFields": writable_fields,
                 "baseWritableFields": base_fields,
-                "relationFields": relation_fields,
+                "relationFields": relation_fields_to_patch,
+                "skippedRelationFields": skipped_relation_fields,
             }
         )
 
+    skipped_relation_fields_total = sum(len(s.get("skippedRelationFields", [])) for s in schema_items)
+    if skipped_relation_fields_total > 0:
+        print(f"\n已跳过 {skipped_relation_fields_total} 个非单条关联字段（仅回填 subType=1）。")
+
     schema_payload = {
         "rowCountPerWorksheet": row_count,
+        "skippedRelationFieldsTotal": skipped_relation_fields_total,
         "targets": schema_items,
     }
     schema_path = (SCHEMA_DIR / f"row_seed_schema_{now_ts()}.json").resolve()
@@ -965,6 +974,7 @@ def main() -> None:
         "unmatchedPlanTargetExamples": unmatched_examples,
         "rowCountPerWorksheet": row_count,
         "successTables": success_tables,
+        "skippedRelationFieldsTotal": skipped_relation_fields_total,
         "relationUpdateTotal": relation_update_total,
         "relationUpdateSuccess": relation_update_success,
         "relationSkipTotal": relation_skip_total,
