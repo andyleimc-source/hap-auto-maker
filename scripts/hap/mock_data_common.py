@@ -506,33 +506,49 @@ def infer_relation_pairs(relation_edges: List[dict]) -> Tuple[List[dict], List[s
 
 def compute_worksheet_tiers(worksheets: List[dict], relation_pairs: List[dict]) -> List[dict]:
     by_ws: Dict[str, List[dict]] = {ws["worksheetId"]: [] for ws in worksheets}
+    outgoing_edge_subtypes: Dict[str, List[int]] = {ws["worksheetId"]: [] for ws in worksheets}
     for pair in relation_pairs:
         pair_type = str(pair.get("pairType", "")).strip()
         for key in ("worksheetAId", "worksheetBId"):
             ws_id = str(pair.get(key, "")).strip()
             if ws_id in by_ws:
                 by_ws[ws_id].append({"pairType": pair_type, "pair": pair})
+        for edge in pair.get("edges", []) or []:
+            if not isinstance(edge, dict):
+                continue
+            source_ws_id = str(edge.get("sourceWorksheetId", "")).strip()
+            if source_ws_id in outgoing_edge_subtypes:
+                outgoing_edge_subtypes[source_ws_id].append(int(edge.get("subType", 0) or 0))
 
     tiers: List[dict] = []
     for worksheet in worksheets:
         ws_id = worksheet["worksheetId"]
         matches = by_ws.get(ws_id, [])
         pair_types = [item["pairType"] for item in matches]
+        self_edge_subtypes = outgoing_edge_subtypes.get(ws_id, [])
         if not matches:
             tier = 1
-            record_count = 10
+            record_count = 5
             reason = "该表与其他表不存在关联关系"
-        elif all(pair_type == "1-1" for pair_type in pair_types):
-            tier = 3
-            record_count = 25
-            reason = "该表存在关联关系，且涉及的关系对均判定为 1-1"
-        else:
+        elif (
+            self_edge_subtypes
+            and all(sub_type == 1 for sub_type in self_edge_subtypes)
+            and any(pair_type == "1-N" for pair_type in pair_types)
+        ):
             tier = 2
             record_count = 10
-            if any(pair_type == "1-N" for pair_type in pair_types):
-                reason = "该表至少存在一个 1-N 关系对"
+            reason = "该表自身仅通过单选 Relation 关联上级表，按明细端处理"
+        else:
+            tier = 3 if all(pair_type == "1-1" for pair_type in pair_types) else 1
+            record_count = 5
+            if any(sub_type == 2 for sub_type in self_edge_subtypes):
+                reason = "该表存在聚合端 Relation 字段，按主表处理"
+            elif all(pair_type == "1-1" for pair_type in pair_types):
+                reason = "该表存在关联关系，且涉及的关系对均判定为 1-1"
+            elif any(pair_type == "1-N" for pair_type in pair_types):
+                reason = "该表参与 1-N 关系，但自身不是明细单选端，按主表处理"
             else:
-                reason = "该表存在 ambiguous 关系，按第二梯队处理"
+                reason = "该表存在 ambiguous 关系，按主表处理"
         tiers.append(
             {
                 "worksheetId": ws_id,
@@ -541,6 +557,7 @@ def compute_worksheet_tiers(worksheets: List[dict], relation_pairs: List[dict]) 
                 "recordCount": record_count,
                 "reason": reason,
                 "pairTypes": pair_types,
+                "selfRelationSubTypes": self_edge_subtypes,
             }
         )
     tiers.sort(key=lambda item: (item["tier"], item["worksheetName"]))
