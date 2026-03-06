@@ -535,11 +535,11 @@ def compute_worksheet_tiers(worksheets: List[dict], relation_pairs: List[dict]) 
             and all(sub_type == 1 for sub_type in self_edge_subtypes)
             and any(pair_type == "1-N" for pair_type in pair_types)
         ):
-            tier = 2
+            tier = 3
             record_count = 10
             reason = "该表自身仅通过单选 Relation 关联上级表，按明细端处理"
         else:
-            tier = 3 if all(pair_type == "1-1" for pair_type in pair_types) else 1
+            tier = 2 if all(pair_type == "1-1" for pair_type in pair_types) else 1
             record_count = 5
             if any(sub_type == 2 for sub_type in self_edge_subtypes):
                 reason = "该表存在聚合端 Relation 字段，按主表处理"

@@ -145,14 +145,18 @@ python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_mock_data.py
 - 结构快照会输出工作表、字段、可写字段、跳过字段、关系边、关系对和 worksheet tier。
 - tier 规则：
   - 无关联：第一梯队，默认每表 5 条记录。
-  - 自身 Relation 字段全部为单选端（`subType=1`），且命中 `1-N`：第二梯队，按明细端处理，默认每表 10 条记录。
-  - 存在关联且全部为 `1-1`：第三梯队，默认每表 5 条记录。
+  - 存在关联且全部为 `1-1`：第二梯队，默认每表 5 条记录。
+  - 自身 Relation 字段全部为单选端（`subType=1`），且命中 `1-N`：第三梯队，按明细端处理，默认每表 10 条记录。
   - 聚合端、主表、或 `ambiguous`：按主表处理，默认每表 5 条记录。
 - 造数阶段只写常见可写字段：`Text`、`Number`、`Date`、`DateTime`、`SingleSelect`、`MultipleSelect`、`Checkbox`、`Rating`、常见文本类字段。
 - 系统字段、公式/汇总、附件、子表、成员/部门/组织角色、Relation 字段会被跳过并记录原因。
 - 关联阶段当前支持：
   - `1-1` 关系字段
   - `1-N` 关系中的单选端字段（`subType=1`）
+- Relation 修复顺序与造数 tier 保持一致：
+  - `tier 1`（无关联 / 聚合端 / 主表 / ambiguous）优先
+  - `tier 2`（纯 `1-1`）其次
+  - `tier 3`（明细单选端）最后
 - 关联修复阶段新增两个独立脚本：
   - `analyze_relation_consistency.py`：扫描当前真实写入结果，生成 `updates` 和 `unresolved` 修复计划。
   - `apply_relation_repair_plan.py`：按修复计划批量更新关系字段。

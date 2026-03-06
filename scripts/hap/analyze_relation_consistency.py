@@ -99,7 +99,7 @@ def build_candidate_worksheets(snapshot: dict) -> List[dict]:
             {
                 "worksheetId": ws_id,
                 "worksheetName": worksheet["worksheetName"],
-                "processTier": 1 if tier == 3 else 2,
+                "processTier": tier,
                 "relationFields": relation_fields,
             }
         )
