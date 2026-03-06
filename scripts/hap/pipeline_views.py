@@ -17,7 +17,7 @@ CREATE_SCRIPT = BASE_DIR / "scripts" / "create_views_from_plan.py"
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 VIEW_PLAN_DIR = OUTPUT_ROOT / "view_plans"
 VIEW_CREATE_RESULT_DIR = OUTPUT_ROOT / "view_create_results"
-DEFAULT_MODEL = "gemini-3-flash-preview"
+DEFAULT_MODEL = "gemini-2.5-pro"
 DEFAULT_GEMINI_CONFIG = BASE_DIR / "config" / "credentials" / "gemini_auth.json"
 DEFAULT_AUTH_CONFIG = BASE_DIR / "config" / "credentials" / "auth_config.py"
 

@@ -34,7 +34,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="一键执行工作表 icon 匹配与批量更新")
     parser.add_argument("--app-auth-json", default="", help="应用授权 JSON 文件名或路径")
     parser.add_argument("--app-id", default="", help="可选，授权文件有多个 app 时可指定")
-    parser.add_argument("--model", default="gemini-3-flash-preview", help="Gemini 模型名")
+    parser.add_argument("--model", default="gemini-2.5-pro", help="Gemini 模型名")
     parser.add_argument(
         "--inventory-json",
         default=str((WORKSHEET_INVENTORY_DIR / "worksheet_inventory_latest.json").resolve()),

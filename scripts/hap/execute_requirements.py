@@ -33,6 +33,7 @@ SCRIPT_PIPELINE_LAYOUT = SCRIPTS_DIR / "pipeline_worksheet_layout.py"
 SCRIPT_PIPELINE_VIEWS = SCRIPTS_DIR / "pipeline_views.py"
 SCRIPT_PIPELINE_TABLEVIEW_FILTERS = SCRIPTS_DIR / "pipeline_tableview_filters.py"
 SCRIPT_UPDATE_NAVI = SCRIPTS_DIR / "update_app_navi_style.py"
+SCRIPT_PIPELINE_MOCK_DATA = SCRIPTS_DIR / "pipeline_mock_data.py"
 VIEW_PLAN_DIR = OUTPUT_ROOT / "view_plans"
 VIEW_CREATE_RESULT_DIR = OUTPUT_ROOT / "view_create_results"
 TABLEVIEW_FILTER_PLAN_DIR = OUTPUT_ROOT / "tableview_filter_plans"
@@ -89,7 +90,7 @@ def normalize_spec(raw: dict) -> dict:
     ws.setdefault("enabled", True)
     ws.setdefault("business_context", "通用企业管理场景")
     ws.setdefault("requirements", "")
-    ws.setdefault("model", "gemini-3.1-pro-preview")
+    ws.setdefault("model", "gemini-2.5-pro")
     icon_update = ws.get("icon_update") if isinstance(ws.get("icon_update"), dict) else {}
     icon_update.setdefault("enabled", True)
     icon_update.setdefault("refresh_auth", False)
@@ -103,13 +104,20 @@ def normalize_spec(raw: dict) -> dict:
 
     views = spec.get("views") if isinstance(spec.get("views"), dict) else {}
     views.setdefault("enabled", True)
-    views.setdefault("model", ws.get("model", "gemini-3.1-pro-preview"))
+    views.setdefault("model", ws.get("model", "gemini-2.5-pro"))
     spec["views"] = views
 
     view_filters = spec.get("view_filters") if isinstance(spec.get("view_filters"), dict) else {}
     view_filters.setdefault("enabled", True)
-    view_filters.setdefault("model", ws.get("model", "gemini-3.1-pro-preview"))
+    view_filters.setdefault("model", ws.get("model", "gemini-2.5-pro"))
     spec["view_filters"] = view_filters
+
+    mock_data = spec.get("mock_data") if isinstance(spec.get("mock_data"), dict) else {}
+    mock_data.setdefault("enabled", True)
+    mock_data.setdefault("model", ws.get("model", "gemini-2.5-pro"))
+    mock_data.setdefault("dry_run", False)
+    mock_data.setdefault("trigger_workflow", False)
+    spec["mock_data"] = mock_data
 
     execution = spec.get("execution") if isinstance(spec.get("execution"), dict) else {}
     execution.setdefault("fail_fast", True)
@@ -128,6 +136,7 @@ def ensure_scripts_exist() -> None:
         SCRIPT_PIPELINE_VIEWS,
         SCRIPT_PIPELINE_TABLEVIEW_FILTERS,
         SCRIPT_UPDATE_NAVI,
+        SCRIPT_PIPELINE_MOCK_DATA,
     ]
     missing = [str(p) for p in required if not p.exists()]
     if missing:
@@ -158,6 +167,13 @@ def extract_app_id_from_text(text: str) -> Optional[str]:
     if m2:
         return m2.group(1)
     return None
+
+
+def extract_report_path(text: str) -> Optional[str]:
+    m = re.search(r"-\s*报告:\s*(.+)", text or "")
+    if not m:
+        return None
+    return m.group(1).strip()
 
 
 def run_cmd(cmd: List[str], dry_run: bool, verbose: bool) -> Dict[str, object]:
@@ -227,7 +243,7 @@ def main() -> None:
     parser.add_argument(
         "--only-steps",
         default="",
-        help="仅执行指定步骤（逗号分隔：1,2,3 或 create_app,worksheets_plan,worksheets_create,worksheet_icon,layout,views,view_filters,navi）",
+        help="仅执行指定步骤（逗号分隔：1,2,3 或 create_app,worksheets_plan,worksheets_create,worksheet_icon,layout,views,view_filters,navi,mock_data）",
     )
     parser.add_argument("--verbose", action="store_true", help="打印子脚本完整输出")
     args = parser.parse_args()
@@ -255,6 +271,7 @@ def main() -> None:
         "view_create_result_json": None,
         "tableview_filter_plan_json": None,
         "tableview_filter_apply_result_json": None,
+        "mock_data_run_json": None,
     }
     steps_report: List[dict] = []
 
@@ -279,6 +296,7 @@ def main() -> None:
                 "view_create_result_json": context.get("view_create_result_json"),
                 "tableview_filter_plan_json": context.get("tableview_filter_plan_json"),
                 "tableview_filter_apply_result_json": context.get("tableview_filter_apply_result_json"),
+                "mock_data_run_json": context.get("mock_data_run_json"),
             },
             "context": context,
             "steps": steps_report,
@@ -329,6 +347,7 @@ def main() -> None:
     ws = spec["worksheets"]
     views = spec["views"]
     view_filters = spec["view_filters"]
+    mock_data = spec["mock_data"]
 
     # Step 1: 创建应用（默认新建）
     if app.get("target_mode") == "create_new":
@@ -340,7 +359,7 @@ def main() -> None:
             "--group-ids",
             str(app.get("group_ids", "69a794589860d96373beeb4d")),
             "--gemini-model",
-            str(ws.get("model", "gemini-3.1-pro-preview")),
+            str(ws.get("model", "gemini-2.5-pro")),
         ]
         if str(app.get("icon_mode", "gemini_match")) != "gemini_match":
             cmd1.append("--skip-smart-icon")
@@ -396,7 +415,7 @@ def main() -> None:
             "--requirements",
             str(ws.get("requirements", "")),
             "--model",
-            str(ws.get("model", "gemini-3.1-pro-preview")),
+            str(ws.get("model", "gemini-2.5-pro")),
             "--output",
             str(plan_output),
         ]
@@ -434,7 +453,7 @@ def main() -> None:
             "--app-id",
             app_id,
             "--model",
-            str(ws.get("model", "gemini-3.1-pro-preview")),
+            str(ws.get("model", "gemini-2.5-pro")),
         ]
         if ws["icon_update"].get("refresh_auth", False):
             cmd3.append("--refresh-auth")
@@ -454,7 +473,7 @@ def main() -> None:
             "--app-id",
             app_id,
             "--model",
-            str(ws.get("model", "gemini-3.1-pro-preview")),
+            str(ws.get("model", "gemini-2.5-pro")),
         ]
         layout_req = str(ws["layout"].get("requirements", "")).strip()
         if layout_req:
@@ -477,7 +496,7 @@ def main() -> None:
             sys.executable,
             str(SCRIPT_PIPELINE_VIEWS),
             "--model",
-            str(views.get("model", ws.get("model", "gemini-3.1-pro-preview"))),
+            str(views.get("model", ws.get("model", "gemini-2.5-pro"))),
             "--app-ids",
             app_id,
             "--plan-output",
@@ -506,7 +525,7 @@ def main() -> None:
             sys.executable,
             str(SCRIPT_PIPELINE_TABLEVIEW_FILTERS),
             "--model",
-            str(view_filters.get("model", views.get("model", ws.get("model", "gemini-3.1-pro-preview")))),
+            str(view_filters.get("model", views.get("model", ws.get("model", "gemini-2.5-pro")))),
             "--app-ids",
             app_id,
             "--plan-output",
@@ -546,6 +565,30 @@ def main() -> None:
             return
     else:
         steps_report.append({"step_id": 7, "step_key": "navi", "title": "设置应用导航风格", "skipped": True, "reason": "disabled_by_spec"})
+
+    # Step 8: 造数流水线
+    if mock_data.get("enabled", True):
+        cmd8 = [
+            sys.executable,
+            str(SCRIPT_PIPELINE_MOCK_DATA),
+            "--app-id",
+            app_id,
+            "--model",
+            str(mock_data.get("model", ws.get("model", "gemini-2.5-pro"))),
+        ]
+        if execution_dry_run or mock_data.get("dry_run", False):
+            cmd8.append("--dry-run")
+        if mock_data.get("trigger_workflow", False):
+            cmd8.append("--trigger-workflow")
+        ok8 = execute_step(8, "mock_data", "执行造数流水线", cmd8)
+        if ok8 and not execution_dry_run:
+            context["mock_data_run_json"] = extract_report_path(str(steps_report[-1]["result"].get("stdout", "")))
+        if fail_fast and (not ok8):
+            out = save_report()
+            print(f"\n执行失败并终止，报告: {out}")
+            return
+    else:
+        steps_report.append({"step_id": 8, "step_key": "mock_data", "title": "执行造数流水线", "skipped": True, "reason": "disabled_by_spec"})
 
     out = save_report()
     report = build_report()

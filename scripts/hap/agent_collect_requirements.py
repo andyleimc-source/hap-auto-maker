@@ -35,12 +35,8 @@ OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 SPEC_DIR = OUTPUT_ROOT / "requirement_specs"
 GEMINI_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "gemini_auth.json"
 # 用户指定优先模型；若不可用则自动回退到已验证可用模型
-DEFAULT_MODEL = "gemini-3.1-pro-preview"
-FALLBACK_MODELS = (
-    "gemini-3-pro-preview",
-    "gemini-3-flash-preview",
-    "gemini-2.5-pro",
-)
+DEFAULT_MODEL = "gemini-2.5-pro"
+FALLBACK_MODELS = ("gemini-2.5-pro",)
 EXECUTE_REQUIREMENTS_SCRIPT = BASE_DIR / "scripts" / "execute_requirements.py"
 
 
@@ -294,7 +290,7 @@ def build_spec_prompt(transcript: List[Dict[str, str]]) -> str:
     "enabled": true,
     "business_context": "业务背景",
     "requirements": "工作表规划要求",
-    "model": "gemini-3.1-pro-preview",
+    "model": "gemini-2.5-pro",
     "icon_update": {{
       "enabled": true,
       "refresh_auth": false
@@ -307,11 +303,17 @@ def build_spec_prompt(transcript: List[Dict[str, str]]) -> str:
   }},
   "views": {{
     "enabled": true,
-    "model": "gemini-3.1-pro-preview"
+    "model": "gemini-2.5-pro"
   }},
   "view_filters": {{
     "enabled": true,
-    "model": "gemini-3.1-pro-preview"
+    "model": "gemini-2.5-pro"
+  }},
+  "mock_data": {{
+    "enabled": true,
+    "model": "gemini-2.5-pro",
+    "dry_run": false,
+    "trigger_workflow": false
   }},
   "execution": {{
     "fail_fast": true,
@@ -363,7 +365,7 @@ def normalize_spec(raw: dict) -> dict:
     ws.setdefault("enabled", True)
     ws.setdefault("business_context", "通用企业管理场景")
     ws.setdefault("requirements", "")
-    ws.setdefault("model", "gemini-3.1-pro-preview")
+    ws.setdefault("model", "gemini-2.5-pro")
     icon_update = ws.get("icon_update") if isinstance(ws.get("icon_update"), dict) else {}
     icon_update.setdefault("enabled", True)
     icon_update.setdefault("refresh_auth", False)
@@ -377,13 +379,20 @@ def normalize_spec(raw: dict) -> dict:
 
     views = spec.get("views") if isinstance(spec.get("views"), dict) else {}
     views.setdefault("enabled", True)
-    views.setdefault("model", ws.get("model", "gemini-3.1-pro-preview"))
+    views.setdefault("model", ws.get("model", "gemini-2.5-pro"))
     spec["views"] = views
 
     view_filters = spec.get("view_filters") if isinstance(spec.get("view_filters"), dict) else {}
     view_filters.setdefault("enabled", True)
-    view_filters.setdefault("model", ws.get("model", "gemini-3.1-pro-preview"))
+    view_filters.setdefault("model", ws.get("model", "gemini-2.5-pro"))
     spec["view_filters"] = view_filters
+
+    mock_data = spec.get("mock_data") if isinstance(spec.get("mock_data"), dict) else {}
+    mock_data.setdefault("enabled", True)
+    mock_data.setdefault("model", ws.get("model", "gemini-2.5-pro"))
+    mock_data.setdefault("dry_run", False)
+    mock_data.setdefault("trigger_workflow", False)
+    spec["mock_data"] = mock_data
 
     execution = spec.get("execution") if isinstance(spec.get("execution"), dict) else {}
     execution.setdefault("fail_fast", True)

@@ -27,6 +27,7 @@ MOCK_RELATION_APPLY_DIR = OUTPUT_ROOT / "mock_relation_apply_results"
 MOCK_RELATION_REPAIR_PLAN_DIR = OUTPUT_ROOT / "mock_relation_repair_plans"
 MOCK_RELATION_REPAIR_APPLY_DIR = OUTPUT_ROOT / "mock_relation_repair_apply_results"
 MOCK_UNRESOLVED_DELETE_DIR = OUTPUT_ROOT / "mock_unresolved_delete_results"
+APP_RECORD_CLEAR_DIR = OUTPUT_ROOT / "app_record_clear_results"
 MOCK_RUN_DIR = OUTPUT_ROOT / "mock_data_runs"
 MOCK_LOG_DIR = OUTPUT_ROOT / "mock_data_logs"
 GEMINI_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "gemini_auth.json"
@@ -37,7 +38,7 @@ ROW_LIST_URL = "/v3/app/worksheets/{worksheet_id}/rows/list"
 ROW_BATCH_CREATE_URL = "/v3/app/worksheets/{worksheet_id}/rows/batch"
 ROW_BATCH_DELETE_URL = "/v3/app/worksheets/{worksheet_id}/rows/batch"
 ROW_UPDATE_URL = "/v3/app/worksheets/{worksheet_id}/rows/{row_id}"
-DEFAULT_GEMINI_MODEL = "gemini-3-flash-preview"
+DEFAULT_GEMINI_MODEL = "gemini-2.5-pro"
 
 SUPPORTED_WRITABLE_FIELD_TYPES = {
     "Text",

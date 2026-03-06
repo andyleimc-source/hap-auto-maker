@@ -33,7 +33,7 @@ def main() -> None:
     parser.add_argument("--app-index", type=int, default=0, help="可选，应用序号（免交互）")
     parser.add_argument("--app-id", default="", help="可选，应用 ID（传入后跳过应用选择交互）")
     parser.add_argument("--requirements", default="", help="额外布局要求")
-    parser.add_argument("--model", default="gemini-3-flash-preview", help="Gemini 模型名")
+    parser.add_argument("--model", default="gemini-2.5-pro", help="Gemini 模型名")
     parser.add_argument("--refresh-auth", action="store_true", help="应用布局前先刷新网页登录认证")
     parser.add_argument("--headless", action="store_true", help="配合 --refresh-auth 无头刷新")
     parser.add_argument("--dry-run", action="store_true", help="仅预览应用布局，不实际保存")

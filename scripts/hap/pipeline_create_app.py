@@ -110,7 +110,7 @@ def main() -> None:
     parser.add_argument("--base-url", default="", help="API 基础地址（默认沿用子脚本默认值）")
     parser.add_argument("--project-id", default="", help="HAP 组织Id")
     parser.add_argument("--owner-id", default="", help="应用拥有者 HAP 账号Id")
-    parser.add_argument("--gemini-model", default="gemini-3-flash-preview", help="Gemini 模型名")
+    parser.add_argument("--gemini-model", default="gemini-2.5-pro", help="Gemini 模型名")
     parser.add_argument("--skip-smart-icon", action="store_true", help="跳过步骤3-5，不执行智能 icon 匹配/更新")
     parser.add_argument("--dry-run-icon-update", action="store_true", help="智能 icon 的更新步骤仅预览，不实际更新")
     args = parser.parse_args()

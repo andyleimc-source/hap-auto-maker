@@ -157,7 +157,7 @@ def main() -> None:
     parser.add_argument("--app-index", type=int, default=0, help="可选，直接指定应用序号（免交互）")
     parser.add_argument("--business-context", default="", help="业务背景（不传则交互输入）")
     parser.add_argument("--requirements", default="", help="额外要求（不传则交互输入）")
-    parser.add_argument("--model", default="gemini-3-flash-preview", help="Gemini 模型名")
+    parser.add_argument("--model", default="gemini-2.5-pro", help="Gemini 模型名")
     parser.add_argument("--dry-run-create", action="store_true", help="建表步骤仅预览")
     parser.add_argument("--dry-run-icon", action="store_true", help="改 icon 步骤仅预览")
     parser.add_argument("--refresh-auth", action="store_true", help="改 icon 前刷新网页登录认证")

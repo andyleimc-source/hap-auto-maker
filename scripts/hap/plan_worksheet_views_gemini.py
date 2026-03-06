@@ -24,7 +24,7 @@ OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 APP_AUTH_DIR = OUTPUT_ROOT / "app_authorizations"
 VIEW_PLAN_DIR = OUTPUT_ROOT / "view_plans"
 GEMINI_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "gemini_auth.json"
-DEFAULT_MODEL = "gemini-3-flash-preview"
+DEFAULT_MODEL = "gemini-2.5-pro"
 
 APP_INFO_URL = "https://api.mingdao.com/v3/app"
 WORKSHEET_DETAIL_URL = "https://api.mingdao.com/v3/app/worksheets/{worksheet_id}"

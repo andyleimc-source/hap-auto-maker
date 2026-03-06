@@ -26,7 +26,7 @@ AUTH_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "auth_config.py"
 
 APP_INFO_URL = "https://api.mingdao.com/v3/app"
 GET_CONTROLS_URL = "https://www.mingdao.com/api/Worksheet/GetWorksheetControls"
-DEFAULT_MODEL = "gemini-3-flash-preview"
+DEFAULT_MODEL = "gemini-2.5-pro"
 VALID_SIZES = (12, 6, 4, 3)
 
 

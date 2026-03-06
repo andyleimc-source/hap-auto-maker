@@ -17,7 +17,7 @@ APPLY_SCRIPT = BASE_DIR / "scripts" / "apply_tableview_filters_from_plan.py"
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 PLAN_DIR = OUTPUT_ROOT / "tableview_filter_plans"
 APPLY_RESULT_DIR = OUTPUT_ROOT / "tableview_filter_apply_results"
-DEFAULT_MODEL = "gemini-3-flash-preview"
+DEFAULT_MODEL = "gemini-2.5-pro"
 DEFAULT_GEMINI_CONFIG = BASE_DIR / "config" / "credentials" / "gemini_auth.json"
 DEFAULT_AUTH_CONFIG = BASE_DIR / "config" / "credentials" / "auth_config.py"
 

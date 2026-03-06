@@ -57,6 +57,20 @@ python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_mock_data.py
   - `1-N` 的多选端字段（`subType=2`）不会自动批量回填。
 - 如果仍存在无法自动确定的关联，流水线会输出 `unresolved` 并直接报失败，避免“看起来成功但实际有空关联”。
 
+### 2.4 清空应用全部记录
+
+```bash
+python3 /Users/andy/Desktop/hap_auto/scripts/clear_app_records.py --dry-run
+python3 /Users/andy/Desktop/hap_auto/scripts/clear_app_records.py
+```
+
+说明：
+- 仅支持 `data/outputs/app_authorizations/` 下已有授权的应用。
+- 启动后选择应用，自动遍历该应用下全部工作表并分页删除所有记录。
+- 默认逻辑删除；加 `--permanent` 可永久删除。
+- 默认 `triggerWorkflow=false`，避免触发应用内工作流。
+- 结果文件输出到 `data/outputs/app_record_clear_results/`。
+
 ## 3. 标准 Pipeline（按场景拆分）
 
 ### 3.1 创建应用流水线
