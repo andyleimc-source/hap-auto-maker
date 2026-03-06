@@ -130,11 +130,10 @@ python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_views.py
 说明：
 - 规划结果输出到 `data/outputs/view_plans/`
 - 创建结果输出到 `data/outputs/view_create_results/`
-- 创建前会快照旧视图，供后续“视图筛选配置流水线”决定并执行删除
 
 ### 3.7 视图筛选配置流水线
 
-流程：选定应用并记录旧视图删除决策 -> 分析支持的视图 -> 规划筛选列表/快速筛选 -> 应用配置 -> 执行旧视图删除
+流程：选择应用 -> 分析支持的视图 -> 规划筛选列表/快速筛选 -> 应用配置
 
 ```bash
 python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_tableview_filters.py
@@ -147,9 +146,6 @@ python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_tableview_filters.py
   - 画廊视图：筛选列表 + 快速筛选
   - 日历视图：快速筛选
 - 筛选列表只会使用下拉字段；若存在多个下拉字段，优先选择业务意义更强的字段
-- 选完应用后会立刻让你决定旧视图删除策略：
-  `y` 删除全部，输入序号删除指定视图，其他任意键取消
-- 实际删除时机放在筛选列表/快速筛选应用完成之后
 
 ## 4. 全流程脚本顺序与作用（完整）
 
@@ -277,11 +273,11 @@ python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_tableview_filters.py
 - `list_app_worksheets.py`：获取工作表列表
 - `update_worksheet_icons.py`：批量更新工作表 icon
 - `plan_worksheet_views_gemini.py`：规划视图
-- `create_views_from_plan.py`：按规划创建视图，并快照旧视图供后续处理
+- `create_views_from_plan.py`：按规划创建视图
 - `pipeline_views.py`：视图一键流水线
 - `plan_tableview_filters_gemini.py`：规划视图筛选列表/快速筛选
-- `apply_tableview_filters_from_plan.py`：应用视图筛选列表/快速筛选，并在末尾执行旧视图删除
-- `pipeline_tableview_filters.py`：视图筛选配置一键流水线（含旧视图删除）
+- `apply_tableview_filters_from_plan.py`：应用视图筛选列表/快速筛选
+- `pipeline_tableview_filters.py`：视图筛选配置一键流水线
 
 ### 6.3 字段布局
 - `plan_worksheet_layout.py`：规划字段布局

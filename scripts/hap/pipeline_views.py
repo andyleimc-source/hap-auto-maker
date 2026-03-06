@@ -37,7 +37,7 @@ def main() -> None:
     parser.add_argument("--auth-config", default=str(DEFAULT_AUTH_CONFIG), help="auth_config.py 路径")
     parser.add_argument("--app-ids", default="", help="可选，仅执行指定 appId（逗号分隔）")
     parser.add_argument("--worksheet-ids", default="", help="可选，仅执行指定 worksheetId（逗号分隔）")
-    parser.add_argument("--dry-run", action="store_true", help="仅演练，不实际调用创建/删除接口")
+    parser.add_argument("--dry-run", action="store_true", help="仅演练，不实际调用创建接口")
     parser.add_argument("--plan-output", default="", help="规划 JSON 输出路径")
     parser.add_argument("--create-output", default="", help="创建结果 JSON 输出路径")
     args = parser.parse_args()
@@ -91,4 +91,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

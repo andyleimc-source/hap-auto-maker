@@ -25,7 +25,6 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 APP_AUTH_DIR = OUTPUT_ROOT / "app_authorizations"
 PLAN_DIR = OUTPUT_ROOT / "tableview_filter_plans"
-VIEW_CREATE_RESULT_DIR = OUTPUT_ROOT / "view_create_results"
 GEMINI_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "gemini_auth.json"
 DEFAULT_MODEL = "gemini-3-flash-preview"
 APP_INFO_URL = "https://api.mingdao.com/v3/app"
@@ -78,62 +77,12 @@ def choose_indexes(prompt: str, items_count: int) -> Optional[List[int]]:
     return picked
 
 
-def latest_file(base_dir: Path, pattern: str) -> Optional[Path]:
-    files = sorted(base_dir.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
-    return files[0] if files else None
-
-
 def load_gemini_api_key(path: Path) -> str:
     data = load_json(path)
     api_key = str(data.get("api_key", "")).strip()
     if not api_key:
         raise ValueError(f"Gemini 配置缺少 api_key: {path}")
     return api_key
-
-
-def load_latest_view_create_result() -> dict:
-    p = latest_file(VIEW_CREATE_RESULT_DIR, "view_create_result_*.json")
-    if not p:
-        return {}
-    try:
-        return load_json(p)
-    except Exception:
-        return {}
-
-
-def prompt_old_view_delete_choice(old_views: List[dict]) -> dict:
-    result = {"choice": "", "targets": [], "skipped": []}
-    if not old_views:
-        return result
-    print("\n创建前已存在的旧视图如下：")
-    print("序号 | 应用 | 工作表 | 视图名 | 视图ID | 类型")
-    for i, row in enumerate(old_views, start=1):
-        print(
-            f"{i}. {row['appName']} | {row['worksheetName']} | {row['viewName'] or '(未命名)'} | {row['viewId']} | {row['viewType']}"
-        )
-    choice = input("旧视图后续如何处理？输入 y 删除全部；输入序号删除指定视图；任意键取消: ").strip()
-    result["choice"] = choice
-    if not choice:
-        result["skipped"] = list(old_views)
-        return result
-    if choice.lower() == "y":
-        result["targets"] = list(old_views)
-        return result
-    try:
-        indexes = parse_selection(choice, len(old_views))
-    except ValueError:
-        result["skipped"] = list(old_views)
-        return result
-    if not indexes:
-        result["skipped"] = list(old_views)
-        return result
-    targets = [old_views[i - 1] for i in indexes]
-    target_keys = {(x["appId"], x["worksheetId"], x["viewId"]) for x in targets}
-    result["targets"] = targets
-    result["skipped"] = [
-        x for x in old_views if (x["appId"], x["worksheetId"], x["viewId"]) not in target_keys
-    ]
-    return result
 
 
 def extract_json(text: str) -> dict:
@@ -510,16 +459,6 @@ def main() -> None:
             return
         picked_apps = [apps[i - 1] for i in picked]
 
-    create_result = load_latest_view_create_result()
-    old_views_snapshot = create_result.get("oldViewsSnapshot") if isinstance(create_result.get("oldViewsSnapshot"), list) else []
-    picked_app_ids = {str(app["appId"]).strip() for app in picked_apps}
-    old_views_snapshot = [
-        x
-        for x in old_views_snapshot
-        if isinstance(x, dict) and str(x.get("appId", "")).strip() in picked_app_ids
-    ]
-    delete_choice_plan = prompt_old_view_delete_choice(old_views_snapshot)
-
     output_apps = []
     total_views = 0
     for app in picked_apps:
@@ -599,7 +538,6 @@ def main() -> None:
         "generatedAt": datetime.now().isoformat(timespec="seconds"),
         "model": args.model,
         "source": "view_filter_plan_gemini_v2",
-        "oldViewsDeletePlan": delete_choice_plan,
         "apps": output_apps,
         "summary": {"appCount": len(output_apps), "viewCount": total_views},
     }

@@ -2,9 +2,8 @@
 # -*- coding: utf-8 -*-
 """
 一键流水线：
-1) 规划视图筛选配置（并记录旧视图删除决策）
+1) 规划视图筛选配置
 2) 应用筛选配置
-3) 执行旧视图删除
 """
 
 import argparse
@@ -32,7 +31,7 @@ def run_cmd(cmd: list[str], title: str) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="一键执行：规划视图筛选配置 -> 应用配置 -> 删除旧视图")
+    parser = argparse.ArgumentParser(description="一键执行：规划视图筛选配置 -> 应用配置")
     parser.add_argument("--model", default=DEFAULT_MODEL, help="Gemini 模型名")
     parser.add_argument("--config", default=str(DEFAULT_GEMINI_CONFIG), help="Gemini 配置 JSON 路径")
     parser.add_argument("--auth-config", default=str(DEFAULT_AUTH_CONFIG), help="auth_config.py 路径")

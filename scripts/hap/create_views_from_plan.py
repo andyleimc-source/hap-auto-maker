@@ -7,7 +7,6 @@
 import argparse
 import importlib.util
 import json
-import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -16,14 +15,10 @@ import requests
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
-APP_AUTH_DIR = OUTPUT_ROOT / "app_authorizations"
 VIEW_PLAN_DIR = OUTPUT_ROOT / "view_plans"
 VIEW_CREATE_RESULT_DIR = OUTPUT_ROOT / "view_create_results"
 AUTH_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "auth_config.py"
 SAVE_VIEW_URL = "https://www.mingdao.com/api/Worksheet/SaveWorksheetView"
-APP_INFO_URL = "https://api.mingdao.com/v3/app"
-WORKSHEET_DETAIL_URL = "https://api.mingdao.com/v3/app/worksheets/{worksheet_id}"
-DELETE_VIEW_URL = "https://www.mingdao.com/api/Worksheet/DeleteWorksheetView"
 
 
 def now_ts() -> str:
@@ -33,20 +28,6 @@ def now_ts() -> str:
 def latest_file(base_dir: Path, pattern: str) -> Optional[Path]:
     files = sorted(base_dir.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
     return files[0] if files else None
-
-
-def parse_selection(text: str, max_index: int) -> List[int]:
-    parts = [p for p in re.split(r"[^\d]+", text) if p]
-    if not parts:
-        return []
-    out: List[int] = []
-    for p in parts:
-        idx = int(p)
-        if idx < 1 or idx > max_index:
-            raise ValueError(f"序号超出范围: {idx}（有效范围 1-{max_index}）")
-        if idx not in out:
-            out.append(idx)
-    return out
 
 
 def load_json(path: Path) -> dict:
@@ -91,51 +72,6 @@ def load_auth_config(path: Path) -> dict:
     if not account_id or not authorization or not cookie:
         raise ValueError(f"auth_config.py 缺少 ACCOUNT_ID/AUTHORIZATION/COOKIE: {path}")
     return {"accountId": account_id, "authorization": authorization, "cookie": cookie}
-
-
-def load_app_auth_rows() -> List[dict]:
-    rows: List[dict] = []
-    files = sorted(APP_AUTH_DIR.glob("app_authorize_*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
-    for path in files:
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-        payload = data.get("data")
-        if not isinstance(payload, list):
-            continue
-        for row in payload:
-            if not isinstance(row, dict):
-                continue
-            app_id = str(row.get("appId", "")).strip()
-            app_key = str(row.get("appKey", "")).strip()
-            sign = str(row.get("sign", "")).strip()
-            if not app_id or not app_key or not sign:
-                continue
-            rows.append(dict(row))
-    dedup: Dict[str, dict] = {}
-    for r in rows:
-        app_id = str(r.get("appId", "")).strip()
-        if app_id and app_id not in dedup:
-            dedup[app_id] = r
-    return list(dedup.values())
-
-
-def build_app_auth_map() -> Dict[str, dict]:
-    return {str(r.get("appId", "")).strip(): r for r in load_app_auth_rows() if str(r.get("appId", "")).strip()}
-
-
-def fetch_worksheet_detail(app_key: str, sign: str, worksheet_id: str) -> dict:
-    headers = {"HAP-Appkey": app_key, "HAP-Sign": sign, "Accept": "application/json, text/plain, */*"}
-    url = WORKSHEET_DETAIL_URL.format(worksheet_id=worksheet_id)
-    resp = requests.get(url, headers=headers, timeout=30)
-    data = resp.json()
-    if not data.get("success"):
-        raise RuntimeError(f"获取工作表详情失败: worksheetId={worksheet_id}, resp={data}")
-    ws = data.get("data", {})
-    if not isinstance(ws, dict):
-        raise RuntimeError(f"工作表详情格式错误: worksheetId={worksheet_id}, resp={data}")
-    return ws
 
 
 def normalize_advanced_setting(view_type: str, value: Any) -> dict:
@@ -238,61 +174,6 @@ def save_view(payload: dict, auth: dict, app_id: str, worksheet_id: str, dry_run
     return post_web_api(SAVE_VIEW_URL, payload, auth, app_id=app_id, worksheet_id=worksheet_id)
 
 
-def delete_view(app_id: str, worksheet_id: str, view_id: str, auth: dict, dry_run: bool) -> dict:
-    payload = {"appId": app_id, "worksheetId": worksheet_id, "viewId": view_id}
-    if dry_run:
-        return {"dry_run": True, "payload": payload}
-    return post_web_api(DELETE_VIEW_URL, payload, auth, app_id=app_id, worksheet_id=worksheet_id, view_id=view_id)
-
-
-def snapshot_existing_views(plan_apps: List[dict], wanted_app_ids: set[str], wanted_ws_ids: set[str], app_auth_map: Dict[str, dict]) -> List[dict]:
-    old_views: List[dict] = []
-    for app in plan_apps:
-        if not isinstance(app, dict):
-            continue
-        app_id = str(app.get("appId", "")).strip()
-        app_name = str(app.get("appName", "")).strip() or app_id
-        if not app_id:
-            continue
-        if wanted_app_ids and app_id not in wanted_app_ids:
-            continue
-        auth_row = app_auth_map.get(app_id)
-        if not auth_row:
-            continue
-        ws_list = app.get("worksheets")
-        if not isinstance(ws_list, list):
-            continue
-        for ws in ws_list:
-            if not isinstance(ws, dict):
-                continue
-            ws_id = str(ws.get("worksheetId", "")).strip()
-            ws_name = str(ws.get("worksheetName", "")).strip() or ws_id
-            if not ws_id:
-                continue
-            if wanted_ws_ids and ws_id not in wanted_ws_ids:
-                continue
-            detail = fetch_worksheet_detail(str(auth_row["appKey"]), str(auth_row["sign"]), ws_id)
-            views = detail.get("views") if isinstance(detail.get("views"), list) else []
-            for v in views:
-                if not isinstance(v, dict):
-                    continue
-                vid = str(v.get("id", "")).strip()
-                if not vid:
-                    continue
-                old_views.append(
-                    {
-                        "appId": app_id,
-                        "appName": app_name,
-                        "worksheetId": ws_id,
-                        "worksheetName": ws_name,
-                        "viewId": vid,
-                        "viewName": str(v.get("name", "")).strip(),
-                        "viewType": str(v.get("type", "")).strip(),
-                    }
-                )
-    return old_views
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description="执行视图规划 JSON，批量创建工作表视图")
     parser.add_argument("--plan-json", default="", help="视图规划 JSON 路径（默认取最新）")
@@ -306,7 +187,6 @@ def main() -> None:
     plan_path = resolve_plan_json(args.plan_json)
     plan = load_json(plan_path)
     auth = load_auth_config(Path(args.auth_config).expanduser().resolve())
-    app_auth_map = build_app_auth_map()
 
     wanted_app_ids = {x.strip() for x in str(args.app_ids).split(",") if x.strip()}
     wanted_ws_ids = {x.strip() for x in str(args.worksheet_ids).split(",") if x.strip()}
@@ -315,13 +195,10 @@ def main() -> None:
     if not isinstance(apps, list) or not apps:
         raise ValueError(f"规划文件缺少 apps 列表: {plan_path}")
 
-    old_views_snapshot = snapshot_existing_views(apps, wanted_app_ids, wanted_ws_ids, app_auth_map)
-
     result = {
         "executedAt": datetime.now().isoformat(timespec="seconds"),
         "planJson": str(plan_path),
         "dryRun": bool(args.dry_run),
-        "oldViewsSnapshot": old_views_snapshot,
         "apps": [],
         "summary": {
             "appCount": 0,
@@ -330,8 +207,6 @@ def main() -> None:
             "createdViewCount": 0,
             "updateCallCount": 0,
             "failedCount": 0,
-            "oldViewCount": len(old_views_snapshot),
-            "deletedOldViewCount": 0,
         },
     }
 
@@ -415,13 +290,6 @@ def main() -> None:
             result["apps"].append(app_result)
 
     result["summary"]["appCount"] = len(result["apps"])
-    result["oldViewsDeleteAction"] = {
-        "choice": "",
-        "deleted": [],
-        "skipped": old_views_snapshot,
-        "note": "删除决策与执行已迁移到筛选配置流水线中处理",
-    }
-    result["summary"]["deletedOldViewCount"] = 0
 
     if args.output:
         out_path = Path(args.output).expanduser().resolve()
@@ -436,8 +304,6 @@ def main() -> None:
     print(f"- 创建成功视图数: {result['summary']['createdViewCount']}")
     print(f"- 更新调用次数: {result['summary']['updateCallCount']}")
     print(f"- 失败次数: {result['summary']['failedCount']}")
-    print(f"- 旧视图数: {result['summary']['oldViewCount']}")
-    print(f"- 已删除旧视图数: {result['summary']['deletedOldViewCount']}")
 
 
 if __name__ == "__main__":
