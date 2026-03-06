@@ -6,6 +6,7 @@ HAP 造数共享工具。
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import re
 from datetime import datetime
@@ -30,11 +31,16 @@ MOCK_UNRESOLVED_DELETE_DIR = OUTPUT_ROOT / "mock_unresolved_delete_results"
 APP_RECORD_CLEAR_DIR = OUTPUT_ROOT / "app_record_clear_results"
 MOCK_RUN_DIR = OUTPUT_ROOT / "mock_data_runs"
 MOCK_LOG_DIR = OUTPUT_ROOT / "mock_data_logs"
+WORKSHEET_LAYOUT_APPLY_DIR = OUTPUT_ROOT / "worksheet_layout_apply_results"
 GEMINI_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "gemini_auth.json"
+AUTH_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "auth_config.py"
 DEFAULT_BASE_URL = "https://api.mingdao.com"
 APP_INFO_URL = "/v3/app"
 WORKSHEET_DETAIL_URL = "/v3/app/worksheets/{worksheet_id}"
+GET_CONTROLS_URL = "https://www.mingdao.com/api/Worksheet/GetWorksheetControls"
+ADD_WORKSHEET_ROW_URL = "https://www.mingdao.com/api/Worksheet/AddWorksheetRow"
 ROW_LIST_URL = "/v3/app/worksheets/{worksheet_id}/rows/list"
+ROW_CREATE_URL = "/v3/app/worksheets/{worksheet_id}/rows"
 ROW_BATCH_CREATE_URL = "/v3/app/worksheets/{worksheet_id}/rows/batch"
 ROW_BATCH_DELETE_URL = "/v3/app/worksheets/{worksheet_id}/rows/batch"
 ROW_UPDATE_URL = "/v3/app/worksheets/{worksheet_id}/rows/{row_id}"
@@ -100,6 +106,28 @@ KNOWN_SYSTEM_FIELD_ALIASES = {
     "_nodeStartedAt",
     "_completedAt",
     "_dueAt",
+}
+
+CONTROL_TYPE_MAP = {
+    2: "Text",
+    3: "Textarea",
+    4: "Number",
+    5: "Number",
+    6: "Number",
+    9: "SingleSelect",
+    10: "MultipleSelect",
+    11: "SingleSelect",
+    14: "Attachment",
+    16: "DateTime",
+    15: "Date",
+    19: "Location",
+    21: "Link",
+    23: "Email",
+    24: "PhoneNumber",
+    26: "Collaborator",
+    29: "Relation",
+    36: "Checkbox",
+    37: "Rating",
 }
 
 
@@ -170,6 +198,22 @@ def load_gemini_api_key(config_path: Path = GEMINI_CONFIG_PATH) -> str:
     return api_key
 
 
+def load_web_auth(path: Path = AUTH_CONFIG_PATH) -> tuple[str, str, str]:
+    if not path.exists():
+        raise FileNotFoundError(f"缺少认证配置: {path}")
+    spec = importlib.util.spec_from_file_location("auth_config_runtime", str(path))
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"无法加载认证文件: {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    account_id = str(getattr(module, "ACCOUNT_ID", "")).strip()
+    authorization = str(getattr(module, "AUTHORIZATION", "")).strip()
+    cookie = str(getattr(module, "COOKIE", "")).strip()
+    if not account_id or not authorization or not cookie:
+        raise ValueError(f"auth_config.py 缺少 ACCOUNT_ID/AUTHORIZATION/COOKIE: {path}")
+    return account_id, authorization, cookie
+
+
 def extract_json_object(text: str) -> dict:
     text = (text or "").strip()
     if not text:
@@ -236,6 +280,19 @@ def request_json(method: str, url: str, headers: dict, payload: Optional[dict] =
     if not data.get("success"):
         raise RuntimeError(f"接口调用失败: {data}")
     return data
+
+
+def build_web_headers(account_id: str, authorization: str, cookie: str, app_id: str, worksheet_id: str) -> dict:
+    return {
+        "Accept": "application/json, text/plain, */*",
+        "Content-Type": "application/json",
+        "AccountId": account_id,
+        "Authorization": authorization,
+        "Cookie": cookie,
+        "X-Requested-With": "XMLHttpRequest",
+        "Origin": "https://www.mingdao.com",
+        "Referer": f"https://www.mingdao.com/app/{app_id}/{worksheet_id}",
+    }
 
 
 def load_app_auth_rows() -> List[dict]:
@@ -363,13 +420,85 @@ def fetch_app_worksheets(base_url: str, app_key: str, sign: str) -> Tuple[dict, 
     return app_meta, worksheets
 
 
-def fetch_worksheet_detail(base_url: str, app_key: str, sign: str, worksheet_id: str) -> dict:
+def fetch_worksheet_controls(worksheet_id: str, web_auth: tuple[str, str, str]) -> dict:
+    account_id, authorization, cookie = web_auth
+    headers = {
+        "Accept": "application/json, text/plain, */*",
+        "Content-Type": "application/json",
+        "AccountId": account_id,
+        "Authorization": authorization,
+        "Cookie": cookie,
+        "X-Requested-With": "XMLHttpRequest",
+        "Origin": "https://www.mingdao.com",
+        "Referer": f"https://www.mingdao.com/worksheet/field/edit?sourceId={worksheet_id}",
+    }
+    resp = requests.post(GET_CONTROLS_URL, headers=headers, json={"worksheetId": worksheet_id}, timeout=30)
+    try:
+        data = resp.json()
+    except Exception as exc:
+        raise RuntimeError(f"工作表控件返回非 JSON: status={resp.status_code}, body={resp.text[:500]}") from exc
+    if not isinstance(data, dict):
+        raise RuntimeError(f"工作表控件返回格式错误: {data}")
+    wrapped = data.get("data", {})
+    if isinstance(wrapped, dict) and isinstance(wrapped.get("data"), dict):
+        if int(wrapped.get("code", 0) or 0) != 1:
+            raise RuntimeError(f"获取工作表控件失败: worksheetId={worksheet_id}, resp={data}")
+        payload = wrapped["data"]
+    else:
+        payload = data.get("data", {})
+        if not isinstance(payload, dict):
+            raise RuntimeError(f"获取工作表控件失败: worksheetId={worksheet_id}, resp={data}")
+    controls = payload.get("controls", [])
+    if not isinstance(controls, list):
+        raise RuntimeError(f"工作表控件格式错误: worksheetId={worksheet_id}, resp={data}")
+    return payload
+
+
+def fetch_worksheet_detail_v3(base_url: str, app_key: str, sign: str, worksheet_id: str) -> dict:
     url = base_url.rstrip("/") + WORKSHEET_DETAIL_URL.format(worksheet_id=worksheet_id)
     data = request_json("GET", url, build_headers(app_key, sign), payload=None)
-    ws = data.get("data", {})
-    if not isinstance(ws, dict):
-        raise RuntimeError(f"工作表结构格式错误: worksheetId={worksheet_id}")
-    return ws
+    detail = data.get("data", {})
+    if not isinstance(detail, dict):
+        raise RuntimeError(f"V3 工作表结构格式错误: worksheetId={worksheet_id}, resp={data}")
+    fields = detail.get("fields", [])
+    if not isinstance(fields, list):
+        raise RuntimeError(f"V3 工作表结构缺少 fields: worksheetId={worksheet_id}, resp={data}")
+    return detail
+
+
+def load_layout_controls_from_artifacts(worksheet_ids: List[str]) -> Tuple[Dict[str, List[dict]], List[str]]:
+    pending = {str(item).strip() for item in worksheet_ids if str(item).strip()}
+    controls_by_ws: Dict[str, List[dict]] = {}
+    source_paths: List[str] = []
+    files = sorted(WORKSHEET_LAYOUT_APPLY_DIR.glob("worksheet_layout_apply_*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    for path in files:
+        if not pending:
+            break
+        try:
+            data = load_json(path)
+        except Exception:
+            continue
+        found_in_file = False
+        for item in data.get("results", []) or []:
+            if not isinstance(item, dict):
+                continue
+            worksheet_id = str(item.get("workSheetId", "")).strip()
+            if worksheet_id not in pending:
+                continue
+            controls = (
+                item.get("response", {})
+                .get("data", {})
+                .get("data", {})
+                .get("controls", [])
+            )
+            if not isinstance(controls, list) or not controls:
+                continue
+            controls_by_ws[worksheet_id] = controls
+            pending.discard(worksheet_id)
+            found_in_file = True
+        if found_in_file:
+            source_paths.append(str(path.resolve()))
+    return controls_by_ws, source_paths
 
 
 def simplify_options(raw_options: Any) -> List[dict]:
@@ -390,10 +519,17 @@ def simplify_options(raw_options: Any) -> List[dict]:
 
 
 def normalize_field_type(field: dict) -> str:
-    ftype = str(field.get("type", "")).strip()
+    raw_type = field.get("type")
+    if isinstance(raw_type, int):
+        return CONTROL_TYPE_MAP.get(raw_type, str(raw_type))
+    ftype = str(raw_type or "").strip()
     if ftype:
+        if ftype.isdigit():
+            return CONTROL_TYPE_MAP.get(int(ftype), ftype)
         return ftype
     control_type = str(field.get("controlType", "")).strip()
+    if control_type.isdigit():
+        return CONTROL_TYPE_MAP.get(int(control_type), control_type)
     return control_type or "Unknown"
 
 
@@ -421,14 +557,34 @@ def simplify_field(field: dict) -> dict:
     relation_bidirectional = False
     if isinstance(relation, dict):
         relation_bidirectional = bool(relation.get("bidirectional", False))
+    field_id = str(field.get("id", "") or field.get("controlId", "")).strip()
+    field_name = str(field.get("name", "") or field.get("controlName", "")).strip()
+    alias = str(field.get("alias", "")).strip()
+    field_type = normalize_field_type(field)
+    subtype = int(field.get("subType", 0) or 0)
+    if field_type == "Relation" and subtype == 0:
+        try:
+            enum_default = int(field.get("enumDefault", 0) or 0)
+        except Exception:
+            enum_default = 0
+        if enum_default in (1, 2):
+            subtype = enum_default
+    raw_type = field.get("type")
+    control_type = raw_type if isinstance(raw_type, int) else 0
+    if not control_type:
+        try:
+            control_type = int(field.get("controlType", 0) or 0)
+        except Exception:
+            control_type = 0
     simplified = {
-        "fieldId": str(field.get("id", "")).strip(),
-        "name": str(field.get("name", "")).strip(),
-        "alias": str(field.get("alias", "")).strip(),
-        "type": normalize_field_type(field),
-        "subType": int(field.get("subType", 0) or 0),
+        "fieldId": field_id,
+        "name": field_name,
+        "alias": alias,
+        "type": field_type,
+        "controlType": control_type,
+        "subType": subtype,
         "required": bool(field.get("required", False)),
-        "isTitle": bool(field.get("isTitle", False)),
+        "isTitle": bool(field.get("isTitle", False)) or int(field.get("attribute", 0) or 0) == 1,
         "isSystem": bool(field.get("isSystemControl", False)),
         "dataSource": str(field.get("dataSource", "")).strip(),
         "sourceControl": str(field.get("sourceControl", "") or field.get("sourceControlId", "")).strip(),
@@ -504,7 +660,7 @@ def infer_relation_pairs(relation_edges: List[dict]) -> Tuple[List[dict], List[s
     return out, warnings
 
 
-def compute_worksheet_tiers(worksheets: List[dict], relation_pairs: List[dict]) -> List[dict]:
+def compute_worksheet_tiers(worksheets: List[dict], relation_pairs: List[dict], relation_edges: List[dict]) -> List[dict]:
     by_ws: Dict[str, List[dict]] = {ws["worksheetId"]: [] for ws in worksheets}
     outgoing_edge_subtypes: Dict[str, List[int]] = {ws["worksheetId"]: [] for ws in worksheets}
     for pair in relation_pairs:
@@ -560,18 +716,87 @@ def compute_worksheet_tiers(worksheets: List[dict], relation_pairs: List[dict]) 
                 "selfRelationSubTypes": self_edge_subtypes,
             }
         )
-    tiers.sort(key=lambda item: (item["tier"], item["worksheetName"]))
-    for idx, item in enumerate(tiers, start=1):
-        item["order"] = idx
+    ws_meta = {item["worksheetId"]: item for item in tiers}
+    incoming_count: Dict[str, int] = {item["worksheetId"]: 0 for item in tiers}
+    outgoing_map: Dict[str, List[str]] = {item["worksheetId"]: [] for item in tiers}
+    seen_edges: set[tuple[str, str]] = set()
+    for edge in relation_edges:
+        if not isinstance(edge, dict):
+            continue
+        if int(edge.get("subType", 0) or 0) != 1:
+            continue
+        source_ws_id = str(edge.get("sourceWorksheetId", "")).strip()
+        target_ws_id = str(edge.get("targetWorksheetId", "")).strip()
+        if not source_ws_id or not target_ws_id or source_ws_id == target_ws_id:
+            continue
+        if source_ws_id not in ws_meta or target_ws_id not in ws_meta:
+            continue
+        dep = (target_ws_id, source_ws_id)
+        if dep in seen_edges:
+            continue
+        seen_edges.add(dep)
+        outgoing_map[target_ws_id].append(source_ws_id)
+        incoming_count[source_ws_id] += 1
+
+    ordered_ids: List[str] = []
+    ready = sorted(
+        [ws_id for ws_id, cnt in incoming_count.items() if cnt == 0],
+        key=lambda ws_id: (int(ws_meta[ws_id]["tier"]), ws_meta[ws_id]["worksheetName"]),
+    )
+    while ready:
+        ws_id = ready.pop(0)
+        ordered_ids.append(ws_id)
+        for nxt in sorted(outgoing_map.get(ws_id, []), key=lambda item: (int(ws_meta[item]["tier"]), ws_meta[item]["worksheetName"])):
+            incoming_count[nxt] -= 1
+            if incoming_count[nxt] == 0:
+                ready.append(nxt)
+        ready.sort(key=lambda item: (int(ws_meta[item]["tier"]), ws_meta[item]["worksheetName"]))
+
+    if len(ordered_ids) != len(tiers):
+        remaining = [ws_id for ws_id in ws_meta if ws_id not in ordered_ids]
+        remaining.sort(key=lambda ws_id: (int(ws_meta[ws_id]["tier"]), ws_meta[ws_id]["worksheetName"]))
+        ordered_ids.extend(remaining)
+
+    for idx, ws_id in enumerate(ordered_ids, start=1):
+        ws_meta[ws_id]["order"] = idx
+    tiers = [ws_meta[ws_id] for ws_id in ordered_ids]
     return tiers
 
 
 def build_schema_snapshot(base_url: str, app: dict) -> dict:
     app_meta, worksheet_refs = fetch_app_worksheets(base_url, app["appKey"], app["sign"])
+    web_auth = load_web_auth()
+    layout_controls_by_ws, layout_sources = load_layout_controls_from_artifacts([ref["worksheetId"] for ref in worksheet_refs])
     worksheets: List[dict] = []
+    warnings: List[str] = []
     for ref in worksheet_refs:
-        detail = fetch_worksheet_detail(base_url, app["appKey"], app["sign"], ref["worksheetId"])
-        simplified_fields = [simplify_field(field) for field in detail.get("fields", []) if isinstance(field, dict)]
+        detail_source = "v3"
+        try:
+            detail = fetch_worksheet_detail_v3(base_url, app["appKey"], app["sign"], ref["worksheetId"])
+            raw_fields = detail.get("fields", [])
+        except Exception as exc_v3:
+            try:
+                detail = fetch_worksheet_controls(ref["worksheetId"], web_auth)
+                raw_fields = detail.get("controls", [])
+                detail_source = "web_controls"
+                warnings.append(
+                    f"worksheet={ref['worksheetName']} ({ref['worksheetId']}) 的 v3 结构读取失败，已回退到 Web controls"
+                )
+            except Exception as exc_web:
+                detail_source = "layout_apply_artifact"
+                fallback_controls = layout_controls_by_ws.get(ref["worksheetId"], [])
+                if not fallback_controls:
+                    raise RuntimeError(
+                        f"获取工作表结构失败，且未找到可用兜底: worksheet={ref['worksheetName']} "
+                        f"worksheetId={ref['worksheetId']} v3_error={exc_v3} web_error={exc_web}"
+                    ) from exc_web
+                detail = {"controls": fallback_controls}
+                raw_fields = fallback_controls
+                warnings.append(
+                    f"worksheet={ref['worksheetName']} ({ref['worksheetId']}) 的 v3/Web 结构读取都失败，"
+                    f"已回退到布局产物中的 controls 快照"
+                )
+        simplified_fields = [simplify_field(field) for field in raw_fields if isinstance(field, dict)]
         writable_fields = []
         skipped_fields = []
         for field in simplified_fields:
@@ -596,12 +821,14 @@ def build_schema_snapshot(base_url: str, app: dict) -> dict:
                 "fields": simplified_fields,
                 "writableFields": writable_fields,
                 "skippedFields": skipped_fields,
+                "detailSource": detail_source,
             }
         )
 
     relation_edges = build_relation_edges(worksheets)
-    relation_pairs, warnings = infer_relation_pairs(relation_edges)
-    worksheet_tiers = compute_worksheet_tiers(worksheets, relation_pairs)
+    relation_pairs, relation_warnings = infer_relation_pairs(relation_edges)
+    warnings.extend(relation_warnings)
+    worksheet_tiers = compute_worksheet_tiers(worksheets, relation_pairs, relation_edges)
     tier_by_id = {item["worksheetId"]: item for item in worksheet_tiers}
     for worksheet in worksheets:
         tier_info = tier_by_id.get(worksheet["worksheetId"], {})
@@ -622,6 +849,7 @@ def build_schema_snapshot(base_url: str, app: dict) -> dict:
         "relationEdges": relation_edges,
         "relationPairs": relation_pairs,
         "worksheetTiers": worksheet_tiers,
+        "layoutArtifactSources": layout_sources,
         "warnings": warnings,
     }
 
@@ -655,6 +883,175 @@ def build_batch_rows(records: List[dict]) -> List[dict]:
             raise ValueError(f"记录没有任何可写字段: {record}")
         rows.append({"fields": fields})
     return rows
+
+
+def to_receive_control_value(field_meta: dict, value: Any) -> Any:
+    field_type = str(field_meta.get("type", "")).strip()
+    if field_type in {"SingleSelect", "MultipleSelect"}:
+        if isinstance(value, list):
+            return json.dumps([str(item) for item in value], ensure_ascii=False)
+        return json.dumps([str(value)], ensure_ascii=False)
+    if field_type == "Relation":
+        if isinstance(value, list):
+            return json.dumps([{"sid": str(item)} for item in value], ensure_ascii=False)
+        return json.dumps([{"sid": str(value)}], ensure_ascii=False)
+    return value
+
+
+def to_v3_field_value(field_meta: dict, value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    if isinstance(value, dict):
+        return value
+    return value
+
+
+def build_v3_fields(record: dict, field_meta_map: Dict[str, dict]) -> List[dict]:
+    values = record.get("valuesByFieldId", {})
+    if not isinstance(values, dict):
+        raise ValueError(f"记录缺少 valuesByFieldId: {record}")
+    fields = []
+    for field_id, raw_value in values.items():
+        field_id = str(field_id).strip()
+        if not field_id:
+            continue
+        if field_id not in field_meta_map:
+            raise ValueError(f"字段元数据缺失: fieldId={field_id}")
+        value = to_v3_field_value(field_meta_map[field_id], raw_value)
+        if value is None:
+            continue
+        fields.append({"id": field_id, "value": value})
+    if not fields:
+        raise ValueError(f"记录没有任何可写字段: {record}")
+    return fields
+
+
+def build_web_receive_controls(record: dict, field_meta_map: Dict[str, dict]) -> List[dict]:
+    values = record.get("valuesByFieldId", {})
+    if not isinstance(values, dict):
+        raise ValueError(f"记录缺少 valuesByFieldId: {record}")
+    receive_controls = []
+    for field_id, raw_value in values.items():
+        field_id = str(field_id).strip()
+        if not field_id:
+            continue
+        field_meta = field_meta_map.get(field_id)
+        if not field_meta:
+            raise ValueError(f"字段元数据缺失: fieldId={field_id}")
+        receive_controls.append(
+            {
+                "controlId": field_id,
+                "controlName": str(field_meta.get("name", "")).strip(),
+                "type": int(field_meta.get("controlType", 0) or 0) or field_meta.get("type"),
+                "value": to_receive_control_value(field_meta, raw_value),
+            }
+        )
+    if not receive_controls:
+        raise ValueError(f"记录没有任何可写字段: {record}")
+    return receive_controls
+
+
+def add_worksheet_row_web(
+    account_id: str,
+    authorization: str,
+    cookie: str,
+    app_id: str,
+    worksheet_id: str,
+    record: dict,
+    field_meta_map: Dict[str, dict],
+) -> dict:
+    payload = {
+        "appId": app_id,
+        "worksheetId": worksheet_id,
+        "viewId": "",
+        "receiveControls": build_web_receive_controls(record, field_meta_map),
+    }
+    headers = build_web_headers(account_id, authorization, cookie, app_id, worksheet_id)
+    resp = requests.post(ADD_WORKSHEET_ROW_URL, headers=headers, json=payload, timeout=30)
+    try:
+        data = resp.json()
+    except Exception as exc:
+        raise RuntimeError(f"Web 写入返回非 JSON: status={resp.status_code}, body={resp.text[:500]}") from exc
+    if not isinstance(data, dict):
+        raise RuntimeError(f"Web 写入返回格式错误: {data}")
+    wrapped = data.get("data", {})
+    if not isinstance(wrapped, dict) or int(wrapped.get("resultCode", 0) or 0) != 1:
+        raise RuntimeError(f"Web 写入失败: {data}")
+    return {"payload": payload, "response": data}
+
+
+def add_worksheet_row_v3(
+    base_url: str,
+    app_key: str,
+    sign: str,
+    worksheet_id: str,
+    record: dict,
+    field_meta_map: Dict[str, dict],
+    trigger_workflow: bool,
+) -> dict:
+    payload = {
+        "fields": build_v3_fields(record, field_meta_map),
+        "triggerWorkflow": trigger_workflow,
+    }
+    url = base_url.rstrip("/") + ROW_CREATE_URL.format(worksheet_id=worksheet_id)
+    data = request_json("POST", url, build_headers(app_key, sign), payload=payload)
+    row_id = str(data.get("data", {}).get("id", "")).strip()
+    if not row_id:
+        raise RuntimeError(f"V3 单条新增返回缺少 rowId: worksheetId={worksheet_id}, resp={data}")
+    return {"payload": payload, "response": data, "rowId": row_id, "source": "v3"}
+
+
+def add_worksheet_row_with_fallback(
+    base_url: str,
+    app_key: str,
+    sign: str,
+    account_id: str,
+    authorization: str,
+    cookie: str,
+    app_id: str,
+    worksheet_id: str,
+    record: dict,
+    field_meta_map: Dict[str, dict],
+    trigger_workflow: bool,
+) -> dict:
+    try:
+        return add_worksheet_row_v3(
+            base_url=base_url,
+            app_key=app_key,
+            sign=sign,
+            worksheet_id=worksheet_id,
+            record=record,
+            field_meta_map=field_meta_map,
+            trigger_workflow=trigger_workflow,
+        )
+    except Exception as exc_v3:
+        api_resp = add_worksheet_row_web(
+            account_id=account_id,
+            authorization=authorization,
+            cookie=cookie,
+            app_id=app_id,
+            worksheet_id=worksheet_id,
+            record=record,
+            field_meta_map=field_meta_map,
+        )
+        row_id = str(
+            (
+                api_resp.get("response", {})
+                .get("data", {})
+                .get("data", {})
+                .get("rowid", "")
+            )
+        ).strip()
+        if not row_id:
+            raise RuntimeError(
+                f"Web 兜底新增返回缺少 rowId: worksheetId={worksheet_id}, record={record.get('mockRecordKey', '')}"
+            ) from exc_v3
+        api_resp["rowId"] = row_id
+        api_resp["source"] = "web_fallback"
+        api_resp["fallbackFrom"] = str(exc_v3)
+        return api_resp
 
 
 def create_rows_batch(

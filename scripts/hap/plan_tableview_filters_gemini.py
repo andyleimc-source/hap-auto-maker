@@ -11,6 +11,7 @@
 """
 
 import argparse
+import importlib.util
 import json
 import re
 import time
@@ -26,13 +27,15 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 APP_AUTH_DIR = OUTPUT_ROOT / "app_authorizations"
 PLAN_DIR = OUTPUT_ROOT / "tableview_filter_plans"
+VIEW_CREATE_RESULT_DIR = OUTPUT_ROOT / "view_create_results"
 GEMINI_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "gemini_auth.json"
+AUTH_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "auth_config.py"
 DEFAULT_MODEL = "gemini-2.5-pro"
 APP_INFO_URL = "https://api.mingdao.com/v3/app"
-WORKSHEET_DETAIL_URL = "https://api.mingdao.com/v3/app/worksheets/{worksheet_id}"
+GET_CONTROLS_URL = "https://www.mingdao.com/api/Worksheet/GetWorksheetControls"
 SUPPORTED_VIEW_TYPES = {"0", "1", "3", "4"}
 NAV_SUPPORTED_VIEW_TYPES = {"0", "3"}
-FAST_SUPPORTED_VIEW_TYPES = {"0", "1", "3", "4"}
+FAST_SUPPORTED_VIEW_TYPES = {"0", "1", "3"}
 VIEW_TYPE_LABELS = {"0": "表格视图", "1": "看板视图", "3": "画廊视图", "4": "日历视图"}
 DEFAULT_GEMINI_RETRIES = 4
 
@@ -50,6 +53,11 @@ def load_json(path: Path) -> dict:
 def write_json(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def latest_file(base_dir: Path, pattern: str) -> Optional[Path]:
+    files = sorted(base_dir.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
+    return files[0] if files else None
 
 
 def parse_selection(text: str, max_index: int) -> List[int]:
@@ -85,6 +93,39 @@ def load_gemini_api_key(path: Path) -> str:
     if not api_key:
         raise ValueError(f"Gemini 配置缺少 api_key: {path}")
     return api_key
+
+
+def load_web_auth(path: Path) -> tuple[str, str, str]:
+    if not path.exists():
+        raise FileNotFoundError(f"缺少认证配置: {path}")
+    spec = importlib.util.spec_from_file_location("auth_config_runtime", str(path))
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"无法加载认证文件: {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    account_id = str(getattr(module, "ACCOUNT_ID", "")).strip()
+    authorization = str(getattr(module, "AUTHORIZATION", "")).strip()
+    cookie = str(getattr(module, "COOKIE", "")).strip()
+    if not account_id or not authorization or not cookie:
+        raise ValueError(f"auth_config.py 缺少 ACCOUNT_ID/AUTHORIZATION/COOKIE: {path}")
+    return account_id, authorization, cookie
+
+
+def resolve_view_create_result_json(value: str) -> Path:
+    if value:
+        p = Path(value).expanduser()
+        if p.is_absolute() and p.exists():
+            return p.resolve()
+        if p.exists():
+            return p.resolve()
+        candidate = (VIEW_CREATE_RESULT_DIR / value).resolve()
+        if candidate.exists():
+            return candidate
+        raise FileNotFoundError(f"找不到视图创建结果文件: {value}")
+    p = latest_file(VIEW_CREATE_RESULT_DIR, "view_create_result_*.json")
+    if not p:
+        raise FileNotFoundError(f"未找到视图创建结果文件（目录: {VIEW_CREATE_RESULT_DIR}）")
+    return p.resolve()
 
 
 def extract_json(text: str) -> dict:
@@ -168,17 +209,80 @@ def fetch_worksheets(app_key: str, sign: str) -> List[dict]:
     return worksheets
 
 
-def fetch_worksheet_detail(app_key: str, sign: str, worksheet_id: str) -> dict:
-    headers = {"HAP-Appkey": app_key, "HAP-Sign": sign, "Accept": "application/json, text/plain, */*"}
-    url = WORKSHEET_DETAIL_URL.format(worksheet_id=worksheet_id)
-    resp = requests.get(url, headers=headers, timeout=30)
+def fetch_controls(worksheet_id: str, web_auth: tuple[str, str, str]) -> dict:
+    account_id, authorization, cookie = web_auth
+    headers = {
+        "Accept": "application/json, text/plain, */*",
+        "Content-Type": "application/json",
+        "AccountId": account_id,
+        "Authorization": authorization,
+        "Cookie": cookie,
+        "X-Requested-With": "XMLHttpRequest",
+        "Origin": "https://www.mingdao.com",
+        "Referer": f"https://www.mingdao.com/worksheet/field/edit?sourceId={worksheet_id}",
+    }
+    resp = requests.post(GET_CONTROLS_URL, headers=headers, json={"worksheetId": worksheet_id}, timeout=30)
     data = resp.json()
-    if not data.get("success"):
-        raise RuntimeError(f"获取工作表详情失败: worksheetId={worksheet_id}, resp={data}")
-    ws = data.get("data", {})
-    if not isinstance(ws, dict):
-        raise RuntimeError(f"工作表详情格式错误: worksheetId={worksheet_id}, resp={data}")
-    return ws
+    wrapped = data.get("data", {})
+    if isinstance(wrapped, dict) and isinstance(wrapped.get("data"), dict):
+        if int(wrapped.get("code", 0) or 0) != 1:
+            raise RuntimeError(f"获取工作表控件失败: worksheetId={worksheet_id}, resp={data}")
+        payload = wrapped["data"]
+    else:
+        payload = data.get("data", {})
+        if not isinstance(payload, dict):
+            raise RuntimeError(f"获取工作表控件失败: worksheetId={worksheet_id}, resp={data}")
+    controls = payload.get("controls", [])
+    if not isinstance(controls, list):
+        raise RuntimeError(f"工作表控件格式错误: worksheetId={worksheet_id}, resp={data}")
+    return {"fields": controls}
+
+
+def load_view_targets(path: Path, wanted_app_ids: Optional[set[str]] = None) -> Dict[str, Dict[str, List[dict]]]:
+    data = load_json(path)
+    apps = data.get("apps")
+    if not isinstance(apps, list):
+        raise ValueError(f"视图创建结果文件缺少 apps 列表: {path}")
+    out: Dict[str, Dict[str, List[dict]]] = {}
+    for app in apps:
+        if not isinstance(app, dict):
+            continue
+        app_id = str(app.get("appId", "")).strip()
+        if not app_id:
+            continue
+        if wanted_app_ids and app_id not in wanted_app_ids:
+            continue
+        ws_map: Dict[str, List[dict]] = {}
+        for ws in app.get("worksheets", []) if isinstance(app.get("worksheets"), list) else []:
+            if not isinstance(ws, dict):
+                continue
+            ws_id = str(ws.get("worksheetId", "")).strip()
+            if not ws_id:
+                continue
+            targets: List[dict] = []
+            for view in ws.get("views", []) if isinstance(ws.get("views"), list) else []:
+                if not isinstance(view, dict):
+                    continue
+                view_id = str(view.get("createdViewId", "")).strip()
+                view_type = str(view.get("viewType", "")).strip()
+                if not view_id or view_type not in SUPPORTED_VIEW_TYPES:
+                    continue
+                view_name = str(view.get("name", "")).strip()
+                if not view_name and isinstance(view.get("createPayload"), dict):
+                    view_name = str(view["createPayload"].get("name", "")).strip()
+                targets.append(
+                    {
+                        "viewId": view_id,
+                        "viewName": view_name,
+                        "viewType": view_type,
+                        "viewTypeName": VIEW_TYPE_LABELS.get(view_type, view_type),
+                    }
+                )
+            if targets:
+                ws_map[ws_id] = targets
+        if ws_map:
+            out[app_id] = ws_map
+    return out
 
 
 def simplify_field(field: dict) -> dict:
@@ -186,6 +290,14 @@ def simplify_field(field: dict) -> dict:
     subtype = field.get("subType")
     options = field.get("options")
     option_count = len(options) if isinstance(options, list) else 0
+    field_id = str(field.get("id", "") or field.get("controlId", "")).strip()
+    field_name = str(field.get("name", "") or field.get("controlName", "")).strip()
+    is_system = bool(field.get("isSystemControl", False))
+    if not is_system:
+        try:
+            is_system = int(field.get("attribute", 0) or 0) == 1
+        except Exception:
+            is_system = False
     is_dropdown = False
     if isinstance(ftype, str):
         is_dropdown = ftype in ("SingleSelect", "MultipleSelect")
@@ -194,13 +306,13 @@ def simplify_field(field: dict) -> dict:
     if isinstance(subtype, int) and subtype in (10, 11):
         is_dropdown = True
     return {
-        "id": str(field.get("id", "")).strip(),
-        "name": str(field.get("name", "")).strip(),
+        "id": field_id,
+        "name": field_name,
         "type": ftype,
         "subType": subtype,
         "isTitle": bool(field.get("isTitle", False)),
         "required": bool(field.get("required", False)),
-        "isSystem": bool(field.get("isSystemControl", False)),
+        "isSystem": is_system,
         "optionCount": option_count,
         "isDropdown": is_dropdown,
     }
@@ -258,7 +370,7 @@ worksheetId：{worksheet_id}
 3) 只有 表格视图(type=0) 和 画廊视图(type=3) 允许配置 navGroup。
 4) navGroup（筛选列表）只能使用“下拉字段”（SingleSelect/MultipleSelect）。
 5) 若存在多个下拉字段，优先选择业务管理意义最强的那个（如状态/类型/分类/等级/阶段等）。
-6) 表格/看板/画廊/日历 都允许配置 fastFilters。
+6) 仅表格/看板/画廊视图允许配置 fastFilters；日历视图不要配置。
 7) 若不需要某功能，对应 needXxx=false，数组留空。
 8) fastFilters 建议 1-4 个。
 9) 输出必须为合法 JSON。
@@ -413,6 +525,9 @@ def normalize_view_plan(
         need_fast = False
         fast_filters = []
         reason = (reason + f"；{VIEW_TYPE_LABELS.get(view_type, view_type)}不支持快速筛选").strip("；")
+    elif need_fast and not fast_filters:
+        need_fast = False
+        reason = (reason + "；无有效快速筛选字段，已禁用快速筛选").strip("；")
 
     fast_adv = item.get("fastAdvancedSetting") if isinstance(item.get("fastAdvancedSetting"), dict) else {}
     fast_edit_keys = item.get("fastEditAdKeys") if isinstance(item.get("fastEditAdKeys"), list) else []
@@ -438,6 +553,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="规划视图的筛选列表与快速筛选")
     parser.add_argument("--model", default=DEFAULT_MODEL, help="Gemini 模型名")
     parser.add_argument("--config", default=str(GEMINI_CONFIG_PATH), help="Gemini 配置 JSON 路径")
+    parser.add_argument("--auth-config", default=str(AUTH_CONFIG_PATH), help="auth_config.py 路径")
+    parser.add_argument("--view-create-result", default="", help="视图创建结果 JSON 路径（默认取最新）")
     parser.add_argument("--app-ids", default="", help="可选，应用ID列表（逗号分隔）；不传则交互选择")
     parser.add_argument("--output", default="", help="输出 JSON 路径")
     parser.add_argument("--gemini-retries", type=int, default=DEFAULT_GEMINI_RETRIES, help="Gemini 请求失败时的重试次数")
@@ -445,6 +562,7 @@ def main() -> None:
 
     api_key = load_gemini_api_key(Path(args.config).expanduser().resolve())
     client = genai.Client(api_key=api_key)
+    web_auth = load_web_auth(Path(args.auth_config).expanduser().resolve())
 
     app_rows = load_app_auth_rows()
     apps = []
@@ -482,6 +600,10 @@ def main() -> None:
             return
         picked_apps = [apps[i - 1] for i in picked]
 
+    wanted_app_ids = {app["appId"] for app in picked_apps}
+    view_create_result_path = resolve_view_create_result_json(args.view_create_result.strip())
+    view_targets_by_app = load_view_targets(view_create_result_path, wanted_app_ids=wanted_app_ids)
+
     output_apps = []
     total_views = 0
     for app in picked_apps:
@@ -489,28 +611,14 @@ def main() -> None:
         ws_list = fetch_worksheets(app["appKey"], app["sign"])
         app_out = {"appId": app["appId"], "appName": app["appName"], "worksheets": []}
         for ws in ws_list:
-            detail = fetch_worksheet_detail(app["appKey"], app["sign"], ws["workSheetId"])
+            ws_id = ws["workSheetId"]
+            detail = fetch_controls(ws_id, web_auth)
             fields = [simplify_field(f) for f in detail.get("fields", []) if isinstance(f, dict)]
-            views = detail.get("views") if isinstance(detail.get("views"), list) else []
-            target_views = []
-            for v in views:
-                if not isinstance(v, dict):
-                    continue
-                vtype = str(v.get("type", "")).strip()
-                if vtype not in SUPPORTED_VIEW_TYPES:
-                    continue
-                target_views.append(
-                    {
-                        "viewId": str(v.get("id", "")).strip(),
-                        "viewName": str(v.get("name", "")).strip(),
-                        "viewType": vtype,
-                        "viewTypeName": VIEW_TYPE_LABELS.get(vtype, vtype),
-                    }
-                )
+            target_views = view_targets_by_app.get(app["appId"], {}).get(ws_id, [])
             if not target_views:
                 continue
 
-            prompt = build_prompt(app["appName"], ws["workSheetName"], ws["workSheetId"], target_views, fields)
+            prompt = build_prompt(app["appName"], ws["workSheetName"], ws_id, target_views, fields)
             resp = generate_with_retry(client, args.model, prompt, args.gemini_retries)
             parsed = extract_json(resp.text or "")
             view_plans_raw = parsed.get("viewPlans") if isinstance(parsed.get("viewPlans"), list) else []
@@ -543,7 +651,7 @@ def main() -> None:
 
             app_out["worksheets"].append(
                 {
-                    "worksheetId": ws["workSheetId"],
+                    "worksheetId": ws_id,
                     "worksheetName": ws["workSheetName"],
                     "targetViews": target_views,
                     "viewPlans": view_plans,
@@ -557,6 +665,7 @@ def main() -> None:
         "generatedAt": datetime.now().isoformat(timespec="seconds"),
         "model": args.model,
         "source": "view_filter_plan_gemini_v2",
+        "viewCreateResultJson": str(view_create_result_path),
         "apps": output_apps,
         "summary": {"appCount": len(output_apps), "viewCount": total_views},
     }

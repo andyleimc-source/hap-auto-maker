@@ -30,7 +30,6 @@ from mock_data_common import (
     choose_app,
     discover_authorized_apps,
     extract_json_object,
-    fetch_rows,
     load_gemini_api_key,
     load_json,
     make_log_path,
@@ -180,41 +179,23 @@ def collect_consistency_state(
         relation_field_ids = [field["relationFieldId"] for field in candidate["relationFields"]]
         append_log(
             log_path,
-            "load_live_rows_start",
-            worksheetId=worksheet_id,
-            worksheetName=candidate["worksheetName"],
-            relationFieldCount=len(relation_field_ids),
-            sourceRecordCount=len(source_records),
-        )
-        live_rows = fetch_rows(
-            base_url=base_url,
-            app_key=app_key,
-            sign=sign,
-            worksheet_id=worksheet_id,
-            fields=relation_field_ids,
-            include_system_fields=True,
-        )
-        live_row_map = {}
-        for row in live_rows:
-            row_id = extract_row_id(row)
-            if row_id:
-                live_row_map[row_id] = row
-        append_log(
-            log_path,
             "load_live_rows_finished",
             worksheetId=worksheet_id,
             worksheetName=candidate["worksheetName"],
-            liveRowCount=len(live_row_map),
+            liveRowCount=len(source_records),
+            source="write_result",
         )
 
         already_resolved = []
         pending_items = []
         for record in source_records:
             row_id = str(record.get("rowId", "")).strip()
-            live_row = live_row_map.get(row_id, {})
+            live_values = record.get("valuesByFieldId", {})
+            if not isinstance(live_values, dict):
+                live_values = {}
             source_preview = build_source_preview(record, worksheet_meta_map.get(worksheet_id, {}))
             for field in candidate["relationFields"]:
-                current_value = live_row.get(field["relationFieldId"])
+                current_value = live_values.get(field["relationFieldId"])
                 item = {
                     "rowId": row_id,
                     "mockRecordKey": record["mockRecordKey"],

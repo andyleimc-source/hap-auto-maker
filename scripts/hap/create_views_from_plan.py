@@ -99,6 +99,45 @@ def normalize_advanced_setting(view_type: str, value: Any) -> dict:
     return out
 
 
+def parse_json_loose(value: Any) -> Any:
+    if isinstance(value, (dict, list)):
+        return value
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    try:
+        return json.loads(text)
+    except Exception:
+        return None
+
+
+def normalize_calendarcids(value: Any) -> str:
+    raw = parse_json_loose(value)
+    if isinstance(raw, dict):
+        raw = [raw]
+    if not isinstance(raw, list):
+        return ""
+
+    normalized: List[Dict[str, str]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        begin = str(item.get("begin") or item.get("begindate") or item.get("start") or "").strip()
+        end = str(item.get("end") or item.get("enddate") or "").strip()
+        color = str(item.get("color") or "").strip()
+        if not begin:
+            continue
+        one = {"begin": begin, "end": end}
+        if color:
+            one["color"] = color
+        normalized.append(one)
+    if not normalized:
+        return ""
+    return json.dumps(normalized, ensure_ascii=False, separators=(",", ":"))
+
+
 def build_create_payload(app_id: str, worksheet_id: str, view: dict) -> dict:
     view_type = str(view.get("viewType", "0")).strip() or "0"
     display_controls = view.get("displayControls")
@@ -137,9 +176,31 @@ def build_update_payload(app_id: str, worksheet_id: str, view_id: str, update: d
         if k in ("appId", "worksheetId", "viewId"):
             continue
         if k == "advancedSetting":
-            payload[k] = normalize_advanced_setting("", v)
+            adv = normalize_advanced_setting("", v)
+            if "calendarcids" in adv:
+                fixed = normalize_calendarcids(adv.get("calendarcids", ""))
+                if fixed:
+                    adv["calendarcids"] = fixed
+                else:
+                    adv.pop("calendarcids", None)
+            payload[k] = adv
         else:
             payload[k] = v
+    edit_ad_keys = payload.get("editAdKeys")
+    if isinstance(edit_ad_keys, list):
+        cleaned = []
+        for x in edit_ad_keys:
+            key = str(x).strip()
+            if not key:
+                continue
+            if key == "calendarcids" and not str((payload.get("advancedSetting") or {}).get("calendarcids", "")).strip():
+                continue
+            cleaned.append(key)
+        if cleaned:
+            payload["editAdKeys"] = cleaned
+        else:
+            payload.pop("editAdKeys", None)
+            payload["_skip_reason"] = "无有效 editAdKeys，跳过本次 postCreateUpdate"
     return payload
 
 
@@ -258,31 +319,41 @@ def main() -> None:
                 }
 
                 created_view_id = ""
+                final_success = False
                 if args.dry_run:
                     created_view_id = "__DRY_RUN_VIEW_ID__"
-                    view_result["success"] = True
+                    final_success = True
                 else:
                     if isinstance(create_resp, dict) and int(create_resp.get("state", 0) or 0) == 1:
                         created_view_id = str((create_resp.get("data") or {}).get("viewId", "")).strip()
-                        view_result["success"] = bool(created_view_id)
-                    if not view_result["success"]:
-                        result["summary"]["failedCount"] += 1
+                        final_success = bool(created_view_id)
                 view_result["createdViewId"] = created_view_id
 
                 post_updates = view.get("postCreateUpdates")
                 if not isinstance(post_updates, list):
                     post_updates = []
-                if created_view_id:
+                if created_view_id and final_success:
                     for upd in post_updates:
                         if not isinstance(upd, dict):
                             continue
                         upd_payload = build_update_payload(app_id, ws_id, created_view_id, upd)
+                        skip_reason = str(upd_payload.pop("_skip_reason", "")).strip()
+                        if skip_reason:
+                            view_result["updates"].append({"payload": upd_payload, "skipped": True, "reason": skip_reason})
+                            continue
                         upd_resp = save_view(upd_payload, auth, app_id, ws_id, args.dry_run)
                         view_result["updates"].append({"payload": upd_payload, "response": upd_resp})
                         result["summary"]["updateCallCount"] += 1
+                        if not args.dry_run:
+                            ok = isinstance(upd_resp, dict) and int(upd_resp.get("state", 0) or 0) == 1
+                            if not ok:
+                                final_success = False
 
-                if view_result["success"]:
+                view_result["success"] = final_success
+                if final_success:
                     result["summary"]["createdViewCount"] += 1
+                else:
+                    result["summary"]["failedCount"] += 1
 
                 ws_result["views"].append(view_result)
             app_result["worksheets"].append(ws_result)

@@ -10,7 +10,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import List
+from typing import Dict, List
 
 CURRENT_DIR = Path(__file__).resolve().parent
 if str(CURRENT_DIR) not in sys.path:
@@ -20,12 +20,13 @@ from mock_data_common import (
     DEFAULT_BASE_URL,
     MOCK_BUNDLE_DIR,
     MOCK_WRITE_RESULT_DIR,
+    add_worksheet_row_with_fallback,
     append_log,
-    build_batch_rows,
+    build_v3_fields,
     choose_app,
-    create_rows_batch,
     discover_authorized_apps,
     load_json,
+    load_web_auth,
     make_log_path,
     make_output_path,
     resolve_json_input,
@@ -50,6 +51,7 @@ def main() -> None:
     app_id = str(bundle.get("app", {}).get("appId", "")).strip()
     apps = discover_authorized_apps(base_url=args.base_url)
     app = choose_app(apps, app_id=args.app_id or app_id, app_index=args.app_index)
+    web_auth = load_web_auth()
     log_path = make_log_path("write_mock_data", app["appId"])
     append_log(
         log_path,
@@ -66,11 +68,29 @@ def main() -> None:
         raise ValueError("bundle.worksheets 格式错误")
 
     result_worksheets = []
+    created_records_by_ws: Dict[str, List[dict]] = {}
     error_message = ""
     for worksheet in sorted(worksheets, key=lambda item: (int(item.get("order", 0) or 0), item.get("worksheetName", ""))):
         records = worksheet.get("records", [])
         if not isinstance(records, list):
             raise ValueError(f"记录列表格式错误: {worksheet}")
+        field_metas = worksheet.get("fieldMetas", [])
+        if not isinstance(field_metas, list):
+            field_metas = worksheet.get("writableFieldMetas", [])
+        if not isinstance(field_metas, list):
+            field_metas = []
+        field_meta_map = {
+            str(field.get("fieldId", "")).strip(): {
+                "name": str(field.get("name", "")).strip(),
+                "type": str(field.get("type", "")).strip(),
+                "controlType": int(field.get("controlType", 0) or 0),
+            }
+            for field in field_metas
+            if isinstance(field, dict) and str(field.get("fieldId", "")).strip()
+        }
+        required_relation_fields = worksheet.get("requiredRelationFields", [])
+        if not isinstance(required_relation_fields, list):
+            required_relation_fields = []
         append_log(
             log_path,
             "worksheet_start",
@@ -84,40 +104,82 @@ def main() -> None:
         response = {"success": True, "dryRun": args.dry_run}
         failed_count = 0
         try:
-            row_plan = build_batch_rows(records)
+            enriched_records = []
+            for index, record in enumerate(records):
+                if not isinstance(record, dict):
+                    raise ValueError(f"记录格式错误: {record}")
+                values = record.get("valuesByFieldId", {})
+                if not isinstance(values, dict):
+                    raise ValueError(f"valuesByFieldId 格式错误: {record}")
+                final_values = dict(values)
+                for rel in required_relation_fields:
+                    if not isinstance(rel, dict):
+                        continue
+                    field_id = str(rel.get("fieldId", "")).strip()
+                    target_ws_id = str(rel.get("targetWorksheetId", "")).strip()
+                    if not field_id or not target_ws_id or field_id in final_values:
+                        continue
+                    target_records = created_records_by_ws.get(target_ws_id, [])
+                    if not target_records:
+                        raise RuntimeError(
+                            f"必填关联字段缺少可用目标记录: worksheet={worksheet['worksheetName']}, "
+                            f"field={rel.get('fieldName', field_id)}, targetWorksheetId={target_ws_id}"
+                        )
+                    target_row_id = str(target_records[index % len(target_records)].get("rowId", "")).strip()
+                    if not target_row_id:
+                        raise RuntimeError(
+                            f"必填关联字段目标记录缺少 rowId: worksheet={worksheet['worksheetName']}, "
+                            f"field={rel.get('fieldName', field_id)}, targetWorksheetId={target_ws_id}"
+                        )
+                    final_values[field_id] = [target_row_id]
+                enriched_record = dict(record)
+                enriched_record["valuesByFieldId"] = final_values
+                enriched_records.append(enriched_record)
+
+            row_plan = []
+            for record in enriched_records:
+                row_plan.append({"fields": build_v3_fields(record, field_meta_map)})
             append_log(
                 log_path,
                 "worksheet_rows_built",
                 worksheetId=worksheet["worksheetId"],
                 requestRowCount=len(row_plan),
-                firstMockRecordKey=records[0]["mockRecordKey"] if records else "",
-                lastMockRecordKey=records[-1]["mockRecordKey"] if records else "",
+                firstMockRecordKey=enriched_records[0]["mockRecordKey"] if enriched_records else "",
+                lastMockRecordKey=enriched_records[-1]["mockRecordKey"] if enriched_records else "",
             )
             row_ids: List[str] = []
             if args.dry_run:
-                row_ids = [f"dryrun-{item['mockRecordKey']}" for item in records]
+                row_ids = [f"dryrun-{item['mockRecordKey']}" for item in enriched_records]
             else:
-                api_resp = create_rows_batch(
-                    base_url=args.base_url,
-                    app_key=app["appKey"],
-                    sign=app["sign"],
-                    worksheet_id=worksheet["worksheetId"],
-                    records=records,
-                    trigger_workflow=args.trigger_workflow,
-                )
-                response = api_resp
-                row_ids = [str(item).strip() for item in api_resp.get("data", {}).get("rowIds", [])]
-                if len(row_ids) != len(records):
-                    raise RuntimeError(
-                        f"批量写入返回 rowIds 数量不匹配: worksheetId={worksheet['worksheetId']}, expected={len(records)}, actual={len(row_ids)}"
+                account_id, authorization, cookie = web_auth
+                row_responses = []
+                for record in enriched_records:
+                    api_resp = add_worksheet_row_with_fallback(
+                        base_url=args.base_url,
+                        app_key=app["appKey"],
+                        sign=app["sign"],
+                        account_id=account_id,
+                        authorization=authorization,
+                        cookie=cookie,
+                        app_id=app["appId"],
+                        worksheet_id=worksheet["worksheetId"],
+                        record=record,
+                        field_meta_map=field_meta_map,
+                        trigger_workflow=bool(args.trigger_workflow),
                     )
+                    row_responses.append(api_resp)
+                    row_id = str(api_resp.get("rowId", "")).strip()
+                    if not row_id:
+                        raise RuntimeError(f"新增返回缺少 rowid: worksheetId={worksheet['worksheetId']}, record={record['mockRecordKey']}")
+                    row_ids.append(row_id)
+                response = {"success": True, "rows": row_responses}
             append_log(
                 log_path,
                 "worksheet_rows_created",
                 worksheetId=worksheet["worksheetId"],
                 returnedRowIdCount=len(row_ids),
             )
-            for record, row_id in zip(records, row_ids):
+            for record, row_id in zip(enriched_records, row_ids):
                 created_records.append(
                     {
                         "mockRecordKey": record["mockRecordKey"],
@@ -162,6 +224,8 @@ def main() -> None:
             successCount=len(created_records),
             failedCount=failed_count,
         )
+        if created_records:
+            created_records_by_ws[str(worksheet["worksheetId"])] = created_records
         if error_message:
             break
 

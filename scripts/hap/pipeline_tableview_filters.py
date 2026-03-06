@@ -35,6 +35,7 @@ def main() -> None:
     parser.add_argument("--model", default=DEFAULT_MODEL, help="Gemini 模型名")
     parser.add_argument("--config", default=str(DEFAULT_GEMINI_CONFIG), help="Gemini 配置 JSON 路径")
     parser.add_argument("--auth-config", default=str(DEFAULT_AUTH_CONFIG), help="auth_config.py 路径")
+    parser.add_argument("--view-create-result", default="", help="视图创建结果 JSON 路径")
     parser.add_argument("--app-ids", default="", help="可选，仅执行指定 appId（逗号分隔）")
     parser.add_argument("--worksheet-ids", default="", help="可选，仅执行指定 worksheetId（逗号分隔）")
     parser.add_argument("--view-ids", default="", help="可选，仅执行指定 viewId（逗号分隔）")
@@ -55,11 +56,15 @@ def main() -> None:
         args.model,
         "--config",
         str(Path(args.config).expanduser().resolve()),
+        "--auth-config",
+        str(Path(args.auth_config).expanduser().resolve()),
         "--output",
         str(Path(plan_output).expanduser().resolve()),
     ]
     if args.app_ids.strip():
         cmd_plan.extend(["--app-ids", args.app_ids.strip()])
+    if args.view_create_result.strip():
+        cmd_plan.extend(["--view-create-result", str(Path(args.view_create_result).expanduser().resolve())])
 
     cmd_apply = [
         sys.executable,

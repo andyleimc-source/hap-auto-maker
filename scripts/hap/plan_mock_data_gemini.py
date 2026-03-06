@@ -217,6 +217,50 @@ def validate_plan(raw: dict, snapshot: dict) -> Dict[str, Any]:
                 "order": int(tier_info["order"]),
                 "recordCount": expected_count,
                 "reason": str(tier_info["reason"]),
+                "fieldMetas": [
+                    {
+                        "fieldId": field["fieldId"],
+                        "name": field["name"],
+                        "type": field["type"],
+                        "controlType": int(field.get("controlType", 0) or 0),
+                        "options": field.get("options", []),
+                        "required": bool(field.get("required", False)),
+                        "dataSource": field.get("dataSource", ""),
+                    }
+                    for field in schema_ws.get("fields", [])
+                ],
+                "writableFieldMetas": [
+                    {
+                        "fieldId": field["fieldId"],
+                        "name": field["name"],
+                        "type": field["type"],
+                        "controlType": int(field.get("controlType", 0) or 0),
+                        "options": field.get("options", []),
+                        "required": bool(field.get("required", False)),
+                        "dataSource": field.get("dataSource", ""),
+                    }
+                    for field in schema_ws.get("writableFields", [])
+                ],
+                "requiredRelationFields": [
+                    {
+                        "fieldId": field["fieldId"],
+                        "fieldName": field["name"],
+                        "targetWorksheetId": field["dataSource"],
+                        "targetWorksheetName": next(
+                            (
+                                ws.get("worksheetName", "")
+                                for ws in snapshot.get("worksheets", [])
+                                if ws.get("worksheetId") == field["dataSource"]
+                            ),
+                            "",
+                        ),
+                    }
+                    for field in schema_ws.get("fields", [])
+                    if str(field.get("type", "")).strip() == "Relation"
+                    and bool(field.get("required", False))
+                    and int(field.get("subType", 0) or 0) == 1
+                    and str(field.get("dataSource", "")).strip()
+                ],
                 "records": normalized_records,
             }
         )

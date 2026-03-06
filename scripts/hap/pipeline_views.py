@@ -57,6 +57,8 @@ def main() -> None:
         args.model,
         "--config",
         str(Path(args.config).expanduser().resolve()),
+        "--auth-config",
+        str(Path(args.auth_config).expanduser().resolve()),
         "--output",
         str(Path(plan_output).expanduser().resolve()),
     ]

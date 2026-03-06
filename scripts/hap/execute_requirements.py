@@ -528,6 +528,8 @@ def main() -> None:
             str(view_filters.get("model", views.get("model", ws.get("model", "gemini-2.5-pro")))),
             "--app-ids",
             app_id,
+            "--view-create-result",
+            str(view_create_output),
             "--plan-output",
             str(filter_plan_output),
             "--apply-output",

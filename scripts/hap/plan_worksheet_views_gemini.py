@@ -9,6 +9,7 @@
 """
 
 import argparse
+import importlib.util
 import json
 import re
 from datetime import datetime
@@ -24,10 +25,11 @@ OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 APP_AUTH_DIR = OUTPUT_ROOT / "app_authorizations"
 VIEW_PLAN_DIR = OUTPUT_ROOT / "view_plans"
 GEMINI_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "gemini_auth.json"
+AUTH_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "auth_config.py"
 DEFAULT_MODEL = "gemini-2.5-pro"
 
 APP_INFO_URL = "https://api.mingdao.com/v3/app"
-WORKSHEET_DETAIL_URL = "https://api.mingdao.com/v3/app/worksheets/{worksheet_id}"
+GET_CONTROLS_URL = "https://www.mingdao.com/api/Worksheet/GetWorksheetControls"
 ALLOWED_VIEW_TYPES = {"0", "1", "3", "4"}
 
 
@@ -88,6 +90,22 @@ def load_gemini_api_key(config_path: Path) -> str:
     if not api_key:
         raise ValueError(f"Gemini 配置缺少 api_key: {config_path}")
     return api_key
+
+
+def load_web_auth(path: Path) -> tuple[str, str, str]:
+    if not path.exists():
+        raise FileNotFoundError(f"缺少认证配置: {path}")
+    spec = importlib.util.spec_from_file_location("auth_config_runtime", str(path))
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"无法加载认证文件: {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    account_id = str(getattr(module, "ACCOUNT_ID", "")).strip()
+    authorization = str(getattr(module, "AUTHORIZATION", "")).strip()
+    cookie = str(getattr(module, "COOKIE", "")).strip()
+    if not account_id or not authorization or not cookie:
+        raise ValueError(f"auth_config.py 缺少 ACCOUNT_ID/AUTHORIZATION/COOKIE: {path}")
+    return account_id, authorization, cookie
 
 
 def extract_json(text: str) -> dict:
@@ -183,23 +201,36 @@ def fetch_worksheets(app_key: str, sign: str) -> List[dict]:
     return worksheets
 
 
-def fetch_worksheet_schema(app_key: str, sign: str, worksheet_id: str) -> dict:
-    headers = {"HAP-Appkey": app_key, "HAP-Sign": sign, "Accept": "application/json, text/plain, */*"}
-    url = WORKSHEET_DETAIL_URL.format(worksheet_id=worksheet_id)
-    resp = requests.get(url, headers=headers, timeout=30)
+def fetch_controls(worksheet_id: str, web_auth: tuple[str, str, str]) -> dict:
+    account_id, authorization, cookie = web_auth
+    headers = {
+        "Accept": "application/json, text/plain, */*",
+        "Content-Type": "application/json",
+        "AccountId": account_id,
+        "Authorization": authorization,
+        "Cookie": cookie,
+        "X-Requested-With": "XMLHttpRequest",
+        "Origin": "https://www.mingdao.com",
+        "Referer": f"https://www.mingdao.com/worksheet/field/edit?sourceId={worksheet_id}",
+    }
+    resp = requests.post(GET_CONTROLS_URL, headers=headers, json={"worksheetId": worksheet_id}, timeout=30)
     data = resp.json()
-    if not data.get("success"):
-        raise RuntimeError(f"获取工作表结构失败: worksheetId={worksheet_id}, resp={data}")
-    ws = data.get("data", {})
-    if not isinstance(ws, dict):
-        raise RuntimeError(f"工作表结构格式错误: worksheetId={worksheet_id}, resp={data}")
-    fields = ws.get("fields", [])
-    if not isinstance(fields, list):
-        fields = []
+    wrapped = data.get("data", {})
+    if isinstance(wrapped, dict) and isinstance(wrapped.get("data"), dict):
+        if int(wrapped.get("code", 0) or 0) != 1:
+            raise RuntimeError(f"获取工作表控件失败: worksheetId={worksheet_id}, resp={data}")
+        payload = wrapped["data"]
+    else:
+        payload = data.get("data", {})
+        if not isinstance(payload, dict):
+            raise RuntimeError(f"获取工作表控件失败: worksheetId={worksheet_id}, resp={data}")
+    controls = payload.get("controls", [])
+    if not isinstance(controls, list):
+        raise RuntimeError(f"工作表控件格式错误: worksheetId={worksheet_id}, resp={data}")
     return {
         "worksheetId": worksheet_id,
-        "worksheetName": str(ws.get("name", "")),
-        "fields": fields,
+        "worksheetName": str(payload.get("worksheetName", "") or ""),
+        "fields": controls,
     }
 
 
@@ -220,14 +251,22 @@ def simplify_field(field: dict) -> dict:
             )
             if len(options) >= 20:
                 break
+    field_id = str(field.get("id", "") or field.get("controlId", "")).strip()
+    field_name = str(field.get("name", "") or field.get("controlName", "")).strip()
+    is_system = bool(field.get("isSystemControl", False))
+    if not is_system:
+        try:
+            is_system = int(field.get("attribute", 0) or 0) == 1
+        except Exception:
+            is_system = False
     return {
-        "id": str(field.get("id", "")).strip(),
-        "name": str(field.get("name", "")).strip(),
+        "id": field_id,
+        "name": field_name,
         "type": str(field.get("type", "")).strip(),
         "subType": int(field.get("subType", 0) or 0),
         "isTitle": bool(field.get("isTitle", False)),
         "required": bool(field.get("required", False)),
-        "isSystem": bool(field.get("isSystemControl", False)),
+        "isSystem": is_system,
         "options": options,
     }
 
@@ -385,12 +424,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="遍历应用工作表并使用 Gemini 规划视图")
     parser.add_argument("--model", default=DEFAULT_MODEL, help="Gemini 模型名")
     parser.add_argument("--config", default=str(GEMINI_CONFIG_PATH), help="Gemini 配置 JSON 路径")
+    parser.add_argument("--auth-config", default=str(AUTH_CONFIG_PATH), help="auth_config.py 路径")
     parser.add_argument("--app-ids", default="", help="可选，应用ID列表（逗号分隔）；不传则交互选择")
     parser.add_argument("--output", default="", help="输出 JSON 文件路径")
     args = parser.parse_args()
 
     api_key = load_gemini_api_key(Path(args.config).expanduser().resolve())
     client = genai.Client(api_key=api_key)
+    web_auth = load_web_auth(Path(args.auth_config).expanduser().resolve())
 
     app_rows = load_app_auth_rows()
     apps = []
@@ -439,7 +480,7 @@ def main() -> None:
         worksheets = fetch_worksheets(app["appKey"], app["sign"])
         app_out = {"appId": app["appId"], "appName": app["appName"], "worksheets": []}
         for ws in worksheets:
-            schema = fetch_worksheet_schema(app["appKey"], app["sign"], ws["workSheetId"])
+            schema = fetch_controls(ws["workSheetId"], web_auth)
             fields = [simplify_field(f) for f in schema.get("fields", []) if isinstance(f, dict)]
             planned = plan_views_for_worksheet(client, args.model, app["appName"], ws, fields)
             app_out["worksheets"].append(planned)
@@ -474,4 +515,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

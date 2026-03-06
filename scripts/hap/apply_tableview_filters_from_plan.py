@@ -22,7 +22,7 @@ RESULT_DIR = OUTPUT_ROOT / "tableview_filter_apply_results"
 AUTH_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "auth_config.py"
 SAVE_VIEW_URL = "https://www.mingdao.com/api/Worksheet/SaveWorksheetView"
 NAV_SUPPORTED_VIEW_TYPES = {"0", "3"}
-FAST_SUPPORTED_VIEW_TYPES = {"0", "1", "3", "4"}
+FAST_SUPPORTED_VIEW_TYPES = {"0", "1", "3"}
 
 
 def now_ts() -> str:
