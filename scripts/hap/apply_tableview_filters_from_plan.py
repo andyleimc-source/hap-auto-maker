@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-执行表格视图筛选配置规划：
+执行视图筛选配置规划：
 - 筛选列表：navGroup + advancedSetting
 - 快速筛选：fastFilters + advancedSetting
 """
@@ -21,6 +21,9 @@ PLAN_DIR = OUTPUT_ROOT / "tableview_filter_plans"
 RESULT_DIR = OUTPUT_ROOT / "tableview_filter_apply_results"
 AUTH_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "auth_config.py"
 SAVE_VIEW_URL = "https://www.mingdao.com/api/Worksheet/SaveWorksheetView"
+DELETE_VIEW_URL = "https://www.mingdao.com/api/Worksheet/DeleteWorksheetView"
+NAV_SUPPORTED_VIEW_TYPES = {"0", "3"}
+FAST_SUPPORTED_VIEW_TYPES = {"0", "1", "3", "4"}
 
 
 def now_ts() -> str:
@@ -112,8 +115,29 @@ def save_view(payload: dict, auth: dict, app_id: str, worksheet_id: str, view_id
         return {"status_code": resp.status_code, "text": resp.text}
 
 
+def delete_view(app_id: str, worksheet_id: str, view_id: str, auth: dict, dry_run: bool) -> dict:
+    payload = {"appId": app_id, "worksheetId": worksheet_id, "viewId": view_id}
+    if dry_run:
+        return {"dry_run": True, "payload": payload}
+    headers = {
+        "Accept": "application/json, text/plain, */*",
+        "Content-Type": "application/json",
+        "accountid": auth["accountId"],
+        "Authorization": auth["authorization"],
+        "Cookie": auth["cookie"],
+        "Origin": "https://www.mingdao.com",
+        "Referer": f"https://www.mingdao.com/app/{app_id}/{worksheet_id}/{view_id}",
+        "X-Requested-With": "XMLHttpRequest",
+    }
+    resp = requests.post(DELETE_VIEW_URL, headers=headers, json=payload, timeout=30)
+    try:
+        return resp.json()
+    except Exception:
+        return {"status_code": resp.status_code, "text": resp.text}
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="执行表格视图筛选列表/快速筛选规划")
+    parser = argparse.ArgumentParser(description="执行视图筛选列表/快速筛选规划")
     parser.add_argument("--plan-json", default="", help="规划 JSON 路径（默认取最新）")
     parser.add_argument("--auth-config", default=str(AUTH_CONFIG_PATH), help="认证配置 auth_config.py 路径")
     parser.add_argument("--app-ids", default="", help="可选，仅执行指定 appId（逗号分隔）")
@@ -146,6 +170,8 @@ def main() -> None:
             "viewCount": 0,
             "navAppliedCount": 0,
             "fastAppliedCount": 0,
+            "deletedOldViewCount": 0,
+            "deleteFailedCount": 0,
             "failedCount": 0,
         },
     }
@@ -186,15 +212,22 @@ def main() -> None:
                     continue
                 view_id = str(vp.get("viewId", "")).strip()
                 view_name = str(vp.get("viewName", "")).strip()
+                view_type = str(vp.get("viewType", "")).strip()
                 if not view_id:
                     continue
                 if wanted_view_ids and view_id not in wanted_view_ids:
                     continue
                 result["summary"]["viewCount"] += 1
 
-                view_result = {"viewId": view_id, "viewName": view_name, "navApply": None, "fastApply": None}
+                view_result = {
+                    "viewId": view_id,
+                    "viewName": view_name,
+                    "viewType": view_type,
+                    "navApply": None,
+                    "fastApply": None,
+                }
 
-                if bool(vp.get("needNavGroup", False)):
+                if bool(vp.get("needNavGroup", False)) and view_type in NAV_SUPPORTED_VIEW_TYPES:
                     payload = {
                         "appId": app_id,
                         "worksheetId": ws_id,
@@ -212,9 +245,12 @@ def main() -> None:
                     else:
                         result["summary"]["failedCount"] += 1
                 else:
-                    view_result["navApply"] = {"skipped": True, "reason": "needNavGroup=false"}
+                    reason = "needNavGroup=false"
+                    if bool(vp.get("needNavGroup", False)) and view_type not in NAV_SUPPORTED_VIEW_TYPES:
+                        reason = f"viewType={view_type} 不支持筛选列表"
+                    view_result["navApply"] = {"skipped": True, "reason": reason}
 
-                if bool(vp.get("needFastFilters", False)):
+                if bool(vp.get("needFastFilters", False)) and view_type in FAST_SUPPORTED_VIEW_TYPES:
                     payload = {
                         "appId": app_id,
                         "worksheetId": ws_id,
@@ -232,7 +268,10 @@ def main() -> None:
                     else:
                         result["summary"]["failedCount"] += 1
                 else:
-                    view_result["fastApply"] = {"skipped": True, "reason": "needFastFilters=false"}
+                    reason = "needFastFilters=false"
+                    if bool(vp.get("needFastFilters", False)) and view_type not in FAST_SUPPORTED_VIEW_TYPES:
+                        reason = f"viewType={view_type} 不支持快速筛选"
+                    view_result["fastApply"] = {"skipped": True, "reason": reason}
 
                 ws_result["views"].append(view_result)
 
@@ -241,6 +280,36 @@ def main() -> None:
             result["apps"].append(app_result)
 
     result["summary"]["appCount"] = len(result["apps"])
+
+    delete_plan = plan.get("oldViewsDeletePlan") if isinstance(plan.get("oldViewsDeletePlan"), dict) else {}
+    delete_targets = delete_plan.get("targets") if isinstance(delete_plan.get("targets"), list) else []
+    delete_results = []
+    for item in delete_targets:
+        if not isinstance(item, dict):
+            continue
+        app_id = str(item.get("appId", "")).strip()
+        ws_id = str(item.get("worksheetId", "")).strip()
+        view_id = str(item.get("viewId", "")).strip()
+        if not app_id or not ws_id or not view_id:
+            continue
+        if wanted_app_ids and app_id not in wanted_app_ids:
+            continue
+        if wanted_ws_ids and ws_id not in wanted_ws_ids:
+            continue
+        if wanted_view_ids and view_id not in wanted_view_ids:
+            continue
+        resp = delete_view(app_id, ws_id, view_id, auth, args.dry_run)
+        ok = bool(args.dry_run) or (isinstance(resp, dict) and int(resp.get("state", 0) or 0) == 1)
+        delete_results.append({**item, "response": resp, "success": ok})
+        if ok:
+            result["summary"]["deletedOldViewCount"] += 1
+        else:
+            result["summary"]["deleteFailedCount"] += 1
+    result["oldViewsDeleteAction"] = {
+        "choice": str(delete_plan.get("choice", "")).strip(),
+        "deleted": delete_results,
+        "skipped": delete_plan.get("skipped") if isinstance(delete_plan.get("skipped"), list) else [],
+    }
 
     if args.output:
         out_path = Path(args.output).expanduser().resolve()
@@ -254,9 +323,10 @@ def main() -> None:
     print(f"- 视图数: {result['summary']['viewCount']}")
     print(f"- 筛选列表应用次数: {result['summary']['navAppliedCount']}")
     print(f"- 快速筛选应用次数: {result['summary']['fastAppliedCount']}")
+    print(f"- 已删除旧视图数: {result['summary']['deletedOldViewCount']}")
+    print(f"- 删除失败数: {result['summary']['deleteFailedCount']}")
     print(f"- 失败次数: {result['summary']['failedCount']}")
 
 
 if __name__ == "__main__":
     main()
-

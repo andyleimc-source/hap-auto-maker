@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-规划表格视图的筛选列表(navGroup)与快速筛选(fastFilters)。
+规划视图的筛选列表(navGroup)与快速筛选(fastFilters)。
+
+支持：
+- 表格视图(type=0): 筛选列表 + 快速筛选
+- 看板视图(type=1): 快速筛选
+- 画廊视图(type=3): 筛选列表 + 快速筛选
+- 日历视图(type=4): 快速筛选
 """
 
 import argparse
@@ -19,10 +25,15 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 APP_AUTH_DIR = OUTPUT_ROOT / "app_authorizations"
 PLAN_DIR = OUTPUT_ROOT / "tableview_filter_plans"
+VIEW_CREATE_RESULT_DIR = OUTPUT_ROOT / "view_create_results"
 GEMINI_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "gemini_auth.json"
 DEFAULT_MODEL = "gemini-3-flash-preview"
 APP_INFO_URL = "https://api.mingdao.com/v3/app"
 WORKSHEET_DETAIL_URL = "https://api.mingdao.com/v3/app/worksheets/{worksheet_id}"
+SUPPORTED_VIEW_TYPES = {"0", "1", "3", "4"}
+NAV_SUPPORTED_VIEW_TYPES = {"0", "3"}
+FAST_SUPPORTED_VIEW_TYPES = {"0", "1", "3", "4"}
+VIEW_TYPE_LABELS = {"0": "表格视图", "1": "看板视图", "3": "画廊视图", "4": "日历视图"}
 
 
 def now_ts() -> str:
@@ -67,12 +78,62 @@ def choose_indexes(prompt: str, items_count: int) -> Optional[List[int]]:
     return picked
 
 
+def latest_file(base_dir: Path, pattern: str) -> Optional[Path]:
+    files = sorted(base_dir.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
+    return files[0] if files else None
+
+
 def load_gemini_api_key(path: Path) -> str:
     data = load_json(path)
     api_key = str(data.get("api_key", "")).strip()
     if not api_key:
         raise ValueError(f"Gemini 配置缺少 api_key: {path}")
     return api_key
+
+
+def load_latest_view_create_result() -> dict:
+    p = latest_file(VIEW_CREATE_RESULT_DIR, "view_create_result_*.json")
+    if not p:
+        return {}
+    try:
+        return load_json(p)
+    except Exception:
+        return {}
+
+
+def prompt_old_view_delete_choice(old_views: List[dict]) -> dict:
+    result = {"choice": "", "targets": [], "skipped": []}
+    if not old_views:
+        return result
+    print("\n创建前已存在的旧视图如下：")
+    print("序号 | 应用 | 工作表 | 视图名 | 视图ID | 类型")
+    for i, row in enumerate(old_views, start=1):
+        print(
+            f"{i}. {row['appName']} | {row['worksheetName']} | {row['viewName'] or '(未命名)'} | {row['viewId']} | {row['viewType']}"
+        )
+    choice = input("旧视图后续如何处理？输入 y 删除全部；输入序号删除指定视图；任意键取消: ").strip()
+    result["choice"] = choice
+    if not choice:
+        result["skipped"] = list(old_views)
+        return result
+    if choice.lower() == "y":
+        result["targets"] = list(old_views)
+        return result
+    try:
+        indexes = parse_selection(choice, len(old_views))
+    except ValueError:
+        result["skipped"] = list(old_views)
+        return result
+    if not indexes:
+        result["skipped"] = list(old_views)
+        return result
+    targets = [old_views[i - 1] for i in indexes]
+    target_keys = {(x["appId"], x["worksheetId"], x["viewId"]) for x in targets}
+    result["targets"] = targets
+    result["skipped"] = [
+        x for x in old_views if (x["appId"], x["worksheetId"], x["viewId"]) not in target_keys
+    ]
+    return result
 
 
 def extract_json(text: str) -> dict:
@@ -194,19 +255,19 @@ def simplify_field(field: dict) -> dict:
     }
 
 
-def build_prompt(app_name: str, worksheet_name: str, worksheet_id: str, fields: List[dict], table_views: List[dict]) -> str:
+def build_prompt(app_name: str, worksheet_name: str, worksheet_id: str, target_views: List[dict], fields: List[dict]) -> str:
     return f"""
-你是明道云视图配置专家。请分析该工作表中所有“表格视图(type=0)”是否需要配置：
+你是明道云视图配置专家。请分析该工作表中支持的视图，是否需要配置：
 1) 筛选列表(navGroup + advancedSetting中的导航参数)
 2) 快速筛选(fastFilters + advancedSetting.enablebtn)
 
 应用：{app_name}
 工作表：{worksheet_name}
 worksheetId：{worksheet_id}
+目标视图：
+{json.dumps(target_views, ensure_ascii=False, indent=2)}
 字段：
 {json.dumps(fields, ensure_ascii=False, indent=2)}
-表格视图：
-{json.dumps(table_views, ensure_ascii=False, indent=2)}
 
 只输出 JSON：
 {{
@@ -241,13 +302,15 @@ worksheetId：{worksheet_id}
 }}
 
 规则：
-1) 仅针对输入中的表格视图(viewType=0)输出。
+1) 仅针对输入中的目标视图输出。
 2) controlId 必须来自字段列表。
-3) navGroup（筛选列表）只能使用“下拉字段”（SingleSelect/MultipleSelect）。
-4) 若存在多个下拉字段，优先选择业务管理意义最强的那个（如状态/类型/分类/等级/阶段等）。
-5) 若不需要某功能，对应 needXxx=false，数组留空。
-6) fastFilters 建议 1-4 个。
-7) 输出必须为合法 JSON。
+3) 只有 表格视图(type=0) 和 画廊视图(type=3) 允许配置 navGroup。
+4) navGroup（筛选列表）只能使用“下拉字段”（SingleSelect/MultipleSelect）。
+5) 若存在多个下拉字段，优先选择业务管理意义最强的那个（如状态/类型/分类/等级/阶段等）。
+6) 表格/看板/画廊/日历 都允许配置 fastFilters。
+7) 若不需要某功能，对应 needXxx=false，数组留空。
+8) fastFilters 建议 1-4 个。
+9) 输出必须为合法 JSON。
 """.strip()
 
 
@@ -290,13 +353,14 @@ def normalize_view_plan(
     item: dict,
     field_map: Dict[str, dict],
     fields: List[dict],
-    view_id_set: set[str],
+    views_by_id: Dict[str, dict],
 ) -> Optional[dict]:
     if not isinstance(item, dict):
         return None
     view_id = str(item.get("viewId", "")).strip()
-    if not view_id or view_id not in view_id_set:
+    if not view_id or view_id not in views_by_id:
         return None
+    view_type = str(views_by_id[view_id].get("viewType", "")).strip()
 
     def norm_control_id(cid: str) -> str:
         x = str(cid or "").strip()
@@ -328,14 +392,18 @@ def normalize_view_plan(
                 out["navshow"] = str(g.get("navshow", "0"))
             nav_group.append(out)
     # 若 Gemini 没给或给错（非下拉），自动兜底一个最优下拉字段
-    if need_nav and not nav_group and best_dropdown_id:
+    if need_nav and view_type in NAV_SUPPORTED_VIEW_TYPES and not nav_group and best_dropdown_id:
         fallback = {"controlId": best_dropdown_id, "isAsc": True, "navshow": "0"}
         dt = field_map[best_dropdown_id].get("type")
         if isinstance(dt, int):
             fallback["dataType"] = dt
         nav_group = [fallback]
     reason = str(item.get("reason", "")).strip()
-    if not best_dropdown_id:
+    if view_type not in NAV_SUPPORTED_VIEW_TYPES:
+        need_nav = False
+        nav_group = []
+        reason = (reason + f"；{VIEW_TYPE_LABELS.get(view_type, view_type)}不支持筛选列表").strip("；")
+    elif not best_dropdown_id:
         need_nav = False
         nav_group = []
         reason = (reason + "；无可用下拉字段，已禁用筛选列表").strip("；")
@@ -370,6 +438,10 @@ def normalize_view_plan(
             if isinstance(f.get("advancedSetting"), dict):
                 out["advancedSetting"] = f["advancedSetting"]
             fast_filters.append(out)
+    if view_type not in FAST_SUPPORTED_VIEW_TYPES:
+        need_fast = False
+        fast_filters = []
+        reason = (reason + f"；{VIEW_TYPE_LABELS.get(view_type, view_type)}不支持快速筛选").strip("；")
 
     fast_adv = item.get("fastAdvancedSetting") if isinstance(item.get("fastAdvancedSetting"), dict) else {}
     fast_edit_keys = item.get("fastEditAdKeys") if isinstance(item.get("fastEditAdKeys"), list) else []
@@ -378,6 +450,7 @@ def normalize_view_plan(
     return {
         "viewId": view_id,
         "viewName": str(item.get("viewName", "")).strip(),
+        "viewType": view_type,
         "needNavGroup": need_nav,
         "navGroup": nav_group,
         "navAdvancedSetting": nav_adv,
@@ -391,7 +464,7 @@ def normalize_view_plan(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="规划表格视图的筛选列表与快速筛选")
+    parser = argparse.ArgumentParser(description="规划视图的筛选列表与快速筛选")
     parser.add_argument("--model", default=DEFAULT_MODEL, help="Gemini 模型名")
     parser.add_argument("--config", default=str(GEMINI_CONFIG_PATH), help="Gemini 配置 JSON 路径")
     parser.add_argument("--app-ids", default="", help="可选，应用ID列表（逗号分隔）；不传则交互选择")
@@ -437,6 +510,16 @@ def main() -> None:
             return
         picked_apps = [apps[i - 1] for i in picked]
 
+    create_result = load_latest_view_create_result()
+    old_views_snapshot = create_result.get("oldViewsSnapshot") if isinstance(create_result.get("oldViewsSnapshot"), list) else []
+    picked_app_ids = {str(app["appId"]).strip() for app in picked_apps}
+    old_views_snapshot = [
+        x
+        for x in old_views_snapshot
+        if isinstance(x, dict) and str(x.get("appId", "")).strip() in picked_app_ids
+    ]
+    delete_choice_plan = prompt_old_view_delete_choice(old_views_snapshot)
+
     output_apps = []
     total_views = 0
     for app in picked_apps:
@@ -447,20 +530,25 @@ def main() -> None:
             detail = fetch_worksheet_detail(app["appKey"], app["sign"], ws["workSheetId"])
             fields = [simplify_field(f) for f in detail.get("fields", []) if isinstance(f, dict)]
             views = detail.get("views") if isinstance(detail.get("views"), list) else []
-            table_views = []
+            target_views = []
             for v in views:
                 if not isinstance(v, dict):
                     continue
                 vtype = str(v.get("type", "")).strip()
-                if vtype != "0":
+                if vtype not in SUPPORTED_VIEW_TYPES:
                     continue
-                table_views.append(
-                    {"viewId": str(v.get("id", "")).strip(), "viewName": str(v.get("name", "")).strip(), "viewType": vtype}
+                target_views.append(
+                    {
+                        "viewId": str(v.get("id", "")).strip(),
+                        "viewName": str(v.get("name", "")).strip(),
+                        "viewType": vtype,
+                        "viewTypeName": VIEW_TYPE_LABELS.get(vtype, vtype),
+                    }
                 )
-            if not table_views:
+            if not target_views:
                 continue
 
-            prompt = build_prompt(app["appName"], ws["workSheetName"], ws["workSheetId"], fields, table_views)
+            prompt = build_prompt(app["appName"], ws["workSheetName"], ws["workSheetId"], target_views, fields)
             resp = client.models.generate_content(
                 model=args.model,
                 contents=prompt,
@@ -470,19 +558,19 @@ def main() -> None:
             view_plans_raw = parsed.get("viewPlans") if isinstance(parsed.get("viewPlans"), list) else []
 
             field_map = {str(f.get("id", "")).strip(): f for f in fields if str(f.get("id", "")).strip()}
-            view_id_set = {str(v.get("viewId", "")).strip() for v in table_views}
+            views_by_id = {str(v.get("viewId", "")).strip(): v for v in target_views}
             view_plans = []
             for item in view_plans_raw:
-                norm = normalize_view_plan(item, field_map, fields, view_id_set)
+                norm = normalize_view_plan(item, field_map, fields, views_by_id)
                 if norm:
                     view_plans.append(norm)
-            table_views_by_id = {v["viewId"]: v for v in table_views}
-            for vid, v in table_views_by_id.items():
+            for vid, v in views_by_id.items():
                 if not any(p.get("viewId") == vid for p in view_plans):
                     view_plans.append(
                         {
                             "viewId": vid,
                             "viewName": v.get("viewName", ""),
+                            "viewType": v.get("viewType", ""),
                             "needNavGroup": False,
                             "navGroup": [],
                             "navAdvancedSetting": {},
@@ -499,20 +587,21 @@ def main() -> None:
                 {
                     "worksheetId": ws["workSheetId"],
                     "worksheetName": ws["workSheetName"],
-                    "tableViews": table_views,
+                    "targetViews": target_views,
                     "viewPlans": view_plans,
                 }
             )
-            total_views += len(table_views)
-            print(f"- {ws['workSheetName']}：表格视图 {len(table_views)} 个")
+            total_views += len(target_views)
+            print(f"- {ws['workSheetName']}：目标视图 {len(target_views)} 个")
         output_apps.append(app_out)
 
     payload = {
         "generatedAt": datetime.now().isoformat(timespec="seconds"),
         "model": args.model,
-        "source": "tableview_filter_plan_gemini_v1",
+        "source": "view_filter_plan_gemini_v2",
+        "oldViewsDeletePlan": delete_choice_plan,
         "apps": output_apps,
-        "summary": {"appCount": len(output_apps), "tableViewCount": total_views},
+        "summary": {"appCount": len(output_apps), "viewCount": total_views},
     }
     if args.output:
         out_path = Path(args.output).expanduser().resolve()
@@ -522,7 +611,7 @@ def main() -> None:
 
     print(f"\n规划完成: {out_path}")
     print(f"- 应用数: {payload['summary']['appCount']}")
-    print(f"- 表格视图数: {payload['summary']['tableViewCount']}")
+    print(f"- 目标视图数: {payload['summary']['viewCount']}")
 
 
 if __name__ == "__main__":

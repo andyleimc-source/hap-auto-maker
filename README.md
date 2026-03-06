@@ -119,6 +119,38 @@ python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_icon.py \
   --app-id <你的appId>
 ```
 
+### 3.6 视图创建流水线
+
+流程：规划视图 -> 创建视图
+
+```bash
+python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_views.py
+```
+
+说明：
+- 规划结果输出到 `data/outputs/view_plans/`
+- 创建结果输出到 `data/outputs/view_create_results/`
+- 创建前会快照旧视图，供后续“视图筛选配置流水线”决定并执行删除
+
+### 3.7 视图筛选配置流水线
+
+流程：选定应用并记录旧视图删除决策 -> 分析支持的视图 -> 规划筛选列表/快速筛选 -> 应用配置 -> 执行旧视图删除
+
+```bash
+python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_tableview_filters.py
+```
+
+说明：
+- 当前支持：
+  - 表格视图：筛选列表 + 快速筛选
+  - 看板视图：快速筛选
+  - 画廊视图：筛选列表 + 快速筛选
+  - 日历视图：快速筛选
+- 筛选列表只会使用下拉字段；若存在多个下拉字段，优先选择业务意义更强的字段
+- 选完应用后会立刻让你决定旧视图删除策略：
+  `y` 删除全部，输入序号删除指定视图，其他任意键取消
+- 实际删除时机放在筛选列表/快速筛选应用完成之后
+
 ## 4. 全流程脚本顺序与作用（完整）
 
 说明：`/scripts/*.py` 基本都是稳定入口（代理转发），真实实现在 `/scripts/hap/`、`/scripts/gemini/`、`/scripts/auth/`。
@@ -147,11 +179,15 @@ python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_icon.py \
 20. `scripts/plan_parent_child_constraints_gemini.py` -> `scripts/gemini/plan_parent_child_constraints_gemini.py`（父子约束规划）
 21. `scripts/plan_row_relation_links_gemini.py` -> `scripts/gemini/plan_row_relation_links_gemini.py`（关系映射规划）
 22. `scripts/plan_row_seed_counts_gemini.py` -> `scripts/gemini/plan_row_seed_counts_gemini.py`（造数数量规划）
-23. `scripts/plan_worksheet_layout.py` -> `scripts/hap/plan_worksheet_layout.py`（布局规划）
-24. `scripts/refresh_auth.py` -> `scripts/auth/refresh_auth.py`（刷新网页登录认证）
-25. `scripts/update_app_icons.py` -> `scripts/hap/update_app_icons.py`（更新应用 icon）
-26. `scripts/update_app_navi_style.py` -> `scripts/hap/update_app_navi_style.py`（更新导航风格）
-27. `scripts/update_worksheet_icons.py` -> `scripts/hap/update_worksheet_icons.py`（更新工作表 icon）
+23. `scripts/plan_tableview_filters_gemini.py` -> `scripts/hap/plan_tableview_filters_gemini.py`（规划视图筛选配置）
+24. `scripts/plan_worksheet_layout.py` -> `scripts/hap/plan_worksheet_layout.py`（布局规划）
+25. `scripts/plan_worksheet_views_gemini.py` -> `scripts/hap/plan_worksheet_views_gemini.py`（规划视图）
+26. `scripts/pipeline_tableview_filters.py` -> `scripts/hap/pipeline_tableview_filters.py`（视图筛选配置流水线）
+27. `scripts/pipeline_views.py` -> `scripts/hap/pipeline_views.py`（视图流水线）
+28. `scripts/refresh_auth.py` -> `scripts/auth/refresh_auth.py`（刷新网页登录认证）
+29. `scripts/update_app_icons.py` -> `scripts/hap/update_app_icons.py`（更新应用 icon）
+30. `scripts/update_app_navi_style.py` -> `scripts/hap/update_app_navi_style.py`（更新导航风格）
+31. `scripts/update_worksheet_icons.py` -> `scripts/hap/update_worksheet_icons.py`（更新工作表 icon）
 
 ### 4.2 需求驱动总编排顺序（`execute_requirements.py`）
 
@@ -240,6 +276,12 @@ python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_icon.py \
 - `create_worksheets_from_plan.py`：按规划建表
 - `list_app_worksheets.py`：获取工作表列表
 - `update_worksheet_icons.py`：批量更新工作表 icon
+- `plan_worksheet_views_gemini.py`：规划视图
+- `create_views_from_plan.py`：按规划创建视图，并快照旧视图供后续处理
+- `pipeline_views.py`：视图一键流水线
+- `plan_tableview_filters_gemini.py`：规划视图筛选列表/快速筛选
+- `apply_tableview_filters_from_plan.py`：应用视图筛选列表/快速筛选，并在末尾执行旧视图删除
+- `pipeline_tableview_filters.py`：视图筛选配置一键流水线（含旧视图删除）
 
 ### 6.3 字段布局
 - `plan_worksheet_layout.py`：规划字段布局
@@ -289,6 +331,12 @@ python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_icon.py \
 ### 7.6 需求与执行报告
 - `/Users/andy/Desktop/hap_auto/data/outputs/requirement_specs/`
 - `/Users/andy/Desktop/hap_auto/data/outputs/execution_runs/`
+
+### 7.7 视图与筛选配置
+- `/Users/andy/Desktop/hap_auto/data/outputs/view_plans/`
+- `/Users/andy/Desktop/hap_auto/data/outputs/view_create_results/`
+- `/Users/andy/Desktop/hap_auto/data/outputs/tableview_filter_plans/`
+- `/Users/andy/Desktop/hap_auto/data/outputs/tableview_filter_apply_results/`
 
 ## 8. 常见问题
 
