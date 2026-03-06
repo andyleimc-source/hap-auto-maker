@@ -31,7 +31,6 @@ SCRIPT_CREATE_WORKSHEETS = SCRIPTS_DIR / "create_worksheets_from_plan.py"
 SCRIPT_PIPELINE_ICON = SCRIPTS_DIR / "pipeline_icon.py"
 SCRIPT_PIPELINE_LAYOUT = SCRIPTS_DIR / "pipeline_worksheet_layout.py"
 SCRIPT_UPDATE_NAVI = SCRIPTS_DIR / "update_app_navi_style.py"
-SCRIPT_PIPELINE_ROWS = SCRIPTS_DIR / "pipeline_create_rows.py"
 
 
 def now_ts() -> str:
@@ -96,30 +95,6 @@ def normalize_spec(raw: dict) -> dict:
     ws["layout"] = layout
     spec["worksheets"] = ws
 
-    seed = spec.get("seed_data") if isinstance(spec.get("seed_data"), dict) else {}
-    seed.setdefault("enabled", True)
-    seed.setdefault("row_count_mode", "auto")
-    seed.setdefault("rows_per_table", 0)
-    try:
-        seed_rows = int(seed.get("rows_per_table", 0))
-    except Exception:
-        seed_rows = 0
-    if seed_rows < 0:
-        seed_rows = 0
-    mode = str(seed.get("row_count_mode", "")).strip().lower()
-    if mode not in ("auto", "fixed"):
-        mode = "fixed" if seed_rows > 0 else "auto"
-    # 显式给 rows_per_table 时，优先固定值模式
-    if seed_rows > 0:
-        mode = "fixed"
-    if mode == "fixed" and seed_rows <= 0:
-        seed_rows = 3
-    seed["row_count_mode"] = mode
-    seed["rows_per_table"] = seed_rows
-    seed.setdefault("delete_history_before_seed", False)
-    seed.setdefault("model", "gemini-3.1-pro-preview")
-    spec["seed_data"] = seed
-
     execution = spec.get("execution") if isinstance(spec.get("execution"), dict) else {}
     execution.setdefault("fail_fast", True)
     execution.setdefault("dry_run", False)
@@ -135,7 +110,6 @@ def ensure_scripts_exist() -> None:
         SCRIPT_PIPELINE_ICON,
         SCRIPT_PIPELINE_LAYOUT,
         SCRIPT_UPDATE_NAVI,
-        SCRIPT_PIPELINE_ROWS,
     ]
     missing = [str(p) for p in required if not p.exists()]
     if missing:
@@ -317,7 +291,6 @@ def main() -> None:
 
     app = spec["app"]
     ws = spec["worksheets"]
-    seed = spec["seed_data"]
 
     # Step 1: 创建应用（默认新建）
     if app.get("target_mode") == "create_new":
@@ -477,35 +450,6 @@ def main() -> None:
             return
     else:
         steps_report.append({"step_id": 5, "step_key": "navi", "title": "设置应用导航风格", "skipped": True, "reason": "disabled_by_spec"})
-
-    # Step 6: 造数
-    if seed.get("enabled", True):
-        row_count_mode = str(seed.get("row_count_mode", "auto")).strip().lower()
-        if row_count_mode not in ("auto", "fixed"):
-            row_count_mode = "auto"
-        cmd6 = [
-            sys.executable,
-            str(SCRIPT_PIPELINE_ROWS),
-            "--app-id",
-            app_id,
-            "--worksheet-ids",
-            "all",
-            "--row-count-mode",
-            row_count_mode,
-            "--delete-history",
-            "y" if bool(seed.get("delete_history_before_seed", False)) else "n",
-            "--model",
-            str(seed.get("model", "gemini-3.1-pro-preview")),
-        ]
-        if row_count_mode == "fixed":
-            cmd6.extend(["--rows-per-table", str(int(seed.get("rows_per_table", 3)))])
-        ok6 = execute_step(6, "seed", "批量造数并回填关联", cmd6)
-        if fail_fast and (not ok6):
-            out = save_report()
-            print(f"\n执行失败并终止，报告: {out}")
-            return
-    else:
-        steps_report.append({"step_id": 6, "step_key": "seed", "title": "批量造数并回填关联", "skipped": True, "reason": "disabled_by_spec"})
 
     out = save_report()
     report = build_report()
