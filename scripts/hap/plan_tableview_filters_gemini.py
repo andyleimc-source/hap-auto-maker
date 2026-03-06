@@ -13,6 +13,7 @@
 import argparse
 import json
 import re
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -33,6 +34,7 @@ SUPPORTED_VIEW_TYPES = {"0", "1", "3", "4"}
 NAV_SUPPORTED_VIEW_TYPES = {"0", "3"}
 FAST_SUPPORTED_VIEW_TYPES = {"0", "1", "3", "4"}
 VIEW_TYPE_LABELS = {"0": "表格视图", "1": "看板视图", "3": "画廊视图", "4": "日历视图"}
+DEFAULT_GEMINI_RETRIES = 4
 
 
 def now_ts() -> str:
@@ -263,6 +265,26 @@ worksheetId：{worksheet_id}
 """.strip()
 
 
+def generate_with_retry(client: genai.Client, model: str, prompt: str, retries: int) -> Any:
+    last_exc: Optional[Exception] = None
+    for attempt in range(1, max(1, retries) + 1):
+        try:
+            return client.models.generate_content(
+                model=model,
+                contents=prompt,
+                config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0.2),
+            )
+        except Exception as exc:
+            last_exc = exc
+            if attempt >= max(1, retries):
+                break
+            wait_seconds = min(8, 2 ** (attempt - 1))
+            print(f"  Gemini 调用失败，第 {attempt} 次重试前等待 {wait_seconds}s：{exc}")
+            time.sleep(wait_seconds)
+    assert last_exc is not None
+    raise last_exc
+
+
 def pick_best_dropdown_field(fields: List[dict]) -> str:
     """
     选“最有业务管理意义”的下拉字段。
@@ -418,6 +440,7 @@ def main() -> None:
     parser.add_argument("--config", default=str(GEMINI_CONFIG_PATH), help="Gemini 配置 JSON 路径")
     parser.add_argument("--app-ids", default="", help="可选，应用ID列表（逗号分隔）；不传则交互选择")
     parser.add_argument("--output", default="", help="输出 JSON 路径")
+    parser.add_argument("--gemini-retries", type=int, default=DEFAULT_GEMINI_RETRIES, help="Gemini 请求失败时的重试次数")
     args = parser.parse_args()
 
     api_key = load_gemini_api_key(Path(args.config).expanduser().resolve())
@@ -488,11 +511,7 @@ def main() -> None:
                 continue
 
             prompt = build_prompt(app["appName"], ws["workSheetName"], ws["workSheetId"], target_views, fields)
-            resp = client.models.generate_content(
-                model=args.model,
-                contents=prompt,
-                config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0.2),
-            )
+            resp = generate_with_retry(client, args.model, prompt, args.gemini_retries)
             parsed = extract_json(resp.text or "")
             view_plans_raw = parsed.get("viewPlans") if isinstance(parsed.get("viewPlans"), list) else []
 

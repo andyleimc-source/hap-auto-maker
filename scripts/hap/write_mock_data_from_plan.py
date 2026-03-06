@@ -1,0 +1,207 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+根据 mock_data_bundle 顺序写入记录。
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+from typing import List
+
+CURRENT_DIR = Path(__file__).resolve().parent
+if str(CURRENT_DIR) not in sys.path:
+    sys.path.insert(0, str(CURRENT_DIR))
+
+from mock_data_common import (
+    DEFAULT_BASE_URL,
+    MOCK_BUNDLE_DIR,
+    MOCK_WRITE_RESULT_DIR,
+    append_log,
+    build_batch_rows,
+    choose_app,
+    create_rows_batch,
+    discover_authorized_apps,
+    load_json,
+    make_log_path,
+    make_output_path,
+    resolve_json_input,
+    summarize_write_result,
+    write_json_with_latest,
+)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="按规划顺序写入 mock 数据")
+    parser.add_argument("--bundle-json", required=True, help="mock_data_bundle JSON 路径")
+    parser.add_argument("--app-id", default="", help="可选，指定 appId")
+    parser.add_argument("--app-index", type=int, default=0, help="可选，指定应用序号")
+    parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="API 基础地址")
+    parser.add_argument("--trigger-workflow", action="store_true", help="写入时触发工作流")
+    parser.add_argument("--dry-run", action="store_true", help="仅预览，不实际写入")
+    parser.add_argument("--output", default="", help="写入结果 JSON 路径")
+    args = parser.parse_args()
+
+    bundle_path = resolve_json_input(str(args.bundle_json), [MOCK_BUNDLE_DIR])
+    bundle = load_json(bundle_path)
+    app_id = str(bundle.get("app", {}).get("appId", "")).strip()
+    apps = discover_authorized_apps(base_url=args.base_url)
+    app = choose_app(apps, app_id=args.app_id or app_id, app_index=args.app_index)
+    log_path = make_log_path("write_mock_data", app["appId"])
+    append_log(
+        log_path,
+        "start",
+        bundleJson=str(bundle_path),
+        appId=app["appId"],
+        appName=app["appName"],
+        dryRun=bool(args.dry_run),
+        triggerWorkflow=bool(args.trigger_workflow),
+    )
+
+    worksheets = bundle.get("worksheets", [])
+    if not isinstance(worksheets, list):
+        raise ValueError("bundle.worksheets 格式错误")
+
+    result_worksheets = []
+    error_message = ""
+    for worksheet in sorted(worksheets, key=lambda item: (int(item.get("order", 0) or 0), item.get("worksheetName", ""))):
+        records = worksheet.get("records", [])
+        if not isinstance(records, list):
+            raise ValueError(f"记录列表格式错误: {worksheet}")
+        append_log(
+            log_path,
+            "worksheet_start",
+            worksheetId=worksheet["worksheetId"],
+            worksheetName=worksheet["worksheetName"],
+            order=worksheet["order"],
+            plannedCount=len(records),
+        )
+        created_records = []
+        row_plan = []
+        response = {"success": True, "dryRun": args.dry_run}
+        failed_count = 0
+        try:
+            row_plan = build_batch_rows(records)
+            append_log(
+                log_path,
+                "worksheet_rows_built",
+                worksheetId=worksheet["worksheetId"],
+                requestRowCount=len(row_plan),
+                firstMockRecordKey=records[0]["mockRecordKey"] if records else "",
+                lastMockRecordKey=records[-1]["mockRecordKey"] if records else "",
+            )
+            row_ids: List[str] = []
+            if args.dry_run:
+                row_ids = [f"dryrun-{item['mockRecordKey']}" for item in records]
+            else:
+                api_resp = create_rows_batch(
+                    base_url=args.base_url,
+                    app_key=app["appKey"],
+                    sign=app["sign"],
+                    worksheet_id=worksheet["worksheetId"],
+                    records=records,
+                    trigger_workflow=args.trigger_workflow,
+                )
+                response = api_resp
+                row_ids = [str(item).strip() for item in api_resp.get("data", {}).get("rowIds", [])]
+                if len(row_ids) != len(records):
+                    raise RuntimeError(
+                        f"批量写入返回 rowIds 数量不匹配: worksheetId={worksheet['worksheetId']}, expected={len(records)}, actual={len(row_ids)}"
+                    )
+            append_log(
+                log_path,
+                "worksheet_rows_created",
+                worksheetId=worksheet["worksheetId"],
+                returnedRowIdCount=len(row_ids),
+            )
+            for record, row_id in zip(records, row_ids):
+                created_records.append(
+                    {
+                        "mockRecordKey": record["mockRecordKey"],
+                        "rowId": row_id,
+                        "recordSummary": record["recordSummary"],
+                        "valuesByFieldId": record["valuesByFieldId"],
+                    }
+                )
+        except Exception as exc:
+            error_message = str(exc)
+            failed_count = len(records) - len(created_records)
+            response = {"success": False, "error": str(exc)}
+            append_log(
+                log_path,
+                "worksheet_failed",
+                worksheetId=worksheet["worksheetId"],
+                worksheetName=worksheet["worksheetName"],
+                error=str(exc),
+                successCount=len(created_records),
+                failedCount=failed_count,
+            )
+        result_worksheets.append(
+            {
+                "worksheetId": worksheet["worksheetId"],
+                "worksheetName": worksheet["worksheetName"],
+                "tier": worksheet["tier"],
+                "order": worksheet["order"],
+                "plannedCount": len(records),
+                "successCount": len(created_records),
+                "failedCount": failed_count,
+                "requestRows": row_plan,
+                "response": response,
+                "records": created_records,
+            }
+        )
+        append_log(
+            log_path,
+            "worksheet_finished",
+            worksheetId=worksheet["worksheetId"],
+            worksheetName=worksheet["worksheetName"],
+            plannedCount=len(records),
+            successCount=len(created_records),
+            failedCount=failed_count,
+        )
+        if error_message:
+            break
+
+    result = {
+        "schemaVersion": "mock_data_write_result_v1",
+        "sourceBundle": str(bundle_path),
+        "logFile": str(log_path),
+        "app": bundle.get("app", {}),
+        "triggerWorkflow": bool(args.trigger_workflow),
+        "dryRun": bool(args.dry_run),
+        "worksheets": result_worksheets,
+    }
+    if error_message:
+        result["error"] = error_message
+
+    output_path = (
+        Path(args.output).expanduser().resolve()
+        if args.output
+        else make_output_path(MOCK_WRITE_RESULT_DIR, "mock_data_write_result", app["appId"])
+    )
+    write_json_with_latest(MOCK_WRITE_RESULT_DIR, output_path, "mock_data_write_result_latest.json", result)
+    append_log(
+        log_path,
+        "finished",
+        outputFile=str(output_path),
+        worksheetCount=len(result_worksheets),
+        summary=summarize_write_result(result),
+        hasError=bool(error_message),
+    )
+
+    print("写入完成")
+    print(f"- 应用: {app['appName']} ({app['appId']})")
+    print(f"- 模式: {'dry-run' if args.dry_run else 'live'}")
+    print(f"- 日志文件: {log_path}")
+    print(f"- 摘要: {summarize_write_result(result)}")
+    print(f"- 结果文件: {output_path}")
+    print(json.dumps([{k: ws[k] for k in ('worksheetName', 'plannedCount', 'successCount')} for ws in result_worksheets], ensure_ascii=False, indent=2))
+    if error_message:
+        raise SystemExit(1)
+
+
+if __name__ == "__main__":
+    main()

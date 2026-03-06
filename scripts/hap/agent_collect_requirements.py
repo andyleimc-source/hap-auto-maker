@@ -305,6 +305,14 @@ def build_spec_prompt(transcript: List[Dict[str, str]]) -> str:
       "refresh_auth": false
     }}
   }},
+  "views": {{
+    "enabled": true,
+    "model": "gemini-3.1-pro-preview"
+  }},
+  "view_filters": {{
+    "enabled": true,
+    "model": "gemini-3.1-pro-preview"
+  }},
   "execution": {{
     "fail_fast": true,
     "dry_run": false
@@ -366,6 +374,16 @@ def normalize_spec(raw: dict) -> dict:
     layout.setdefault("refresh_auth", False)
     ws["layout"] = layout
     spec["worksheets"] = ws
+
+    views = spec.get("views") if isinstance(spec.get("views"), dict) else {}
+    views.setdefault("enabled", True)
+    views.setdefault("model", ws.get("model", "gemini-3.1-pro-preview"))
+    spec["views"] = views
+
+    view_filters = spec.get("view_filters") if isinstance(spec.get("view_filters"), dict) else {}
+    view_filters.setdefault("enabled", True)
+    view_filters.setdefault("model", ws.get("model", "gemini-3.1-pro-preview"))
+    spec["view_filters"] = view_filters
 
     execution = spec.get("execution") if isinstance(spec.get("execution"), dict) else {}
     execution.setdefault("fail_fast", True)

@@ -1,6 +1,6 @@
 # hap_auto
 
-项目目标：自动化完成 HAP 应用从创建到配置的全链路，包括应用创建、工作表规划、字段布局、图标匹配、视图与筛选配置。
+项目目标：自动化完成 HAP 应用从创建到配置的全链路，包括应用创建、工作表规划、字段布局、图标匹配、视图与筛选配置，以及现有应用的批量造数与关联回填。
 
 ## 1. 目录与分层
 
@@ -40,6 +40,22 @@ python3 /Users/andy/Desktop/hap_auto/scripts/agent_collect_requirements.py
 python3 /Users/andy/Desktop/hap_auto/scripts/execute_requirements.py \
   --spec-json /Users/andy/Desktop/hap_auto/data/outputs/requirement_specs/requirement_spec_latest.json
 ```
+
+### 2.3 一键造数（现有应用）
+
+```bash
+python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_mock_data.py
+```
+
+说明：
+- 仅支持 `data/outputs/app_authorizations/` 下已有授权的应用。
+- 启动后选择应用，后续自动执行：结构快照 -> Gemini 造数规划 -> 写入记录 -> 关联一致性分析 -> 关联修复执行。
+- 默认 `triggerWorkflow=false`，避免触发应用内工作流。
+- 关联处理规则：
+  - `1-1` 关系会处理。
+  - `1-N` 关系会处理单选端字段（`subType=1`，即下级记录指向唯一上级记录）。
+  - `1-N` 的多选端字段（`subType=2`）不会自动批量回填。
+- 如果仍存在无法自动确定的关联，流水线会输出 `unresolved` 并直接报失败，避免“看起来成功但实际有空关联”。
 
 ## 3. 标准 Pipeline（按场景拆分）
 
@@ -99,6 +115,43 @@ python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_views.py
 python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_tableview_filters.py
 ```
 
+### 3.7 造数流水线
+
+流程：选择应用 -> 导出结构快照 -> Gemini 规划造数 -> 写入记录 -> 关联一致性分析 -> 关联修复执行
+
+```bash
+python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_mock_data.py
+```
+
+说明：
+- 结构快照会输出工作表、字段、可写字段、跳过字段、关系边、关系对和 worksheet tier。
+- tier 规则：
+  - 无关联：第一梯队，默认每表 10 条记录。
+  - 存在任意 `1-N`：第二梯队，默认每表 10 条记录。
+  - 存在关联且全部为 `1-1`：第三梯队，默认每表 25 条记录。
+- 造数阶段只写常见可写字段：`Text`、`Number`、`Date`、`DateTime`、`SingleSelect`、`MultipleSelect`、`Checkbox`、`Rating`、常见文本类字段。
+- 系统字段、公式/汇总、附件、子表、成员/部门/组织角色、Relation 字段会被跳过并记录原因。
+- 关联阶段当前支持：
+  - `1-1` 关系字段
+  - `1-N` 关系中的单选端字段（`subType=1`）
+- 关联修复阶段新增两个独立脚本：
+  - `analyze_relation_consistency.py`：扫描当前真实写入结果，生成 `updates` 和 `unresolved` 修复计划。
+  - `apply_relation_repair_plan.py`：按修复计划批量更新关系字段。
+- 运行日志会落到 `data/outputs/mock_data_logs/`，用于排查结构识别、Gemini 返回、写入批次、关联修复覆盖率等问题。
+
+常用单步命令：
+
+```bash
+python3 /Users/andy/Desktop/hap_auto/scripts/analyze_relation_consistency.py \
+  --schema-json /Users/andy/Desktop/hap_auto/data/outputs/mock_data_schema_snapshots/mock_schema_snapshot_latest.json \
+  --write-result-json /Users/andy/Desktop/hap_auto/data/outputs/mock_data_write_results/mock_data_write_result_latest.json
+```
+
+```bash
+python3 /Users/andy/Desktop/hap_auto/scripts/apply_relation_repair_plan.py \
+  --repair-plan-json /Users/andy/Desktop/hap_auto/data/outputs/mock_relation_repair_plans/mock_relation_repair_plan_latest.json
+```
+
 ## 4. 全流程脚本顺序与作用
 
 说明：`/scripts/*.py` 基本都是稳定入口（代理转发），真实实现在 `/scripts/hap/`、`/scripts/gemini/`、`/scripts/auth/`。
@@ -117,7 +170,8 @@ python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_tableview_filters.py
 2. 工作表：`plan_app_worksheets_gemini.py`、`create_worksheets_from_plan.py`、`list_app_worksheets.py`、`update_worksheet_icons.py`
 3. 布局：`plan_worksheet_layout.py`、`apply_worksheet_layout.py`
 4. 视图与筛选：`plan_worksheet_views_gemini.py`、`create_views_from_plan.py`、`pipeline_views.py`、`plan_tableview_filters_gemini.py`、`apply_tableview_filters_from_plan.py`、`pipeline_tableview_filters.py`
-5. 认证与辅助：`auth/refresh_auth.py`、`gemini/list_gemini_models.py`
+5. 造数：`list_apps_for_mock_data.py`、`export_app_mock_schema.py`、`plan_mock_data_gemini.py`、`write_mock_data_from_plan.py`、`analyze_relation_consistency.py`、`apply_relation_repair_plan.py`、`pipeline_mock_data.py`
+6. 认证与辅助：`auth/refresh_auth.py`、`gemini/list_gemini_models.py`
 
 ## 5. 输出文件目录
 
@@ -147,3 +201,16 @@ python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_tableview_filters.py
 - `/Users/andy/Desktop/hap_auto/data/outputs/view_create_results/`
 - `/Users/andy/Desktop/hap_auto/data/outputs/tableview_filter_plans/`
 - `/Users/andy/Desktop/hap_auto/data/outputs/tableview_filter_apply_results/`
+
+7. 造数与关联回填
+- `/Users/andy/Desktop/hap_auto/data/outputs/mock_data_app_inventory/`
+- `/Users/andy/Desktop/hap_auto/data/outputs/mock_data_schema_snapshots/`
+- `/Users/andy/Desktop/hap_auto/data/outputs/mock_data_plans/`
+- `/Users/andy/Desktop/hap_auto/data/outputs/mock_data_bundles/`
+- `/Users/andy/Desktop/hap_auto/data/outputs/mock_data_write_results/`
+- `/Users/andy/Desktop/hap_auto/data/outputs/mock_relation_repair_plans/`
+- `/Users/andy/Desktop/hap_auto/data/outputs/mock_relation_repair_apply_results/`
+- `/Users/andy/Desktop/hap_auto/data/outputs/mock_relation_plans/`
+- `/Users/andy/Desktop/hap_auto/data/outputs/mock_relation_apply_results/`
+- `/Users/andy/Desktop/hap_auto/data/outputs/mock_data_runs/`
+- `/Users/andy/Desktop/hap_auto/data/outputs/mock_data_logs/`

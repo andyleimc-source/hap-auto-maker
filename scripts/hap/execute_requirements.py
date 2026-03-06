@@ -30,7 +30,13 @@ SCRIPT_PLAN_WORKSHEETS = SCRIPTS_DIR / "plan_app_worksheets_gemini.py"
 SCRIPT_CREATE_WORKSHEETS = SCRIPTS_DIR / "create_worksheets_from_plan.py"
 SCRIPT_PIPELINE_ICON = SCRIPTS_DIR / "pipeline_icon.py"
 SCRIPT_PIPELINE_LAYOUT = SCRIPTS_DIR / "pipeline_worksheet_layout.py"
+SCRIPT_PIPELINE_VIEWS = SCRIPTS_DIR / "pipeline_views.py"
+SCRIPT_PIPELINE_TABLEVIEW_FILTERS = SCRIPTS_DIR / "pipeline_tableview_filters.py"
 SCRIPT_UPDATE_NAVI = SCRIPTS_DIR / "update_app_navi_style.py"
+VIEW_PLAN_DIR = OUTPUT_ROOT / "view_plans"
+VIEW_CREATE_RESULT_DIR = OUTPUT_ROOT / "view_create_results"
+TABLEVIEW_FILTER_PLAN_DIR = OUTPUT_ROOT / "tableview_filter_plans"
+TABLEVIEW_FILTER_APPLY_RESULT_DIR = OUTPUT_ROOT / "tableview_filter_apply_results"
 
 
 def now_ts() -> str:
@@ -95,6 +101,16 @@ def normalize_spec(raw: dict) -> dict:
     ws["layout"] = layout
     spec["worksheets"] = ws
 
+    views = spec.get("views") if isinstance(spec.get("views"), dict) else {}
+    views.setdefault("enabled", True)
+    views.setdefault("model", ws.get("model", "gemini-3.1-pro-preview"))
+    spec["views"] = views
+
+    view_filters = spec.get("view_filters") if isinstance(spec.get("view_filters"), dict) else {}
+    view_filters.setdefault("enabled", True)
+    view_filters.setdefault("model", ws.get("model", "gemini-3.1-pro-preview"))
+    spec["view_filters"] = view_filters
+
     execution = spec.get("execution") if isinstance(spec.get("execution"), dict) else {}
     execution.setdefault("fail_fast", True)
     execution.setdefault("dry_run", False)
@@ -109,6 +125,8 @@ def ensure_scripts_exist() -> None:
         SCRIPT_CREATE_WORKSHEETS,
         SCRIPT_PIPELINE_ICON,
         SCRIPT_PIPELINE_LAYOUT,
+        SCRIPT_PIPELINE_VIEWS,
+        SCRIPT_PIPELINE_TABLEVIEW_FILTERS,
         SCRIPT_UPDATE_NAVI,
     ]
     missing = [str(p) for p in required if not p.exists()]
@@ -182,11 +200,17 @@ def step_selected(step_id: int, step_key: str, selected: set) -> bool:
 def required_configs(spec: dict) -> List[Tuple[Path, str]]:
     out = [(CONFIG_GEMINI, "Gemini 配置"), (CONFIG_ORG, "组织认证配置")]
     ws = spec["worksheets"]
+    views = spec["views"]
+    view_filters = spec["view_filters"]
     navi = spec["app"]["navi_style"]
     need_web_auth = False
     if ws["icon_update"]["enabled"] and not ws["icon_update"].get("refresh_auth", False):
         need_web_auth = True
     if ws["layout"]["enabled"] and not ws["layout"].get("refresh_auth", False):
+        need_web_auth = True
+    if views.get("enabled", True):
+        need_web_auth = True
+    if view_filters.get("enabled", True):
         need_web_auth = True
     if navi["enabled"] and not navi.get("refresh_auth", False):
         need_web_auth = True
@@ -200,7 +224,11 @@ def main() -> None:
     parser.add_argument("--spec-json", required=True, help="需求 JSON 路径")
     parser.add_argument("--dry-run", action="store_true", help="仅输出执行计划，不实际调用")
     parser.add_argument("--continue-on-error", action="store_true", help="遇错继续执行后续步骤")
-    parser.add_argument("--only-steps", default="", help="仅执行指定步骤（逗号分隔：1,2,3 或 create_app,worksheets,...）")
+    parser.add_argument(
+        "--only-steps",
+        default="",
+        help="仅执行指定步骤（逗号分隔：1,2,3 或 create_app,worksheets_plan,worksheets_create,worksheet_icon,layout,views,view_filters,navi）",
+    )
     parser.add_argument("--verbose", action="store_true", help="打印子脚本完整输出")
     args = parser.parse_args()
 
@@ -223,6 +251,10 @@ def main() -> None:
         "app_auth_json": None,
         "worksheet_plan_json": None,
         "worksheet_create_result_json": None,
+        "view_plan_json": None,
+        "view_create_result_json": None,
+        "tableview_filter_plan_json": None,
+        "tableview_filter_apply_result_json": None,
     }
     steps_report: List[dict] = []
 
@@ -243,6 +275,10 @@ def main() -> None:
             "artifacts": {
                 "app_auth_json": context.get("app_auth_json"),
                 "worksheet_plan_json": context.get("worksheet_plan_json"),
+                "view_plan_json": context.get("view_plan_json"),
+                "view_create_result_json": context.get("view_create_result_json"),
+                "tableview_filter_plan_json": context.get("tableview_filter_plan_json"),
+                "tableview_filter_apply_result_json": context.get("tableview_filter_apply_result_json"),
             },
             "context": context,
             "steps": steps_report,
@@ -291,6 +327,8 @@ def main() -> None:
 
     app = spec["app"]
     ws = spec["worksheets"]
+    views = spec["views"]
+    view_filters = spec["view_filters"]
 
     # Step 1: 创建应用（默认新建）
     if app.get("target_mode") == "create_new":
@@ -431,7 +469,65 @@ def main() -> None:
     else:
         steps_report.append({"step_id": 4, "step_key": "layout", "title": "规划并应用字段布局", "skipped": True, "reason": "disabled_by_spec"})
 
-    # Step 5: 应用导航风格
+    # Step 5: 规划并创建视图
+    if views.get("enabled", True):
+        view_plan_output = (VIEW_PLAN_DIR / f"view_plan_{app_id}_{now_ts()}.json").resolve()
+        view_create_output = (VIEW_CREATE_RESULT_DIR / f"view_create_result_{app_id}_{now_ts()}.json").resolve()
+        cmd5 = [
+            sys.executable,
+            str(SCRIPT_PIPELINE_VIEWS),
+            "--model",
+            str(views.get("model", ws.get("model", "gemini-3.1-pro-preview"))),
+            "--app-ids",
+            app_id,
+            "--plan-output",
+            str(view_plan_output),
+            "--create-output",
+            str(view_create_output),
+        ]
+        ok5 = execute_step(5, "views", "规划并创建视图", cmd5)
+        if ok5:
+            context["view_plan_json"] = str(view_plan_output)
+            context["view_create_result_json"] = str(view_create_output)
+        if fail_fast and (not ok5):
+            out = save_report()
+            print(f"\n执行失败并终止，报告: {out}")
+            return
+    else:
+        steps_report.append({"step_id": 5, "step_key": "views", "title": "规划并创建视图", "skipped": True, "reason": "disabled_by_spec"})
+
+    # Step 6: 规划并应用视图筛选
+    if view_filters.get("enabled", True):
+        filter_plan_output = (TABLEVIEW_FILTER_PLAN_DIR / f"tableview_filter_plan_{app_id}_{now_ts()}.json").resolve()
+        filter_apply_output = (
+            TABLEVIEW_FILTER_APPLY_RESULT_DIR / f"tableview_filter_apply_result_{app_id}_{now_ts()}.json"
+        ).resolve()
+        cmd6 = [
+            sys.executable,
+            str(SCRIPT_PIPELINE_TABLEVIEW_FILTERS),
+            "--model",
+            str(view_filters.get("model", views.get("model", ws.get("model", "gemini-3.1-pro-preview")))),
+            "--app-ids",
+            app_id,
+            "--plan-output",
+            str(filter_plan_output),
+            "--apply-output",
+            str(filter_apply_output),
+        ]
+        if execution_dry_run:
+            cmd6.append("--dry-run")
+        ok6 = execute_step(6, "view_filters", "规划并应用视图筛选", cmd6)
+        if ok6:
+            context["tableview_filter_plan_json"] = str(filter_plan_output)
+            context["tableview_filter_apply_result_json"] = str(filter_apply_output)
+        if fail_fast and (not ok6):
+            out = save_report()
+            print(f"\n执行失败并终止，报告: {out}")
+            return
+    else:
+        steps_report.append({"step_id": 6, "step_key": "view_filters", "title": "规划并应用视图筛选", "skipped": True, "reason": "disabled_by_spec"})
+
+    # Step 7: 应用导航风格
     if app["navi_style"].get("enabled", True):
         cmd5 = [
             sys.executable,
@@ -443,13 +539,13 @@ def main() -> None:
         ]
         if app["navi_style"].get("refresh_auth", False):
             cmd5.append("--refresh-auth")
-        ok5 = execute_step(5, "navi", "设置应用导航风格", cmd5)
-        if fail_fast and (not ok5):
+        ok7 = execute_step(7, "navi", "设置应用导航风格", cmd5)
+        if fail_fast and (not ok7):
             out = save_report()
             print(f"\n执行失败并终止，报告: {out}")
             return
     else:
-        steps_report.append({"step_id": 5, "step_key": "navi", "title": "设置应用导航风格", "skipped": True, "reason": "disabled_by_spec"})
+        steps_report.append({"step_id": 7, "step_key": "navi", "title": "设置应用导航风格", "skipped": True, "reason": "disabled_by_spec"})
 
     out = save_report()
     report = build_report()

@@ -25,6 +25,10 @@ APP_AUTH_DIR = OUTPUT_ROOT / "app_authorizations"
 WORKSHEET_PLAN_DIR = OUTPUT_ROOT / "worksheet_plans"
 WORKSHEET_CREATE_RESULT_DIR = OUTPUT_ROOT / "worksheet_create_results"
 ALLOWED_CARDINALITY = {"1-1", "1-N"}
+MIN_WORKSHEETS = 8
+MAX_WORKSHEETS = 15
+MIN_FIELDS_PER_WORKSHEET = 10
+MAX_FIELDS_PER_WORKSHEET = 15
 
 
 def latest_file(base_dir: Path, pattern: str) -> Optional[Path]:
@@ -82,6 +86,36 @@ def load_app_authorize(auth_path: Path, app_id: str = "") -> dict:
     if not isinstance(rows[0], dict):
         raise ValueError(f"授权文件格式不正确: {auth_path}")
     return rows[0]
+
+
+def validate_plan_scale(plan: dict) -> None:
+    worksheets = plan.get("worksheets", [])
+    if not isinstance(worksheets, list) or not worksheets:
+        raise ValueError("规划 JSON 缺少 worksheets 列表")
+
+    worksheet_count = len(worksheets)
+    if worksheet_count < MIN_WORKSHEETS or worksheet_count > MAX_WORKSHEETS:
+        raise ValueError(
+            f"工作表数量不符合要求: 当前 {worksheet_count}，要求 {MIN_WORKSHEETS}-{MAX_WORKSHEETS}"
+        )
+
+    errors = []
+    for index, worksheet in enumerate(worksheets, start=1):
+        if not isinstance(worksheet, dict):
+            errors.append(f"第 {index} 个工作表不是对象")
+            continue
+        name = str(worksheet.get("name", "")).strip() or f"第{index}个工作表"
+        fields = worksheet.get("fields", [])
+        if not isinstance(fields, list):
+            errors.append(f"工作表《{name}》的 fields 必须是数组")
+            continue
+        field_count = len(fields)
+        if field_count < MIN_FIELDS_PER_WORKSHEET or field_count > MAX_FIELDS_PER_WORKSHEET:
+            errors.append(
+                f"工作表《{name}》字段数量不符合要求: 当前 {field_count}，要求 {MIN_FIELDS_PER_WORKSHEET}-{MAX_FIELDS_PER_WORKSHEET}"
+            )
+    if errors:
+        raise ValueError("；".join(errors))
 
 
 def parse_select_options(description: str) -> List[dict]:
@@ -145,6 +179,8 @@ def build_field_payload(field: dict, is_first_text_title: bool) -> dict:
     ftype = str(field.get("type", "Text")).strip()
     name = str(field.get("name", "")).strip() or "未命名字段"
     required = to_required(field.get("required", False))
+    if ftype == "Collaborator":
+        required = False
     payload = {
         "name": name,
         "type": ftype,
@@ -573,9 +609,8 @@ def main() -> None:
         "HAP-Sign": sign,
     }
 
+    validate_plan_scale(plan)
     worksheets = plan.get("worksheets", [])
-    if not isinstance(worksheets, list) or not worksheets:
-        raise ValueError("规划 JSON 缺少 worksheets 列表")
     relationship_rules = build_relationship_rules(plan)
     normalized_relations = normalize_relation_plan(worksheets, relationship_rules)
 
