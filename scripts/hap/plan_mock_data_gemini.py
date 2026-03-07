@@ -7,9 +7,12 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import random
 import sys
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -130,9 +133,25 @@ def build_prompt(snapshot: dict) -> str:
 2. 每张表 records 数量必须严格等于 recordCount。
 3. valuesByFieldId 里禁止出现任何 skippedFields 对应字段。
 4. Relation / Attachment / SubTable / Collaborator / Department / OrgRole / Formula / Summary / AutoNumber 禁止出现在 valuesByFieldId。
-5. Checkbox 使用 true/false；Number 使用数字；Date 使用 yyyy-MM-dd；DateTime 使用 yyyy-MM-dd HH:mm:ss。
+5. Checkbox 使用 true/false；Number 使用数字；Date 使用 yyyy-MM-dd；DateTime 使用 yyyy-MM-dd HH:mm:ss，且日期时间必须在最近 7 天内。
 6. 输出必须是合法 JSON 对象。
 """.strip()
+
+
+def normalize_recent_datetime_value(field_type: str, seed_key: str) -> str:
+    """
+    强制生成最近 7 天内的日期/日期时间值。
+    使用稳定 seed，保证同一条记录重复运行时结果可复现。
+    """
+    now = datetime.now()
+    seven_days_seconds = 7 * 24 * 60 * 60
+    seed = int(hashlib.sha256(seed_key.encode("utf-8")).hexdigest()[:16], 16)
+    rng = random.Random(seed)
+    offset_seconds = rng.randint(0, seven_days_seconds - 1)
+    dt = now - timedelta(seconds=offset_seconds)
+    if field_type == "Date":
+        return dt.strftime("%Y-%m-%d")
+    return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def validate_plan(raw: dict, snapshot: dict) -> Dict[str, Any]:
@@ -165,6 +184,7 @@ def validate_plan(raw: dict, snapshot: dict) -> Dict[str, Any]:
         normalized_records = []
         single_select_normalized = 0
         multi_select_normalized = 0
+        date_recent_normalized = 0
         fallback_used_count = 0
         total_field_values = 0
         for index, record in enumerate(records, start=1):
@@ -197,6 +217,13 @@ def validate_plan(raw: dict, snapshot: dict) -> Dict[str, Any]:
                         multi_select_normalized += 1
                     if not isinstance(value, list) or any(str(item) not in valid_keys for item in value):
                         raise ValueError(f"多选字段值非法: worksheetId={worksheet_id}, fieldId={field_id}, value={value}")
+                elif field_type in {"Date", "DateTime"}:
+                    # 无论模型返回什么，统一覆盖为最近一周内，避免出现过旧日期。
+                    value = normalize_recent_datetime_value(
+                        field_type,
+                        f"{worksheet_id}|{field_id}|{index}|{summary}",
+                    )
+                    date_recent_normalized += 1
                 final_values[field_id] = value
             if not final_values:
                 fallback_text_field = next(
@@ -297,6 +324,7 @@ def validate_plan(raw: dict, snapshot: dict) -> Dict[str, Any]:
                 "fallbackUsedCount": fallback_used_count,
                 "singleSelectStringNormalizedCount": single_select_normalized,
                 "multiSelectStringNormalizedCount": multi_select_normalized,
+                "dateRecentNormalizedCount": date_recent_normalized,
             }
         )
 
@@ -325,6 +353,7 @@ def validate_plan(raw: dict, snapshot: dict) -> Dict[str, Any]:
             "totalFallbackUsedCount": sum(item["fallbackUsedCount"] for item in diagnostics),
             "totalSingleSelectStringNormalizedCount": sum(item["singleSelectStringNormalizedCount"] for item in diagnostics),
             "totalMultiSelectStringNormalizedCount": sum(item["multiSelectStringNormalizedCount"] for item in diagnostics),
+            "totalDateRecentNormalizedCount": sum(item["dateRecentNormalizedCount"] for item in diagnostics),
         },
     }
 
