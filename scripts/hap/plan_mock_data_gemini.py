@@ -9,8 +9,9 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from google import genai
 from google.genai import types
@@ -34,6 +35,29 @@ from mock_data_common import (
     resolve_json_input,
     write_json_with_latest,
 )
+
+
+def generate_with_retry(client: genai.Client, model: str, prompt: str, retries: int) -> Any:
+    last_exc: Optional[Exception] = None
+    for attempt in range(1, max(1, retries) + 1):
+        try:
+            return client.models.generate_content(
+                model=model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    temperature=0.2,
+                ),
+            )
+        except Exception as exc:
+            last_exc = exc
+            if attempt >= max(1, retries):
+                break
+            wait_seconds = min(16, 2 ** (attempt - 1))
+            print(f"Gemini 调用失败，第 {attempt} 次重试前等待 {wait_seconds}s：{exc}")
+            time.sleep(wait_seconds)
+    assert last_exc is not None
+    raise last_exc
 
 
 def build_prompt(snapshot: dict) -> str:
@@ -310,6 +334,7 @@ def main() -> None:
     parser.add_argument("--schema-json", required=True, help="结构快照 JSON 路径")
     parser.add_argument("--model", default=DEFAULT_GEMINI_MODEL, help="Gemini 模型名")
     parser.add_argument("--config", default=str(GEMINI_CONFIG_PATH), help="Gemini 配置 JSON 路径")
+    parser.add_argument("--gemini-retries", type=int, default=4, help="Gemini 调用失败时的最大重试次数")
     parser.add_argument("--plan-output", default="", help="mock_data_plan 输出路径")
     parser.add_argument("--bundle-output", default="", help="mock_data_bundle 输出路径")
     args = parser.parse_args()
@@ -335,14 +360,7 @@ def main() -> None:
         worksheetTiers=len(snapshot.get("worksheetTiers", [])),
     )
 
-    response = client.models.generate_content(
-        model=args.model,
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            temperature=0.2,
-        ),
-    )
+    response = generate_with_retry(client, args.model, prompt, args.gemini_retries)
     append_log(
         log_path,
         "gemini_response_received",

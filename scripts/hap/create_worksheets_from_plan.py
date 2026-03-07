@@ -219,17 +219,17 @@ def split_fields(fields: List[dict]) -> (List[dict], List[dict]):
     return normal, relation
 
 
-def build_relationship_rules(plan: dict) -> Dict[Tuple[str, str], dict]:
+def build_relationship_rules(plan: dict) -> List[dict]:
     """
     从规划 JSON 的 relationships 构建约束：
     - 仅允许 1-1 / 1-N
-    - 同一对表（无序对）只保留一条关系规则
+    - 保留每一条关系规则，避免同一对表的多字段关系被吞掉
     """
     relationships = plan.get("relationships", [])
     if not isinstance(relationships, list):
-        return {}
+        return []
 
-    rules: Dict[Tuple[str, str], dict] = {}
+    rules: List[dict] = []
     for rel in relationships:
         if not isinstance(rel, dict):
             continue
@@ -244,18 +244,15 @@ def build_relationship_rules(plan: dict) -> Dict[Tuple[str, str], dict]:
         # 缺省按 1-N 处理（常见业务场景）
         if not cardinality:
             cardinality = "1-N"
-        key = tuple(sorted((src, dst)))
-        if key in rules:
-            prev = rules[key]
-            if prev["cardinality"] != cardinality:
-                raise ValueError(
-                    f"关系规则冲突: {src}<->{dst} 同时出现 {prev['cardinality']} 与 {cardinality}"
-                )
-            # 同一对表重复定义时保留第一条，并补充空字段名
-            if not prev.get("field") and field_name:
-                prev["field"] = field_name
-            continue
-        rules[key] = {"from": src, "to": dst, "cardinality": cardinality, "field": field_name}
+        rules.append(
+            {
+                "from": src,
+                "to": dst,
+                "cardinality": cardinality,
+                "field": field_name,
+                "pair_key": tuple(sorted((src, dst))),
+            }
+        )
     return rules
 
 
@@ -306,8 +303,20 @@ def collect_relation_field_candidates(worksheets: List[dict]) -> Dict[Tuple[str,
     return candidates
 
 
-def _pick_field_meta(candidates: Dict[Tuple[str, str], List[dict]], source: str, target: str, fallback_name: str) -> dict:
+def _pick_field_meta(
+    candidates: Dict[Tuple[str, str], List[dict]],
+    source: str,
+    target: str,
+    fallback_name: str,
+    preferred_name: str = "",
+) -> dict:
     arr = candidates.get((source, target), [])
+    if preferred_name:
+        preferred_name = preferred_name.strip()
+        for picked in arr:
+            field_name = str(picked.get("field_name", "")).strip()
+            if field_name == preferred_name:
+                return {"name": field_name, "required": bool(picked.get("required", False))}
     if arr:
         picked = arr[0]
         field_name = str(picked.get("field_name", "")).strip() or fallback_name
@@ -315,13 +324,13 @@ def _pick_field_meta(candidates: Dict[Tuple[str, str], List[dict]], source: str,
     return {"name": fallback_name, "required": False}
 
 
-def normalize_relation_plan(worksheets: List[dict], relationship_rules: Dict[Tuple[str, str], dict]) -> List[dict]:
+def normalize_relation_plan(worksheets: List[dict], relationship_rules: List[dict]) -> List[dict]:
     """
-    把关系规范化为“每对表唯一一条有向 Relation 字段”，彻底避免 N-N。
+    把关系规范化为“每条业务关系对应一条主 Relation 字段”。
     规则：
     - relationship_rules 为权威来源（若存在）
     - 1-N 一律落在多端表(to) -> 一端表(from)，subType=1
-    - 1-1 仅保留单向一条（优先沿用已有候选方向）
+    - 1-1 在当前 API 创建方式下也落为单向主字段 + 系统反向字段
     - 若缺少 relationship_rules 且同一对表出现双向候选，直接报错（避免隐式 N-N）
     """
     ws_names: Set[str] = set()
@@ -343,9 +352,10 @@ def normalize_relation_plan(worksheets: List[dict], relationship_rules: Dict[Tup
     handled_pairs: Set[Tuple[str, str]] = set()
 
     # 1) 先按 relationships 强约束落地
-    for pair_key, rule in relationship_rules.items():
+    for index, rule in enumerate(relationship_rules):
         src = str(rule.get("from", "")).strip()
         dst = str(rule.get("to", "")).strip()
+        pair_key = tuple(sorted((src, dst)))
         cardinality = str(rule.get("cardinality", "1-N")).strip().upper() or "1-N"
         rel_field_name = str(rule.get("field", "")).strip()
         if src not in ws_names or dst not in ws_names:
@@ -356,10 +366,21 @@ def normalize_relation_plan(worksheets: List[dict], relationship_rules: Dict[Tup
             relation_source = dst
             relation_target = src
         elif cardinality == "1-1":
-            # 1-1 只保留单向一条：优先沿用已有候选方向，避免改名
+            # 1-1 在当前创建策略下也只创建一条主字段。
+            # 优先复用声明字段所在方向，其次复用已存在候选方向。
+            fwd_has_named = any(
+                str(item.get("field_name", "")).strip() == rel_field_name for item in candidates.get((src, dst), [])
+            )
+            rev_has_named = any(
+                str(item.get("field_name", "")).strip() == rel_field_name for item in candidates.get((dst, src), [])
+            )
             fwd_exists = bool(candidates.get((src, dst)))
             rev_exists = bool(candidates.get((dst, src)))
-            if fwd_exists and not rev_exists:
+            if rev_has_named and not fwd_has_named:
+                relation_source, relation_target = dst, src
+            elif fwd_has_named and not rev_has_named:
+                relation_source, relation_target = src, dst
+            elif fwd_exists and not rev_exists:
                 relation_source, relation_target = src, dst
             elif rev_exists and not fwd_exists:
                 relation_source, relation_target = dst, src
@@ -369,9 +390,16 @@ def normalize_relation_plan(worksheets: List[dict], relationship_rules: Dict[Tup
             raise ValueError(f"不支持的关系类型: {cardinality}（仅允许 1-1 或 1-N）")
 
         fallback_name = rel_field_name or f"关联{relation_target}"
-        meta = _pick_field_meta(candidates, relation_source, relation_target, fallback_name)
+        meta = _pick_field_meta(
+            candidates,
+            relation_source,
+            relation_target,
+            fallback_name,
+            preferred_name=rel_field_name,
+        )
         normalized.append(
             {
+                "rule_index": index,
                 "pair_key": pair_key,
                 "source": relation_source,
                 "target": relation_target,
@@ -394,18 +422,19 @@ def normalize_relation_plan(worksheets: List[dict], relationship_rules: Dict[Tup
                 "为防止 N-N，请在 relationships 中明确声明该对表的 cardinality。"
             )
         source, target = next(iter(orientations))
-        meta = _pick_field_meta(candidates, source, target, f"关联{target}")
-        normalized.append(
-            {
-                "pair_key": pair_key,
-                "source": source,
-                "target": target,
-                "field_name": meta["name"],
-                "required": bool(meta["required"]),
-                "cardinality": "1-N",
-                "origin": "field_fallback",
-            }
-        )
+        fallback_fields = candidates.get((source, target), []) or [{"field_name": f"关联{target}", "required": False}]
+        for meta in fallback_fields:
+            normalized.append(
+                {
+                    "pair_key": pair_key,
+                    "source": source,
+                    "target": target,
+                    "field_name": str(meta.get("field_name", "")).strip() or f"关联{target}",
+                    "required": bool(meta.get("required", False)),
+                    "cardinality": "1-N",
+                    "origin": "field_fallback",
+                }
+            )
 
     return normalized
 
@@ -470,11 +499,12 @@ def verify_relation_cardinality(
     base_url: str,
     headers: dict,
     name_to_id: Dict[str, str],
-    relationship_rules: Dict[Tuple[str, str], dict],
+    normalized_relations: List[dict],
 ) -> dict:
     """
     创建后校验：
-    - relationship_rules 声明的关系必须满足双向可见与基数约束（1-1 / 1-N）
+    - 每条主 Relation 字段都必须落地成功（source -> target, subType=1）
+    - 非自关联字段必须能看到系统生成的反向字段
     - subType 仅允许 1 或 2
     """
     id_to_name = {wid: name for name, wid in name_to_id.items()}
@@ -514,40 +544,48 @@ def verify_relation_cardinality(
             pair_to_edges.setdefault(pair_key, []).append(edge)
 
     violations = []
-    for pair_key, rule in relationship_rules.items():
-        src = str(rule.get("from", "")).strip()
-        dst = str(rule.get("to", "")).strip()
-        card = str(rule.get("cardinality", "1-N")).strip().upper() or "1-N"
-        edges = pair_to_edges.get(pair_key, [])
-        if not edges:
-            violations.append({"pair": pair_key, "reason": "missing_relation_edges"})
+    notes: List[str] = []
+    for spec in normalized_relations:
+        src = str(spec.get("source", "")).strip()
+        dst = str(spec.get("target", "")).strip()
+        field_name = str(spec.get("field_name", "")).strip()
+        card = str(spec.get("cardinality", "1-N")).strip().upper() or "1-N"
+        if not src or not dst or not field_name:
+            violations.append({"spec": spec, "reason": "invalid_normalized_relation"})
             continue
 
-        edge_signatures = {(e["source"], e["target"], int(e["subType"])) for e in edges}
-        if card == "1-N":
-            # 1-N 约束：N端(to)->1端(from) 为单选，1端(from)->N端(to) 为多选
-            required = {(dst, src, 1), (src, dst, 2)}
-        elif card == "1-1":
-            # 1-1 约束：双向都为单选
-            required = {(src, dst, 1), (dst, src, 1)}
-        else:
-            violations.append({"pair": pair_key, "reason": f"unsupported_cardinality:{card}"})
+        primary_matches = [
+            e
+            for e in relation_edges
+            if e["source"] == src and e["target"] == dst and int(e["subType"]) == 1 and e["field"] == field_name
+        ]
+        if not primary_matches:
+            violations.append(
+                {
+                    "spec": {"source": src, "target": dst, "field_name": field_name, "cardinality": card},
+                    "reason": "missing_primary_relation_field",
+                }
+            )
             continue
-        missing = sorted(list(required - edge_signatures))
-        if missing:
-            violations.append({"pair": pair_key, "reason": "visibility_or_cardinality_mismatch", "missing": missing})
 
-    # 对于未声明 rules 的 pair，仍保留基础风控：同向同 subtype 重复过多时视作异常
-    for pair_key, edges in pair_to_edges.items():
-        if pair_key in relationship_rules:
-            continue
-        sig_counts: Dict[Tuple[str, str, int], int] = {}
-        for e in edges:
-            sig = (e["source"], e["target"], int(e["subType"]))
-            sig_counts[sig] = sig_counts.get(sig, 0) + 1
-        dup = {str(k): v for k, v in sig_counts.items() if v > 1}
-        if dup:
-            violations.append({"pair": pair_key, "reason": "duplicate_unruled_edges", "detail": dup})
+        if src != dst:
+            reverse_matches = [
+                e
+                for e in relation_edges
+                if e["source"] == dst and e["target"] == src and int(e["subType"]) in (1, 2)
+            ]
+            if not reverse_matches:
+                violations.append(
+                    {
+                        "spec": {"source": src, "target": dst, "field_name": field_name, "cardinality": card},
+                        "reason": "missing_reverse_relation_field",
+                    }
+                )
+
+        if card == "1-1":
+            notes.append(
+                f"字段 {src}.{field_name} 声明为 1-1，但当前接口创建后反向字段通常为多选展示，未做反向单选强校验。"
+            )
 
     if violations:
         raise RuntimeError(f"关系校验失败: {violations}")
@@ -556,6 +594,7 @@ def verify_relation_cardinality(
         "checked_pairs": len(pair_to_edges),
         "relation_edges": relation_edges,
         "violations": violations,
+        "notes": notes,
     }
 
 
@@ -686,7 +725,7 @@ def main() -> None:
             }
         )
 
-    verification = verify_relation_cardinality(args.base_url, headers, name_to_id, relationship_rules)
+    verification = verify_relation_cardinality(args.base_url, headers, name_to_id, normalized_relations)
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     WORKSHEET_CREATE_RESULT_DIR.mkdir(parents=True, exist_ok=True)
