@@ -1,83 +1,133 @@
 # hap_auto
 
-项目目标：自动化完成 HAP 应用从创建到配置的全链路，包括应用创建、工作表规划、字段布局、图标匹配、视图与筛选配置，以及现有应用的批量造数与关联回填。
+HAP 应用自动化工具仓库。目标是把“需求收集 -> 创建应用 -> 建表 -> 布局 -> 视图 -> 筛选 -> 造数 -> 浏览器录制”尽量串成可复跑、可审计、可分步调试的流水线。
 
-## 0. 背景、边界与工作方式
+当前仓库已经不是单一脚本，而是 3 套能力共同工作：
+- HAP 应用搭建与配置自动化
+- HAP 现有应用批量造数与关系修复
+- `record/` 浏览器操作录制与视频归档
 
-这个仓库不是单一脚本，而是一组围绕 HAP 应用生命周期的自动化流水线。核心思路是：
-- 用稳定入口脚本串联 HAP OpenAPI、页面接口和 Gemini 规划能力。
-- 把每一步中间结果都落盘为 JSON，方便复跑、审计和人工修正。
-- 优先把“规划”和“执行”拆开，避免直接把大模型输出无检查地写入真实应用。
+## 1. 当前阶段结论
 
-适用场景：
-- 新建一个业务应用，并自动补齐工作表、布局、图标、视图与筛选配置。
-- 对已有应用做批量造数、关联补齐、清空记录等运维动作。
-- 反复调试某一阶段时，只执行单个 pipeline 或底层脚本。
+近期开发已经把主链路基本打通，当前最值得关注的是：
+- 已具备“从需求对话到录制归档”的一键链路：`scripts/run_app_to_video.py`
+- 已具备“从需求 JSON 到完整执行”的编排器：`scripts/execute_requirements.py`
+- 已具备“现有应用批量造数 + 关系修复 + unresolved 清理”的闭环：`scripts/pipeline_mock_data.py`
+- 已把 `record/` 从独立实验目录提升为主流程的一部分，支持 `task_template.txt -> task.txt -> run_agent.py`
+- 大多数关键阶段都会落盘 JSON，并维护 `*_latest.json`，方便接续和排障
 
-当前边界：
-- LLM 规划默认依赖 Gemini。
-- HAP 接口调用同时依赖组织级 API 凭据与网页登录态。
-- Relation 自动修复目前重点覆盖 `1-1` 和 `1-N` 的单选端；`1-N` 多选端不会自动批量回填。
-- 大部分脚本假设输出目录可写，并默认把最新结果额外写一份 `*_latest.json`。
+当前仍然要接受的边界：
+- LLM 规划默认依赖 Gemini
+- HAP 调用同时依赖组织 API 凭据和网页登录态
+- Relation 自动修复目前重点支持 `1-1` 和 `1-N` 的单选端，`1-N` 多选端不保证自动回填
+- 不是所有脚本都幂等，重复执行前要确认目标应用当前状态
 
-## 1. 目录与分层
+## 2. 近期开发进展
 
-1. 入口脚本层（建议直接运行）
-- `/Users/andy/Desktop/hap_auto/scripts/`
-- 这些脚本通过 `runpy` 转发到实现层，参数接口稳定，适合日常使用。
+### 2026-03-09
+- 新增一键串联脚本 `scripts/run_app_to_video.py`，打通“需求收集 -> 建应用 -> 生成 task -> 浏览器录制 -> 归档”
+- 新增 `scripts/fill_task_placeholders.py`，支持纯本地填充 `record/task_template.txt`
+- 录制产物归档目录统一到 `data/outputs/app_video_runs/<timestamp>_<appId>/`
+- 新增 `summary.md`、`tech_log.json`、`tech_log.md` 等运行摘要，便于回放和复盘
+- 主流程相关 JSON 产物可自动复制进单次录制归档目录，便于把“业务配置结果”和“操作视频”对齐
 
-2. 实现脚本层
-- HAP 业务实现：`/Users/andy/Desktop/hap_auto/scripts/hap/`
-- Gemini 业务实现：`/Users/andy/Desktop/hap_auto/scripts/gemini/`
-- 认证脚本：`/Users/andy/Desktop/hap_auto/scripts/auth/`
+### 2026-03-08
+- `record/run_agent.py` 完成结构拆分，核心能力下沉到 `record/core/`
+- 录制链路稳定支持 `wait_seconds`，解决长等待时 CDP 无新帧导致“视频跳过”的问题
+- 增加浏览器 repaint hack，保证静态等待段仍保留可见停留
+- 默认网页缩放通过原生 Chrome `Preferences` 固定到 `125%`，替代模糊的 DPR 方案
+- 录制过程中的黑屏 logo / 空白帧问题已做底层规避
 
-3. 数据与结果目录
-- `/Users/andy/Desktop/hap_auto/data/outputs/`
+### 2026-03-07
+- `record/task.json` 迁移为 `record/task.txt`
+- 支持 `solo`、`no`、`#`、`//` 等更适合人工编辑的任务控制方式
+- 明道云 iframe 场景下的元素定位稳定性提升
+- `storage/`、`runs/`、`venv/` 等录制运行态目录已明确隔离
 
-补充说明：
-- `scripts/*.py` 基本是稳定入口；如果你只是执行任务，优先用这一层。
-- `scripts/hap/*.py` 是 HAP 业务实现；调试逻辑时再读这一层。
-- `scripts/gemini/*.py` 主要负责规划、匹配、生成方案，不直接写业务数据。
-- `view/*.har` 是视图相关抓包样本，主要用于接口行为核对，不是运行时必需输入。
+## 3. 当前目标
 
-## 2. 环境准备与配置
+短期目标：
+- 把 README、脚本入口、产物目录、排障方式统一成一份开发说明
+- 提高主流程复跑稳定性，减少“上一步成功、下一步接不上”的人工干预
+- 继续补齐录制链路的任务模板和可复用素材
 
-### 2.1 Python 与依赖
+中期目标：
+- 让 `execute_requirements.py` 的阶段边界更稳定，失败时更容易断点续跑
+- 让 mock data、view、filter、layout 这些阶段的输入输出约定进一步统一
+- 把“新建应用”和“已有应用维护”两条路径彻底分离清楚
 
-建议使用 Python 3.11+。仓库当前未维护统一的 `requirements.txt`，从脚本实际 import 看，至少需要：
-- `requests`
-- `google-genai`
-- `playwright`
-- `prompt-toolkit`（可选，用于更好的终端输入体验）
+## 4. 仓库结构
 
-如果要使用自动刷新认证，还需要先安装 Playwright 浏览器：
+```text
+hap_auto/
+├── config/                  # 本地凭据与策略
+├── data/
+│   ├── assets/icons/        # icon 素材
+│   ├── api_docs/            # 接口资料与抓取结果
+│   └── outputs/             # 所有阶段性 JSON / 运行结果
+├── record/                  # 浏览器录制子系统
+├── scripts/                 # 稳定入口层
+│   ├── hap/                 # HAP 业务实现
+│   ├── gemini/              # Gemini 规划/匹配实现
+│   └── auth/                # 登录态刷新
+└── view/                    # 抓包/接口行为样本
+```
+
+分层约定：
+- 日常执行优先用 `scripts/*.py`
+- 调试实现细节再看 `scripts/hap/*.py`、`scripts/gemini/*.py`
+- 录制相关逻辑集中在 `record/`
+- 所有中间产物默认写到 `data/outputs/`
+
+## 5. 环境与依赖
+
+建议：
+- Python 3.11+
+- macOS 本地运行
+- 可用的 Gemini API Key
+- 可用的 HAP 组织级凭据
+- 可用的明道云网页登录账号
+
+主仓库常用依赖：
 
 ```bash
 python3 -m pip install requests google-genai playwright prompt-toolkit
 python3 -m playwright install chromium
 ```
 
-### 2.2 凭据与本地配置
+`record/` 子系统额外依赖见 [record/requirements.txt](/Users/andy/Desktop/hap_auto/record/requirements.txt)：
 
-运行前至少要检查以下文件：
-- `/Users/andy/Desktop/hap_auto/config/credentials/gemini_auth.json`
-- `/Users/andy/Desktop/hap_auto/config/credentials/organization_auth.json`
-- `/Users/andy/Desktop/hap_auto/config/credentials/auth_config.py`
-- `/Users/andy/Desktop/hap_auto/config/credentials/login_credentials.py`
+```bash
+cd /Users/andy/Desktop/hap_auto/record
+python3 -m venv venv
+venv/bin/pip install -r requirements.txt
+venv/bin/playwright install chromium
+```
 
-它们分别承担的作用：
-- `gemini_auth.json`：提供 Gemini `api_key`，用于需求收集、建模规划、图标匹配、造数规划等。
-- `organization_auth.json`：提供 HAP 组织级 API 调用所需信息，供 OpenAPI 脚本使用。
-- `auth_config.py`：提供网页接口调用所需的 `ACCOUNT_ID`、`AUTHORIZATION`、`COOKIE`。
-- `login_credentials.py`：供 `refresh_auth.py` 用 Playwright 自动登录并刷新 `auth_config.py`。
+## 6. 必备本地配置
 
-安全约定：
-- 这些文件都属于本地敏感配置，不应提交到公开仓库。
-- `AUTHORIZATION` 和 `COOKIE` 有时效，失效时需要刷新。
+运行前至少确认以下文件存在且可用：
+- [config/credentials/gemini_auth.json](/Users/andy/Desktop/hap_auto/config/credentials/gemini_auth.json)
+- [config/credentials/organization_auth.json](/Users/andy/Desktop/hap_auto/config/credentials/organization_auth.json)
+- [config/credentials/auth_config.py](/Users/andy/Desktop/hap_auto/config/credentials/auth_config.py)
+- [config/credentials/login_credentials.py](/Users/andy/Desktop/hap_auto/config/credentials/login_credentials.py)
+- [record/.env](/Users/andy/Desktop/hap_auto/record/.env)
 
-### 2.3 认证刷新方法
+作用说明：
+- `gemini_auth.json`：Gemini 规划、匹配、需求收集
+- `organization_auth.json`：HAP OpenAPI 调用
+- `auth_config.py`：网页接口 Cookie / Authorization
+- `login_credentials.py`：自动登录刷新网页认证
+- `record/.env`：`record/run_agent.py` 使用的 `GOOGLE_API_KEY`
 
-如果网页登录态失效，优先用下面的脚本刷新：
+注意：
+- 这些都是本地敏感文件，不应提交
+- `auth_config.py` 中的 `COOKIE`、`AUTHORIZATION` 会过期
+- `record/` 和主仓库都可能各自依赖 Gemini Key，排查时要两边都确认
+
+## 7. 认证刷新
+
+网页登录态失效时，优先执行：
 
 ```bash
 python3 /Users/andy/Desktop/hap_auto/scripts/refresh_auth.py
@@ -89,13 +139,9 @@ python3 /Users/andy/Desktop/hap_auto/scripts/refresh_auth.py
 python3 /Users/andy/Desktop/hap_auto/scripts/refresh_auth.py --headless
 ```
 
-这个脚本会：
-- 打开明道云登录页。
-- 使用 `login_credentials.py` 中的账号密码登录。
-- 捕获最新 Cookie / Authorization。
-- 自动回写 `/Users/andy/Desktop/hap_auto/config/credentials/auth_config.py`。
+该脚本会自动回写 [config/credentials/auth_config.py](/Users/andy/Desktop/hap_auto/config/credentials/auth_config.py)。
 
-## 3. 快速开始
+## 8. 快速开始
 
 先进入项目目录：
 
@@ -103,321 +149,270 @@ python3 /Users/andy/Desktop/hap_auto/scripts/refresh_auth.py --headless
 cd /Users/andy/Desktop/hap_auto
 ```
 
-### 3.1 一键主流程（需求驱动）
+### 8.1 新应用：从需求对话开始
 
 ```bash
 python3 /Users/andy/Desktop/hap_auto/scripts/agent_collect_requirements.py
 ```
 
 说明：
-- 在终端与 Gemini 对话，输入 `/done` 后生成需求 JSON。
-- 默认会调用执行器按需求执行全流程（可通过参数关闭自动执行）。
+- 终端与 Gemini 多轮对话
+- 输入 `/done` 后生成 requirement spec
+- 默认自动接着执行 `execute_requirements.py`
 
-### 3.1.1 一键策划到录制
-
-```bash
-python3 /Users/andy/Desktop/hap_auto/scripts/run_app_to_video.py
-```
-
-说明：
-- 你只需要在第 1 步与 Gemini 对话描述应用需求。
-- `/done` 后会自动完成：创建应用 -> 填充 `record/task_template.txt` -> 生成 `record/task.txt` -> 执行浏览器录制。
-- 单次运行产物归档到 `data/outputs/app_video_runs/<timestamp>_<appId>/`。
-- 目录内会包含 `summary.md`、`tech_log.json`、`tech_log.md`、任务文件、录制视频/GIF 和关键 JSON 产物副本。
-- 可选加 `--seed 123` 固定 task 占位符随机替换结果。
-
-### 3.2 执行已有需求 JSON
+### 8.2 新应用：直接执行已有需求 JSON
 
 ```bash
 python3 /Users/andy/Desktop/hap_auto/scripts/execute_requirements.py \
   --spec-json /Users/andy/Desktop/hap_auto/data/outputs/requirement_specs/requirement_spec_latest.json
 ```
 
-### 3.3 一键造数（现有应用）
+### 8.3 新应用：从策划直接录制视频
+
+```bash
+python3 /Users/andy/Desktop/hap_auto/scripts/run_app_to_video.py
+```
+
+当前这条链路会自动做：
+1. 需求对话与应用创建
+2. 生成 / 更新 `record/task.txt`
+3. 运行浏览器录制
+4. 把视频、GIF、任务文件、关键 JSON 归档到 `data/outputs/app_video_runs/`
+
+### 8.4 已有应用：一键造数
 
 ```bash
 python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_mock_data.py
 ```
 
-说明：
-- 仅支持 `data/outputs/app_authorizations/` 下已有授权的应用。
-- 启动后选择应用，后续自动执行：结构快照 -> Gemini 造数规划 -> 写入记录 -> 关联一致性分析 -> 关联修复执行 -> 删除 unresolved 源记录（如有）。
-- 默认 `triggerWorkflow=false`，避免触发应用内工作流。
-- 结构快照里的造数条数规则：
-  - 无关联：每表 5 条记录。
-  - 自身 Relation 字段全部为单选端（`subType=1`），且命中 `1-N`：按明细端处理，每表 10 条记录。
-  - 聚合端或主表：每表 5 条记录。
-- 关联处理规则：
-  - `1-1` 关系会处理。
-  - `1-N` 关系会处理单选端字段（`subType=1`，即下级记录指向唯一上级记录）。
-  - `1-N` 的多选端字段（`subType=2`）不会自动批量回填。
-- 如果仍存在无法自动确定的关联，流水线会输出 `unresolved`，并删除对应 unresolved 源记录，避免留下空关联脏数据。
-
-### 3.4 清空应用全部记录
+### 8.5 已有应用：清空记录
 
 ```bash
 python3 /Users/andy/Desktop/hap_auto/scripts/clear_app_records.py --dry-run
 python3 /Users/andy/Desktop/hap_auto/scripts/clear_app_records.py
 ```
 
-说明：
-- 仅支持 `data/outputs/app_authorizations/` 下已有授权的应用。
-- 启动后选择应用，自动遍历该应用下全部工作表并分页删除所有记录。
-- 默认逻辑删除；加 `--permanent` 可永久删除。
-- 默认 `triggerWorkflow=false`，避免触发应用内工作流。
-- 结果文件输出到 `data/outputs/app_record_clear_results/`。
+## 9. 功能与主流程
 
-### 3.5 任务占位符本地填充（task.txt）
+### 9.1 需求驱动总编排
 
-```bash
-python3 /Users/andy/Desktop/hap_auto/scripts/fill_task_placeholders.py --dry-run
-python3 /Users/andy/Desktop/hap_auto/scripts/fill_task_placeholders.py
-```
+入口：
+- [scripts/agent_collect_requirements.py](/Users/andy/Desktop/hap_auto/scripts/agent_collect_requirements.py)
+- [scripts/execute_requirements.py](/Users/andy/Desktop/hap_auto/scripts/execute_requirements.py)
 
-说明：
-- 该脚本默认先让你选择应用，然后用 `record/task_template.txt` 生成 `record/task.txt`。
-- 也支持用 `--app-id <appId>` 直接指定应用，跳过交互选择。
-- 数据源为本地历史产物，不请求 Web/MCP：主要读取 `data/outputs/` 与 `record/runs/` 下的 JSON/日志。
-- `--dry-run` 只预览替换映射，不写文件。
-- `{工作表名称N}`：从本地工作表名称池随机选择，且同一次运行内不重复。
-- `{视图名称N}`：来自“最近一次已选中的工作表”（例如 `{工作表名称2}`），且同一次运行内不重复。
-- `{工作表名称N的表ID}`：会填入对应已选工作表的 `worksheetId`。
-- 若候选数量不足以满足“不可重复”，脚本会直接报错提示。
+主流程：
+1. 创建应用
+2. 获取应用授权
+3. 规划工作表并建表
+4. 匹配并更新应用 / 工作表图标
+5. 规划并应用工作表布局
+6. 规划并创建视图
+7. 规划并应用表格视图筛选
+8. 更新应用导航风格
+9. 对应用执行 mock data 流程
 
-## 4. 方法与标准 Pipeline（按场景拆分）
+### 9.2 一键录制链路
 
-方法约定：
-- 先规划，后执行。凡是涉及 LLM 的能力，通常先生成 plan，再由应用脚本消费。
-- 先落盘，后串联。每个阶段都尽量输出独立 JSON，便于单步回放。
-- 入口脚本可重复执行；是否幂等取决于下游接口语义，重复执行前最好确认输出和目标应用状态。
-- 对真实应用写入的脚本，能用 `--dry-run` 时优先先跑一遍。
+入口：
+- [scripts/run_app_to_video.py](/Users/andy/Desktop/hap_auto/scripts/run_app_to_video.py)
+- [scripts/fill_task_placeholders.py](/Users/andy/Desktop/hap_auto/scripts/fill_task_placeholders.py)
+- [record/run_agent.py](/Users/andy/Desktop/hap_auto/record/run_agent.py)
 
-### 4.1 创建应用流水线
+流程：
+1. 收集需求
+2. 创建应用并产出最新执行结果
+3. 从本地 JSON 和历史运行结果填充 `record/task_template.txt`
+4. 生成 `record/task.txt`
+5. 录制浏览器操作
+6. 归档摘要、日志、视频和 GIF
 
-流程：创建应用 -> 获取授权 -> 匹配应用 icon -> 更新应用 icon
+### 9.3 造数与关系修复
 
-```bash
-python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_create_app.py --name "医院后勤管理系统"
-```
+入口：
+- [scripts/pipeline_mock_data.py](/Users/andy/Desktop/hap_auto/scripts/pipeline_mock_data.py)
 
-### 4.2 工作表流水线
+流程：
+1. 选择已授权应用
+2. 导出结构快照
+3. Gemini 生成造数 plan / bundle
+4. 写入记录
+5. 分析 Relation 一致性
+6. 应用修复计划
+7. 如仍 unresolved，则删除源记录，避免留下脏数据
 
-流程：规划工作表 -> 创建工作表 -> 匹配并更新工作表 icon
+当前支持情况：
+- 支持 `1-1`
+- 支持 `1-N` 的单选端字段
+- 不保证自动回填 `1-N` 的多选端字段
 
-```bash
-python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_worksheets.py
-```
+### 9.4 录制子系统
 
-### 4.3 字段布局流水线
+入口：
+- [record/run_agent.py](/Users/andy/Desktop/hap_auto/record/run_agent.py)
 
-流程：选择应用 -> 规划字段布局 -> 应用布局
+核心能力：
+- 自然语言任务解析
+- `wait_seconds` 可见等待
+- repaint hack，避免静止阶段丢帧
+- 原生 Chrome 缩放注入
+- 登录态复用
+- 运行日志、视频、GIF 自动落盘
 
-```bash
-python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_worksheet_layout.py \
-  --app-id <你的appId> \
-  --requirements "按业务角色优化表单布局"
-```
+## 10. 关键脚本清单
 
-### 4.4 工作表 icon 流水线
+### 10.1 推荐直接使用的入口脚本
 
-流程：拉清单 -> Gemini 匹配 icon -> 批量更新
+- `scripts/agent_collect_requirements.py`：对话式收集需求，默认自动执行
+- `scripts/execute_requirements.py`：执行需求 JSON
+- `scripts/run_app_to_video.py`：从策划直接到录制归档
+- `scripts/pipeline_create_app.py`：创建应用并处理应用 icon
+- `scripts/pipeline_worksheets.py`：工作表规划、建表、工作表 icon
+- `scripts/pipeline_worksheet_layout.py`：布局规划与应用
+- `scripts/pipeline_views.py`：视图规划与创建
+- `scripts/pipeline_tableview_filters.py`：筛选规划与应用
+- `scripts/pipeline_mock_data.py`：造数总流程
+- `scripts/clear_app_records.py`：清空应用记录
+- `scripts/fill_task_placeholders.py`：生成 `record/task.txt`
+- `scripts/refresh_auth.py`：刷新网页登录态
 
-```bash
-python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_icon.py \
-  --app-auth-json /Users/andy/Desktop/hap_auto/data/outputs/app_authorizations/app_authorize_<你的appId>.json \
-  --app-id <你的appId>
-```
+### 10.2 造数排障常用脚本
 
-### 4.5 视图创建流水线
+- `scripts/analyze_relation_consistency.py`
+- `scripts/apply_relation_repair_plan.py`
+- `scripts/delete_unresolved_records.py`
+- `scripts/export_app_mock_schema.py`
+- `scripts/plan_mock_data_gemini.py`
+- `scripts/write_mock_data_from_plan.py`
 
-流程：规划视图 -> 创建视图
+### 10.3 删除类脚本
 
-```bash
-python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_views.py
-```
+- `scripts/delete_app.py`
+- `scripts/clear_app_records.py`
 
-说明：
-- 规划结果输出到 `data/outputs/view_plans/`
-- 创建结果输出到 `data/outputs/view_create_results/`
+删除类脚本建议默认先 `--dry-run`。
 
-### 4.6 视图筛选配置流水线
+## 11. 产物目录说明
 
-流程：选择应用 -> 分析支持的视图 -> 规划筛选列表/快速筛选 -> 应用配置
+最常用的输出目录：
 
-```bash
-python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_tableview_filters.py
-```
+- `data/outputs/requirement_specs/`：需求规格
+- `data/outputs/execution_runs/`：需求执行报告
+- `data/outputs/app_authorizations/`：应用授权信息
+- `data/outputs/worksheet_plans/`：工作表规划
+- `data/outputs/worksheet_create_results/`：建表结果
+- `data/outputs/worksheet_layout_plans/`：布局规划
+- `data/outputs/worksheet_layout_apply_results/`：布局应用结果
+- `data/outputs/view_plans/`：视图规划
+- `data/outputs/view_create_results/`：视图创建结果
+- `data/outputs/tableview_filter_plans/`：筛选规划
+- `data/outputs/tableview_filter_apply_results/`：筛选应用结果
+- `data/outputs/mock_data_schema_snapshots/`：造数前结构快照
+- `data/outputs/mock_data_plans/`：造数规划
+- `data/outputs/mock_data_write_results/`：写入结果
+- `data/outputs/mock_relation_repair_plans/`：关系修复计划
+- `data/outputs/mock_relation_repair_apply_results/`：关系修复执行结果
+- `data/outputs/mock_unresolved_delete_results/`：删除 unresolved 结果
+- `data/outputs/app_video_runs/`：一键录制归档
 
-### 4.7 造数流水线
+产物约定：
+- 多数目录会维护一份 `*_latest.json`
+- 选择应用类脚本通常依赖 `app_authorize_<appId>.json`
+- 排障时先看对应 JSON 和日志，不要只盯终端输出
 
-流程：选择应用 -> 导出结构快照 -> Gemini 规划造数 -> 写入记录 -> 关联一致性分析 -> 关联修复执行 -> 删除 unresolved 源记录（如有）
+## 12. 开发中的必要说明
 
-```bash
-python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_mock_data.py
-```
+### 12.1 推荐工作方式
 
-说明：
-- 结构快照会输出工作表、字段、可写字段、跳过字段、关系边、关系对和 worksheet tier。
-- tier 规则：
-  - 无关联：第一梯队，默认每表 5 条记录。
-  - 存在关联且全部为 `1-1`：第二梯队，默认每表 5 条记录。
-  - 自身 Relation 字段全部为单选端（`subType=1`），且命中 `1-N`：第三梯队，按明细端处理，默认每表 10 条记录。
-  - 聚合端、主表、或 `ambiguous`：按主表处理，默认每表 5 条记录。
-- 造数阶段只写常见可写字段：`Text`、`Number`、`Date`、`DateTime`、`SingleSelect`、`MultipleSelect`、`Checkbox`、`Rating`、常见文本类字段。
-- 系统字段、公式/汇总、附件、子表、成员/部门/组织角色、Relation 字段会被跳过并记录原因。
-- 关联阶段当前支持：
-  - `1-1` 关系字段
-  - `1-N` 关系中的单选端字段（`subType=1`）
-- Relation 修复顺序与造数 tier 保持一致：
-  - `tier 1`（无关联 / 聚合端 / 主表 / ambiguous）优先
-  - `tier 2`（纯 `1-1`）其次
-  - `tier 3`（明细单选端）最后
-- 关联修复阶段新增两个独立脚本：
-  - `analyze_relation_consistency.py`：扫描当前真实写入结果，生成 `updates` 和 `unresolved` 修复计划。
-  - `apply_relation_repair_plan.py`：按修复计划批量更新关系字段。
-- 如果 `apply_relation_repair_plan.py` 执行后仍有 unresolved，流水线会继续调用 `delete_unresolved_records.py` 删除对应源记录，并在 run report 中记录删除数量。
-- 运行日志会落到 `data/outputs/mock_data_logs/`，用于排查结构识别、Gemini 返回、写入批次、关联修复覆盖率等问题。
+- 先跑入口脚本，不要一上来改实现层
+- 先看 `data/outputs/` 的最新产物，再决定是否重跑
+- 涉及写真实应用时，优先使用 `--dry-run`
+- 规划和执行尽量分开看，不要把 LLM 输出直接当成可靠执行输入
 
-常用单步命令：
+### 12.2 关于 `scripts/` 与 `scripts/hap/`
 
-```bash
-python3 /Users/andy/Desktop/hap_auto/scripts/analyze_relation_consistency.py \
-  --schema-json /Users/andy/Desktop/hap_auto/data/outputs/mock_data_schema_snapshots/mock_schema_snapshot_latest.json \
-  --write-result-json /Users/andy/Desktop/hap_auto/data/outputs/mock_data_write_results/mock_data_write_result_latest.json
-```
+- `scripts/*.py` 多数只是稳定转发入口
+- 真正逻辑通常在 `scripts/hap/` 或 `scripts/gemini/`
+- 日常执行不要直接依赖 `scripts/hap/` 的内部文件路径，避免后续重构成本高
 
-```bash
-python3 /Users/andy/Desktop/hap_auto/scripts/apply_relation_repair_plan.py \
-  --repair-plan-json /Users/andy/Desktop/hap_auto/data/outputs/mock_relation_repair_plans/mock_relation_repair_plan_latest.json
-```
+### 12.3 关于 `record/`
 
-### 4.8 删除应用脚本（补充）
+- `record/` 现在不是附属 demo，而是主流程的一部分
+- `record/task.txt` 是运行态文件，`record/task_template.txt` 才是模板
+- `record/storage/`、`record/runs/`、`record/venv/` 都属于本地运行态，不要作为稳定输入依赖
 
-单个应用删除（按 `appId`）：
+## 13. 避坑与排障
 
-```bash
-python3 /Users/andy/Desktop/hap_auto/scripts/delete_app.py \
-  --app-id "<APP_ID>"
-```
+### 13.1 Gemini 调用失败
 
-批量删除（从 `data/outputs/app_authorizations/` 读取已记录应用，交互选择）：
+- 先检查 [config/credentials/gemini_auth.json](/Users/andy/Desktop/hap_auto/config/credentials/gemini_auth.json)
+- 再检查模型名是否可用，当前脚本里常见默认值是 `gemini-2.5-pro` 或 `gemini-2.5-flash`
+- `record/` 录制链路还要额外检查 [record/.env](/Users/andy/Desktop/hap_auto/record/.env)
 
-```bash
-python3 /Users/andy/Desktop/hap_auto/scripts/delete_app.py --delete-all
-```
+### 13.2 页面接口 401 / 403
 
-只看请求体不真正删除（排查参数时推荐先跑）：
+- 基本就是 [config/credentials/auth_config.py](/Users/andy/Desktop/hap_auto/config/credentials/auth_config.py) 过期
+- 直接重新跑 `scripts/refresh_auth.py`
 
-```bash
-python3 /Users/andy/Desktop/hap_auto/scripts/delete_app.py \
-  --app-id "<APP_ID>" \
-  --dry-run
-```
+### 13.3 OpenAPI 调用失败
 
-说明：
-- `--delete-all` 模式会提示输入：`Y` 全删，或输入序号（如 `1,2,3`）部分删除。
-- 在非 `--dry-run` 下，脚本会按模式清理对应的本地 `data/outputs` JSON 文件记录。
-- `project_id`、`owner_id` 默认从 `/Users/andy/Desktop/hap_auto/config/credentials/organization_auth.json` 读取；必要时可显式传 `--project-id`、`--operator-id`。
+- 检查 [config/credentials/organization_auth.json](/Users/andy/Desktop/hap_auto/config/credentials/organization_auth.json)
+- 确认 `base_url` 与当前环境一致
 
-## 5. 全流程脚本顺序与作用
+### 13.4 选择不到应用
 
-说明：`/scripts/*.py` 基本都是稳定入口（代理转发），真实实现在 `/scripts/hap/`、`/scripts/gemini/`、`/scripts/auth/`。
+- 一般是 `data/outputs/app_authorizations/` 没有对应 `app_authorize_<appId>.json`
+- 先跑创建应用流程，或单独补授权文件
 
-### 5.1 需求驱动总编排顺序（`execute_requirements.py`）
+### 13.5 造数后还有空关联
 
-1. `pipeline_create_app.py`：创建应用 + 授权 + 应用 icon
-2. `plan_app_worksheets_gemini.py` + `create_worksheets_from_plan.py`：工作表规划与建表
-3. （可选）`pipeline_icon.py`：工作表 icon 更新
-4. `pipeline_worksheet_layout.py`：字段布局规划与应用
-5. `pipeline_views.py`：规划并创建视图
-6. `pipeline_tableview_filters.py`：规划并应用视图筛选
-7. `update_app_navi_style.py`：应用导航风格
-8. `pipeline_mock_data.py`：执行一键造数流水线（最后一步）
+- 先看 `mock_relation_repair_plan` 和 `mock_relation_repair_apply_result`
+- 若 unresolved 仍存在，先确认是不是当前未覆盖的关系类型
 
-### 5.2 底层实现脚本（按职责）
+### 13.6 录制里“等待几秒”但视频看起来没停留
 
-1. 应用：`create_app.py`、`get_app_authorize.py`、`list_apps_for_icon.py`、`update_app_icons.py`、`update_app_navi_style.py`、`delete_app.py`
-2. 工作表：`plan_app_worksheets_gemini.py`、`create_worksheets_from_plan.py`、`list_app_worksheets.py`、`update_worksheet_icons.py`
-3. 布局：`plan_worksheet_layout.py`、`apply_worksheet_layout.py`
-4. 视图与筛选：`plan_worksheet_views_gemini.py`、`create_views_from_plan.py`、`pipeline_views.py`、`plan_tableview_filters_gemini.py`、`apply_tableview_filters_from_plan.py`、`pipeline_tableview_filters.py`
-5. 造数：`list_apps_for_mock_data.py`、`export_app_mock_schema.py`、`plan_mock_data_gemini.py`、`write_mock_data_from_plan.py`、`analyze_relation_consistency.py`、`apply_relation_repair_plan.py`、`pipeline_mock_data.py`
-6. 认证与辅助：`auth/refresh_auth.py`、`gemini/list_gemini_models.py`
+- 不要直接删 `record/run_agent.py` 里的等待与 repaint 相关逻辑
+- `browser-use` + CDP 录制在静止页面下可能不自然产帧，这部分已经做了补帧处理
 
-## 6. 输出文件目录
+### 13.7 录制里点击不稳定
 
-1. 应用与授权
-- `/Users/andy/Desktop/hap_auto/data/outputs/app_authorizations/`
+- 明道云弹层和侧栏常有淡出动画，下一步太快会点在遮罩层上
+- 指令里要明确“等待侧栏完全消失”或“等待 1-2 秒”
 
-2. 工作表规划与建表
-- `/Users/andy/Desktop/hap_auto/data/outputs/worksheet_plans/`
-- `/Users/andy/Desktop/hap_auto/data/outputs/worksheet_create_results/`
+### 13.8 网页缩放不要乱改
 
-3. 字段布局
-- `/Users/andy/Desktop/hap_auto/data/outputs/worksheet_layout_plans/`
-- `/Users/andy/Desktop/hap_auto/data/outputs/worksheet_layout_apply_results/`
+- 当前稳定方案是原生 `Preferences` 注入
+- 不要改回 `force-device-scale-factor`、CSS `zoom`、快捷键模拟缩放
 
-4. 图标
-- `/Users/andy/Desktop/hap_auto/data/outputs/app_icon_match_plans/`
-- `/Users/andy/Desktop/hap_auto/data/outputs/app_icon_updates/`
-- `/Users/andy/Desktop/hap_auto/data/outputs/worksheet_icon_match_plans/`
-- `/Users/andy/Desktop/hap_auto/data/outputs/worksheet_icon_updates/`
+## 14. 已知限制
 
-5. 需求与执行报告
-- `/Users/andy/Desktop/hap_auto/data/outputs/requirement_specs/`
-- `/Users/andy/Desktop/hap_auto/data/outputs/execution_runs/`
+- 不是所有脚本都支持断点续跑
+- 不是所有阶段都提供统一 CLI 参数风格
+- 录制链路对本地环境依赖比较重，尤其是 `record/venv`、浏览器、登录态
+- 一些目录下已有大量历史产物，默认“取最新”时要注意是否误用了旧结果
 
-6. 视图与筛选配置
-- `/Users/andy/Desktop/hap_auto/data/outputs/view_plans/`
-- `/Users/andy/Desktop/hap_auto/data/outputs/view_create_results/`
-- `/Users/andy/Desktop/hap_auto/data/outputs/tableview_filter_plans/`
-- `/Users/andy/Desktop/hap_auto/data/outputs/tableview_filter_apply_results/`
+## 15. 建议的日常使用顺序
 
-7. 造数与关联回填
-- `/Users/andy/Desktop/hap_auto/data/outputs/mock_data_app_inventory/`
-- `/Users/andy/Desktop/hap_auto/data/outputs/mock_data_schema_snapshots/`
-- `/Users/andy/Desktop/hap_auto/data/outputs/mock_data_plans/`
-- `/Users/andy/Desktop/hap_auto/data/outputs/mock_data_bundles/`
-- `/Users/andy/Desktop/hap_auto/data/outputs/mock_data_write_results/`
-- `/Users/andy/Desktop/hap_auto/data/outputs/mock_relation_repair_plans/`
-- `/Users/andy/Desktop/hap_auto/data/outputs/mock_relation_repair_apply_results/`
-- `/Users/andy/Desktop/hap_auto/data/outputs/mock_relation_plans/`
-- `/Users/andy/Desktop/hap_auto/data/outputs/mock_relation_apply_results/`
-- `/Users/andy/Desktop/hap_auto/data/outputs/mock_data_runs/`
-- `/Users/andy/Desktop/hap_auto/data/outputs/mock_data_logs/`
+### 新应用
 
-## 7. 常见输入输出约定
+1. `scripts/agent_collect_requirements.py`
+2. `scripts/execute_requirements.py`
+3. 需要演示视频时再跑 `scripts/run_app_to_video.py`
 
-1. 多数脚本支持显式 `--output`，不传时会写到 `data/outputs/` 的约定目录。
-2. 很多结果目录同时会维护一个 `*_latest.json`，方便下游脚本直接接续。
-3. 应用级脚本常通过 `app_authorize_<appId>.json` 找授权信息；如果这类文件缺失，很多“选择应用”型脚本无法运行。
-4. 需要用户选择应用的脚本，本质上是扫描 `data/outputs/app_authorizations/` 下最近的授权文件。
-5. `pipeline_mock_data.py`、`clear_app_records.py` 这类脚本会把运行日志额外写入 `jsonl`，排障时优先看日志而不是只看终端输出。
+### 已有应用维护
 
-## 8. 常见排障
+1. `scripts/pipeline_mock_data.py`
+2. 必要时 `scripts/analyze_relation_consistency.py`
+3. 必要时 `scripts/apply_relation_repair_plan.py`
+4. 需要清场时 `scripts/clear_app_records.py`
 
-1. Gemini 调用失败
-- 先检查 `/Users/andy/Desktop/hap_auto/config/credentials/gemini_auth.json` 是否存在有效 `api_key`。
-- 再确认默认模型 `gemini-2.5-pro` 当前可用。
+### 只处理录制
 
-2. HAP OpenAPI 调用失败
-- 检查 `organization_auth.json` 是否仍有效。
-- 核对 `base_url` 是否与当前环境一致，默认是 `https://api.mingdao.com`。
+1. `scripts/fill_task_placeholders.py`
+2. `record/run_agent.py`
 
-3. 页面接口调用失败或 401/403
-- 通常是 `auth_config.py` 里的 `COOKIE` / `AUTHORIZATION` 过期。
-- 直接运行 `python3 /Users/andy/Desktop/hap_auto/scripts/refresh_auth.py` 刷新。
+## 16. 补充文档
 
-4. 选择不到应用
-- 说明 `data/outputs/app_authorizations/` 下没有对应应用的授权 JSON。
-- 先跑一次创建应用流水线，或单独执行授权拉取脚本生成 `app_authorize_<appId>.json`。
+- [record/README.md](/Users/andy/Desktop/hap_auto/record/README.md)
+- [record/HAP_Automation_Best_Practices.md](/Users/andy/Desktop/hap_auto/record/HAP_Automation_Best_Practices.md)
 
-5. 造数后仍有脏数据或空关联
-- 先看 `mock_relation_repair_plan` 与 `mock_relation_repair_apply_result`。
-- 如果仍有 unresolved，确认是否属于当前不支持自动修复的关系类型。
-
-## 9. 推荐使用方式
-
-1. 新应用从 `agent_collect_requirements.py` 或 `execute_requirements.py` 开始。
-2. 已有应用补数据，从 `pipeline_mock_data.py` 开始。
-3. 只改某一块配置时，不走总流程，直接跑对应 pipeline。
-4. 调试问题时，优先使用 `scripts/` 入口脚本；只有在需要看内部实现时再进入 `scripts/hap/` 或 `scripts/gemini/`。
+如果只看一份文档，优先看本 README；如果只调录制，再看 `record/README.md`。
