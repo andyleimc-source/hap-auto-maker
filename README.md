@@ -113,6 +113,19 @@ python3 /Users/andy/Desktop/hap_auto/scripts/agent_collect_requirements.py
 - 在终端与 Gemini 对话，输入 `/done` 后生成需求 JSON。
 - 默认会调用执行器按需求执行全流程（可通过参数关闭自动执行）。
 
+### 3.1.1 一键策划到录制
+
+```bash
+python3 /Users/andy/Desktop/hap_auto/scripts/run_app_to_video.py
+```
+
+说明：
+- 你只需要在第 1 步与 Gemini 对话描述应用需求。
+- `/done` 后会自动完成：创建应用 -> 填充 `record/task_template.txt` -> 生成 `record/task.txt` -> 执行浏览器录制。
+- 单次运行产物归档到 `data/outputs/app_video_runs/<timestamp>_<appId>/`。
+- 目录内会包含 `summary.md`、`tech_log.json`、`tech_log.md`、任务文件、录制视频/GIF 和关键 JSON 产物副本。
+- 可选加 `--seed 123` 固定 task 占位符随机替换结果。
+
 ### 3.2 执行已有需求 JSON
 
 ```bash
@@ -162,11 +175,13 @@ python3 /Users/andy/Desktop/hap_auto/scripts/fill_task_placeholders.py
 ```
 
 说明：
-- 该脚本先让你选择应用，然后填充 `record/task.txt` 里的 `{...}` 占位符。
+- 该脚本默认先让你选择应用，然后用 `record/task_template.txt` 生成 `record/task.txt`。
+- 也支持用 `--app-id <appId>` 直接指定应用，跳过交互选择。
 - 数据源为本地历史产物，不请求 Web/MCP：主要读取 `data/outputs/` 与 `record/runs/` 下的 JSON/日志。
 - `--dry-run` 只预览替换映射，不写文件。
 - `{工作表名称N}`：从本地工作表名称池随机选择，且同一次运行内不重复。
 - `{视图名称N}`：来自“最近一次已选中的工作表”（例如 `{工作表名称2}`），且同一次运行内不重复。
+- `{工作表名称N的表ID}`：会填入对应已选工作表的 `worksheetId`。
 - 若候选数量不足以满足“不可重复”，脚本会直接报错提示。
 
 ## 4. 方法与标准 Pipeline（按场景拆分）

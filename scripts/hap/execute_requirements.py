@@ -176,6 +176,21 @@ def extract_report_path(text: str) -> Optional[str]:
     return m.group(1).strip()
 
 
+def extract_saved_path(text: str) -> Optional[str]:
+    m = re.search(r"已保存:\s*(.+)", text or "")
+    if not m:
+        return None
+    return m.group(1).strip()
+
+
+def extract_labeled_path(text: str, label: str) -> Optional[str]:
+    pattern = rf"-\s*{re.escape(label)}:\s*(.+)"
+    m = re.search(pattern, text or "")
+    if not m:
+        return None
+    return m.group(1).strip()
+
+
 def run_cmd(cmd: List[str], dry_run: bool, verbose: bool) -> Dict[str, object]:
     cmd_text = " ".join(cmd)
     if dry_run:
@@ -267,6 +282,8 @@ def main() -> None:
         "app_auth_json": None,
         "worksheet_plan_json": None,
         "worksheet_create_result_json": None,
+        "worksheet_layout_plan_json": None,
+        "worksheet_layout_apply_result_json": None,
         "view_plan_json": None,
         "view_create_result_json": None,
         "tableview_filter_plan_json": None,
@@ -292,6 +309,9 @@ def main() -> None:
             "artifacts": {
                 "app_auth_json": context.get("app_auth_json"),
                 "worksheet_plan_json": context.get("worksheet_plan_json"),
+                "worksheet_create_result_json": context.get("worksheet_create_result_json"),
+                "worksheet_layout_plan_json": context.get("worksheet_layout_plan_json"),
+                "worksheet_layout_apply_result_json": context.get("worksheet_layout_apply_result_json"),
                 "view_plan_json": context.get("view_plan_json"),
                 "view_create_result_json": context.get("view_create_result_json"),
                 "tableview_filter_plan_json": context.get("tableview_filter_plan_json"),
@@ -433,6 +453,8 @@ def main() -> None:
                 str(app_auth_json),
             ]
             ok2b = execute_step(2, "worksheets_create", "创建工作表", cmd2b)
+            if ok2b and not execution_dry_run:
+                context["worksheet_create_result_json"] = extract_saved_path(str(steps_report[-1]["result"].get("stdout", "")))
             if fail_fast and (not ok2b):
                 pass
     else:
@@ -481,6 +503,10 @@ def main() -> None:
         if ws["layout"].get("refresh_auth", False):
             cmd4.append("--refresh-auth")
         ok4 = execute_step(4, "layout", "规划并应用字段布局", cmd4)
+        if ok4 and not execution_dry_run:
+            layout_stdout = str(steps_report[-1]["result"].get("stdout", ""))
+            context["worksheet_layout_plan_json"] = extract_labeled_path(layout_stdout, "输出文件")
+            context["worksheet_layout_apply_result_json"] = extract_labeled_path(layout_stdout, "结果文件")
         if fail_fast and (not ok4):
             out = save_report()
             print(f"\n执行失败并终止，报告: {out}")

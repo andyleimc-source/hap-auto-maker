@@ -159,6 +159,43 @@ def load_local_apps() -> List[dict]:
     return apps
 
 
+def resolve_app_by_id(app_id: str, app_name: str = "") -> dict:
+    app_id = str(app_id).strip()
+    if not app_id:
+        raise ValueError("--app-id 不能为空")
+
+    apps = load_local_apps()
+    for app in apps:
+        if str(app.get("appId", "")).strip() == app_id:
+            if app_name:
+                app["appName"] = app_name
+            return app
+
+    auth_file = APP_AUTH_DIR / f"app_authorize_{app_id}.json"
+    if not auth_file.exists():
+        raise RuntimeError(f"未找到 appId={app_id} 的本地授权文件: {auth_file}")
+
+    data = read_json_safe(auth_file) or {}
+    rows = data.get("data")
+    if not isinstance(rows, list) or not rows:
+        raise RuntimeError(f"授权文件格式不正确: {auth_file}")
+
+    first = rows[0]
+    if not isinstance(first, dict):
+        raise RuntimeError(f"授权文件缺少有效 data 行: {auth_file}")
+
+    resolved_name = app_name.strip() or find_local_app_name(app_id)
+    return {
+        "index": 1,
+        "appId": app_id,
+        "appName": resolved_name,
+        "appKey": str(first.get("appKey", "")).strip(),
+        "sign": str(first.get("sign", "")).strip(),
+        "authFile": auth_file.name,
+        "authPath": str(auth_file.resolve()),
+    }
+
+
 def add_ws_view(ws_view_map: Dict[str, List[str]], ws_name: str, view_name: str) -> None:
     ws_name = ws_name.strip()
     view_name = view_name.strip()
@@ -331,6 +368,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="读取模板并填充 {} 占位符，输出到 task.txt（纯本地模式）")
     parser.add_argument("--template-file", default=str(DEFAULT_TEMPLATE_FILE), help="模板文件路径（默认 record/task_template.txt）")
     parser.add_argument("--task-file", default=str(DEFAULT_TASK_FILE), help="输出 task 文件路径（默认 record/task.txt）")
+    parser.add_argument("--app-id", default="", help="指定应用 appId，传入后跳过交互选择")
+    parser.add_argument("--app-name", default="", help="可选，指定应用名称，用于输出展示")
+    parser.add_argument("--metadata-json", default="", help="可选，写入本次替换的结构化元数据 JSON")
     parser.add_argument("--seed", type=int, default=None, help="随机种子（不传则每次随机）")
     parser.add_argument("--dry-run", action="store_true", help="仅预览替换结果，不写回文件")
     args = parser.parse_args()
@@ -362,11 +402,14 @@ def main() -> None:
         print(f"模板中未发现占位符，无需处理: {template_path}")
         return
 
-    apps = load_local_apps()
-    if not apps:
-        raise RuntimeError(f"未找到本地应用授权文件: {APP_AUTH_DIR}")
+    if str(args.app_id).strip():
+        app = resolve_app_by_id(args.app_id, args.app_name)
+    else:
+        apps = load_local_apps()
+        if not apps:
+            raise RuntimeError(f"未找到本地应用授权文件: {APP_AUTH_DIR}")
+        app = choose_app(apps)
 
-    app = choose_app(apps)
     app_id = str(app["appId"]).strip()
     app_name = str(app["appName"]).strip()
     print(f"\n已选择应用: {app_name} ({app_id})")
@@ -430,6 +473,38 @@ def main() -> None:
         updated = updated.replace(f"{{{k}}}", v)
 
     remained = extract_placeholders(updated)
+    metadata = {
+        "template_file": str(template_path),
+        "task_file": str(task_path),
+        "app": {
+            "appId": app_id,
+            "appName": app_name,
+        },
+        "stats": {
+            "worksheet_count": len(worksheet_names),
+            "view_count": len(view_names),
+            "replaced_count": len(replacement_map),
+            "remaining_placeholder_count": len(remained),
+        },
+        "replacement_map": replacement_map,
+        "remaining_placeholders": remained,
+        "last_selected_worksheet": last_selected_worksheet,
+        "worksheet_name_to_id": ws_id_map,
+        "worksheet_view_map": ws_view_map,
+        "generated_content": updated,
+        "dry_run": bool(args.dry_run),
+    }
+
+    metadata_json = str(args.metadata_json).strip()
+    if metadata_json:
+        metadata_path = Path(metadata_json).expanduser()
+        if not metadata_path.is_absolute():
+            metadata_path = (BASE_DIR / metadata_json).resolve()
+        else:
+            metadata_path = metadata_path.resolve()
+        metadata_path.parent.mkdir(parents=True, exist_ok=True)
+        metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"- 元数据: {metadata_path}")
 
     if args.dry_run:
         print("\n预览完成（dry-run，未写入文件）")
