@@ -154,6 +154,21 @@ python3 /Users/andy/Desktop/hap_auto/scripts/clear_app_records.py
 - 默认 `triggerWorkflow=false`，避免触发应用内工作流。
 - 结果文件输出到 `data/outputs/app_record_clear_results/`。
 
+### 3.5 任务占位符本地填充（task.txt）
+
+```bash
+python3 /Users/andy/Desktop/hap_auto/scripts/fill_task_placeholders.py --dry-run
+python3 /Users/andy/Desktop/hap_auto/scripts/fill_task_placeholders.py
+```
+
+说明：
+- 该脚本先让你选择应用，然后填充 `record/task.txt` 里的 `{...}` 占位符。
+- 数据源为本地历史产物，不请求 Web/MCP：主要读取 `data/outputs/` 与 `record/runs/` 下的 JSON/日志。
+- `--dry-run` 只预览替换映射，不写文件。
+- `{工作表名称N}`：从本地工作表名称池随机选择，且同一次运行内不重复。
+- `{视图名称N}`：来自“最近一次已选中的工作表”（例如 `{工作表名称2}`），且同一次运行内不重复。
+- 若候选数量不足以满足“不可重复”，脚本会直接报错提示。
+
 ## 4. 方法与标准 Pipeline（按场景拆分）
 
 方法约定：
