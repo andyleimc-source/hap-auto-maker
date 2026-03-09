@@ -42,6 +42,10 @@ def collect_delete_candidates(apply_result: dict) -> List[dict]:
         for item in unresolved:
             if not isinstance(item, dict):
                 continue
+            # Only required unresolved relations are destructive enough to justify
+            # deleting the source row. Optional relations can legitimately stay empty.
+            if not bool(item.get("required", False)):
+                continue
             row_id = str(item.get("rowId", "")).strip()
             if not row_id:
                 continue
@@ -66,6 +70,7 @@ def collect_delete_candidates(apply_result: dict) -> List[dict]:
                 "worksheetName": worksheet["worksheetName"],
                 "processTier": worksheet.get("processTier"),
                 "unresolvedCount": len(unresolved),
+                "requiredUnresolvedCount": len(row_map),
                 "deleteCandidates": list(row_map.values()),
             }
         )
@@ -113,6 +118,7 @@ def main() -> None:
             worksheetId=worksheet["worksheetId"],
             worksheetName=worksheet["worksheetName"],
             unresolvedCount=worksheet["unresolvedCount"],
+            requiredUnresolvedCount=worksheet["requiredUnresolvedCount"],
             deleteCandidateCount=len(candidates),
         )
         response = {"success": True, "dryRun": args.dry_run}
@@ -154,6 +160,7 @@ def main() -> None:
                 "worksheetName": worksheet["worksheetName"],
                 "processTier": worksheet["processTier"],
                 "unresolvedCount": worksheet["unresolvedCount"],
+                "requiredUnresolvedCount": worksheet["requiredUnresolvedCount"],
                 "deletePlannedCount": len(candidates),
                 "deleteSuccessCount": 0 if failed_count else len(candidates),
                 "deleteFailedCount": failed_count,
