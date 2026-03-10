@@ -274,6 +274,7 @@ python3 /Users/andy/Desktop/hap_auto/scripts/clear_app_records.py
 - `scripts/clear_app_records.py`：清空应用记录
 - `scripts/fill_task_placeholders.py`：生成 `record/task.txt`
 - `scripts/refresh_auth.py`：刷新网页登录态
+- `scripts/gemini/list_gemini_models.py`：查询并导出当前 API Key 可用的 Gemini 模型列表
 
 ### 10.2 造数排障常用脚本
 
@@ -346,6 +347,11 @@ python3 /Users/andy/Desktop/hap_auto/scripts/clear_app_records.py
 
 - 先检查 [config/credentials/gemini_auth.json](/Users/andy/Desktop/hap_auto/config/credentials/gemini_auth.json)
 - 再检查模型名是否可用，当前脚本里常见默认值是 `gemini-2.5-pro` 或 `gemini-2.5-flash`
+  - 可以使用以下命令查询并确认当前 API Key 下所有可用的模型：
+    ```bash
+    python3 /Users/andy/Desktop/hap_auto/scripts/gemini/list_gemini_models.py
+    ```
+    *(执行后将输出 JSON 到终端，并在 `data/outputs/gemini_models/` 生成结果文件)*
 - `record/` 录制链路还要额外检查 [record/.env](/Users/andy/Desktop/hap_auto/record/.env)
 
 ### 13.2 页面接口 401 / 403
