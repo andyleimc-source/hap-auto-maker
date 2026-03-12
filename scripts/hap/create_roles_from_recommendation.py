@@ -11,6 +11,8 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import requests
+
 CURRENT_DIR = Path(__file__).resolve().parent
 if str(CURRENT_DIR) not in sys.path:
     sys.path.insert(0, str(CURRENT_DIR))
@@ -19,7 +21,6 @@ from mock_data_common import (
     DEFAULT_BASE_URL,
     OUTPUT_ROOT,
     append_log,
-    build_headers,
     choose_app,
     discover_authorized_apps,
     ensure_dir,
@@ -27,7 +28,6 @@ from mock_data_common import (
     make_log_path,
     make_output_path,
     now_iso,
-    request_json,
     resolve_json_input,
     write_json,
 )
@@ -38,6 +38,29 @@ ROLE_CREATE_RESULT_LATEST = ROLE_CREATE_RESULT_DIR / "role_create_result_latest.
 
 GET_ROLES_ENDPOINT = "/v1/open/app/getRoles"
 CREATE_ROLE_ENDPOINT = "/v1/open/app/createRole"
+
+
+def request_open_app_json(method: str, url: str, params: dict, payload: Optional[dict] = None) -> dict:
+    resp = requests.request(
+        method=method,
+        url=url,
+        params=params,
+        json=payload,
+        timeout=30,
+        headers={
+            "Accept": "application/json, text/plain, */*",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        data = resp.json()
+    except Exception as exc:
+        raise RuntimeError(f"接口返回非 JSON: status={resp.status_code}, body={resp.text[:500]}") from exc
+    if not isinstance(data, dict):
+        raise RuntimeError(f"接口返回格式错误: {data}")
+    if not data.get("success"):
+        raise RuntimeError(f"接口调用失败: {data}")
+    return data
 
 
 def bool_or_default(value: Any, default: bool) -> bool:
@@ -74,9 +97,21 @@ def make_create_role_payload(role: dict) -> dict:
     }
 
 
-def fetch_existing_roles(base_url: str, headers: dict) -> List[dict]:
+def build_open_app_params(app: dict) -> dict:
+    params = {
+        "appKey": str(app.get("appKey", "")).strip(),
+        "sign": str(app.get("sign", "")).strip(),
+        "appId": str(app.get("appId", "")).strip(),
+    }
+    project_id = str(app.get("projectId", "")).strip()
+    if project_id:
+        params["projectId"] = project_id
+    return params
+
+
+def fetch_existing_roles(base_url: str, params: dict) -> List[dict]:
     url = base_url.rstrip("/") + GET_ROLES_ENDPOINT
-    data = request_json("GET", url, headers, payload=None)
+    data = request_open_app_json("GET", url, params=params, payload=None)
     rows = data.get("data", [])
     if not isinstance(rows, list):
         return []
@@ -128,8 +163,8 @@ def main() -> None:
     if not isinstance(roles, list) or not roles:
         raise ValueError(f"推荐角色为空: {plan_path}")
 
-    headers = build_headers(app["appKey"], app["sign"])
-    existing_roles = fetch_existing_roles(args.base_url, headers)
+    params = build_open_app_params(app)
+    existing_roles = fetch_existing_roles(args.base_url, params)
     append_log(log_path, "existing_roles_loaded", count=len(existing_roles))
 
     created: List[dict] = []
@@ -151,10 +186,11 @@ def main() -> None:
             continue
 
         payload = make_create_role_payload(role)
+        payload.update(params)
         url = args.base_url.rstrip("/") + CREATE_ROLE_ENDPOINT
         append_log(log_path, "role_create_start", index=idx, name=role_name, payload=payload)
         try:
-            data = request_json("POST", url, headers, payload=payload)
+            data = request_open_app_json("POST", url, params=params, payload=payload)
             role_data = data.get("data", {}) if isinstance(data.get("data"), dict) else {}
             role_id = str(role_data.get("roleId", "") or role_data.get("id", "")).strip()
             created.append({"index": idx, "name": role_name, "roleId": role_id, "response": role_data})
