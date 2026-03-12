@@ -104,6 +104,26 @@ venv/bin/pip install -r requirements.txt
 venv/bin/playwright install chromium
 ```
 
+### 5.1 GitHub 协作模式（密钥不入库）
+
+本仓库采用“代码入库、密钥本地配置”的方式：
+- 可以把仓库公开/共享到 GitHub
+- 同事只需克隆代码并在本地填写自己的密钥文件
+- 真实密钥文件已在 `.gitignore` 中忽略，不应提交
+
+同事首次克隆后可按以下步骤配置：
+
+```bash
+cd /Users/andy/Desktop/hap_auto
+cp config/credentials/gemini_auth.example.json config/credentials/gemini_auth.json
+cp config/credentials/organization_auth.example.json config/credentials/organization_auth.json
+cp config/credentials/auth_config.example.py config/credentials/auth_config.py
+cp config/credentials/login_credentials.example.py config/credentials/login_credentials.py
+cp record/.env.example record/.env
+```
+
+然后把上面 5 个目标文件中的占位值替换成自己的真实配置。
+
 ## 6. 必备本地配置
 
 运行前至少确认以下文件存在且可用：

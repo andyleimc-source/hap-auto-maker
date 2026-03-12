@@ -1,8 +1,24 @@
 .DS_Store
 __pycache__/
 *.pyc
-config/auth_config.py
-config/login_credentials.py
+# 本地敏感配置（不入库）
+config/credentials/auth_config.py
+config/credentials/login_credentials.py
+config/credentials/gemini_auth.json
+config/credentials/organization_auth.json
+record/.env
+
+# 环境变量文件
+.env
+.env.local
+.env.*.local
+
+# 通用敏感文件
+*.pem
+*.key
+*.p12
+*.pfx
+
 cache/
 
 # 运行产出物（无需入库）
