@@ -119,10 +119,9 @@ cp config/credentials/gemini_auth.example.json config/credentials/gemini_auth.js
 cp config/credentials/organization_auth.example.json config/credentials/organization_auth.json
 cp config/credentials/auth_config.example.py config/credentials/auth_config.py
 cp config/credentials/login_credentials.example.py config/credentials/login_credentials.py
-cp record/.env.example record/.env
 ```
 
-然后把上面 5 个目标文件中的占位值替换成自己的真实配置。
+然后把上面 4 个目标文件中的占位值替换成自己的真实配置。
 
 ## 6. 必备本地配置
 
@@ -131,19 +130,16 @@ cp record/.env.example record/.env
 - [config/credentials/organization_auth.json](/Users/andy/Desktop/hap_auto/config/credentials/organization_auth.json)
 - [config/credentials/auth_config.py](/Users/andy/Desktop/hap_auto/config/credentials/auth_config.py)
 - [config/credentials/login_credentials.py](/Users/andy/Desktop/hap_auto/config/credentials/login_credentials.py)
-- [record/.env](/Users/andy/Desktop/hap_auto/record/.env)
 
 作用说明：
 - `gemini_auth.json`：Gemini 规划、匹配、需求收集
 - `organization_auth.json`：HAP OpenAPI 调用
 - `auth_config.py`：网页接口 Cookie / Authorization
 - `login_credentials.py`：自动登录刷新网页认证
-- `record/.env`：`record/run_agent.py` 使用的 `GOOGLE_API_KEY`
 
 注意：
 - 这些都是本地敏感文件，不应提交
 - `auth_config.py` 中的 `COOKIE`、`AUTHORIZATION` 会过期
-- `record/` 和主仓库都可能各自依赖 Gemini Key，排查时要两边都确认
 
 ## 7. 认证刷新
 
@@ -187,25 +183,13 @@ python3 /Users/andy/Desktop/hap_auto/scripts/execute_requirements.py \
   --spec-json /Users/andy/Desktop/hap_auto/data/outputs/requirement_specs/requirement_spec_latest.json
 ```
 
-### 8.3 新应用：从策划直接录制视频
-
-```bash
-python3 /Users/andy/Desktop/hap_auto/scripts/run_app_to_video.py
-```
-
-当前这条链路会自动做：
-1. 需求对话与应用创建
-2. 生成 / 更新 `record/task.txt`
-3. 运行浏览器录制
-4. 把视频、GIF、任务文件、关键 JSON 归档到 `data/outputs/app_video_runs/`
-
-### 8.4 已有应用：一键造数
+### 8.3 已有应用：一键造数
 
 ```bash
 python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_mock_data.py
 ```
 
-### 8.5 已有应用：清空记录
+### 8.4 已有应用：清空记录
 
 ```bash
 python3 /Users/andy/Desktop/hap_auto/scripts/clear_app_records.py --dry-run
@@ -231,22 +215,7 @@ python3 /Users/andy/Desktop/hap_auto/scripts/clear_app_records.py
 8. 更新应用导航风格
 9. 对应用执行 mock data 流程
 
-### 9.2 一键录制链路
-
-入口：
-- [scripts/run_app_to_video.py](/Users/andy/Desktop/hap_auto/scripts/run_app_to_video.py)
-- [scripts/fill_task_placeholders.py](/Users/andy/Desktop/hap_auto/scripts/fill_task_placeholders.py)
-- [record/run_agent.py](/Users/andy/Desktop/hap_auto/record/run_agent.py)
-
-流程：
-1. 收集需求
-2. 创建应用并产出最新执行结果
-3. 从本地 JSON 和历史运行结果填充 `record/task_template.txt`
-4. 生成 `record/task.txt`
-5. 录制浏览器操作
-6. 归档摘要、日志、视频和 GIF
-
-### 9.3 造数与关系修复
+### 9.2 造数与关系修复
 
 入口：
 - [scripts/pipeline_mock_data.py](/Users/andy/Desktop/hap_auto/scripts/pipeline_mock_data.py)
@@ -265,7 +234,7 @@ python3 /Users/andy/Desktop/hap_auto/scripts/clear_app_records.py
 - 支持 `1-N` 的单选端字段
 - 不保证自动回填 `1-N` 的多选端字段
 
-### 9.4 录制子系统
+### 9.3 录制子系统（可选）
 
 入口：
 - [record/run_agent.py](/Users/andy/Desktop/hap_auto/record/run_agent.py)
