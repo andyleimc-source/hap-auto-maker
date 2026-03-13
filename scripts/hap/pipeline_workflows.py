@@ -66,6 +66,17 @@ def run_step_capture(cmd: List[str], title: str, log_path: Path) -> str:
     return proc.stdout
 
 
+def run_step_interactive(cmd: List[str], title: str, log_path: Path) -> None:
+    print(f"\n== {title} ==")
+    print("命令:", " ".join(cmd))
+    append_log(log_path, "step_start", title=title, cmd=cmd)
+    proc = subprocess.run(cmd, check=False)
+    if proc.returncode != 0:
+        append_log(log_path, "step_failed", title=title, cmd=cmd, returncode=proc.returncode)
+        raise RuntimeError(f"{title} 失败，退出码: {proc.returncode}")
+    append_log(log_path, "step_finished", title=title, cmd=cmd, returncode=proc.returncode)
+
+
 def print_plan_summary(plan_path: Path) -> None:
     try:
         plan = json.loads(plan_path.read_text(encoding="utf-8"))
@@ -146,8 +157,8 @@ def main() -> None:
                 step1_cmd.extend(["--app-id", args.app_id])
             if args.app_index:
                 step1_cmd.extend(["--app-index", str(args.app_index)])
-            schema_stdout = run_step_capture(step1_cmd, "Step 1/3 导出工作流 schema", pipeline_log)
-            schema_json = extract_result_json(schema_stdout) or str(schema_output)
+            run_step_interactive(step1_cmd, "Step 1/3 导出工作流 schema", pipeline_log)
+            schema_json = str(schema_output)
         else:
             append_log(pipeline_log, "step_skipped", title="Step 1/3 导出工作流 schema", reason="使用 --schema-json")
 

@@ -182,9 +182,10 @@ def build_prompt(schema: dict) -> str:
 6. 每个工作流至少 1 个节点，最多 2 个节点。
 7. nodeType=create_record 时，config 必须包含 targetWorksheetId、targetWorksheetName、fieldValues 数组。
 8. fieldValues 每项必须包含 fieldId、valueType。valueType=static 时填写 value；valueType=trigger_field 时填写 sourceFieldId。
-9. scheduled_trigger 没有触发记录，fieldValues 只能使用 static。
-10. 更新触发尽量选择 1-3 个 triggerFieldIds；新增触发和定时触发的 triggerFieldIds 必须为空数组。
-11. output 必须是合法 JSON。
+9. 如果目标字段是单选/多选，static 的 value 必须直接使用 schema 中该字段已有的原始选项名，不允许自造近义词、缩写或业务概括词。
+10. scheduled_trigger 没有触发记录，fieldValues 只能使用 static。
+11. 更新触发尽量选择 1-3 个 triggerFieldIds；新增触发和定时触发的 triggerFieldIds 必须为空数组。
+12. output 必须是合法 JSON。
 """.strip()
 
 

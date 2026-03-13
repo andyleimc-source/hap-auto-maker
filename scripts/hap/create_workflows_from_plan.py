@@ -219,6 +219,71 @@ def stringify_static_value(value: Any) -> str:
     return str(value)
 
 
+def normalize_select_value(control: dict, value: Any) -> str:
+    raw_options = control.get("options", []) or []
+    options = [item for item in raw_options if isinstance(item, dict)]
+    if not options:
+        return stringify_static_value(value)
+    text = stringify_static_value(value).strip()
+    if not text:
+        return ""
+    for option in options:
+        key = str(option.get("key", "")).strip()
+        if key and text == key:
+            return key
+    for option in options:
+        option_value = str(option.get("value", "")).strip()
+        key = str(option.get("key", "")).strip()
+        if option_value and text == option_value and key:
+            return key
+    if text.isdigit():
+        wanted_index = int(text)
+        for option in options:
+            try:
+                option_index = int(option.get("index", 0) or 0)
+            except Exception:
+                continue
+            key = str(option.get("key", "")).strip()
+            if option_index == wanted_index and key:
+                return key
+    substring_matches: list[str] = []
+    for option in options:
+        option_value = str(option.get("value", "")).strip()
+        key = str(option.get("key", "")).strip()
+        if not option_value or not key:
+            continue
+        if text in option_value or option_value in text:
+            substring_matches.append(key)
+    if len(substring_matches) == 1:
+        return substring_matches[0]
+    prefix_matches: list[str] = []
+    for option in options:
+        option_value = str(option.get("value", "")).strip()
+        key = str(option.get("key", "")).strip()
+        if not option_value or not key:
+            continue
+        common_prefix_len = 0
+        for left, right in zip(text, option_value):
+            if left != right:
+                break
+            common_prefix_len += 1
+        if common_prefix_len >= 1:
+            prefix_matches.append(key)
+    if len(prefix_matches) == 1:
+        return prefix_matches[0]
+    return text
+
+
+def normalize_static_field_value(control: dict, value: Any) -> str:
+    control_type = int(control.get("type", 0) or 0)
+    if control_type in {9, 10, 11}:
+        if control_type == 10 and isinstance(value, list):
+            items = [normalize_select_value(control, item) for item in value]
+            return json.dumps([item for item in items if item], ensure_ascii=False, separators=(",", ":"))
+        return normalize_select_value(control, value)
+    return stringify_static_value(value)
+
+
 def build_action_field_payload(
     field_value_item: dict,
     target_control_map: dict,
@@ -239,7 +304,7 @@ def build_action_field_payload(
             raise RuntimeError(f"sourceFieldId 不在可引用触发字段中: {source_field_id}")
         field_value = f"${trigger_node_id}-{source_field_id}$"
     elif value_type == "static":
-        field_value = stringify_static_value(field_value_item.get("value"))
+        field_value = normalize_static_field_value(control, field_value_item.get("value"))
     else:
         raise RuntimeError(f"暂不支持的 valueType: {value_type}")
 
@@ -252,6 +317,7 @@ def build_action_field_payload(
         "fieldValueId": "",
         "fieldValueName": "",
         "fieldValue": field_value,
+        "nodeAppId": "",
     }
 
 
@@ -270,13 +336,43 @@ def build_create_node_save_payload(
         for item in target_controls
         if isinstance(item, dict) and str(item.get("controlId", "")).strip()
     }
-    fields = [
-        build_action_field_payload(item, target_control_map, trigger_node_id, available_source_field_ids)
+    configured_items = [
+        item
         for item in config.get("fieldValues", []) or []
-        if isinstance(item, dict)
+        if isinstance(item, dict) and str(item.get("fieldId", "")).strip()
     ]
-    if not fields:
+    configured_payload_map = {
+        str(item.get("fieldId", "")).strip(): build_action_field_payload(
+            item,
+            target_control_map,
+            trigger_node_id,
+            available_source_field_ids,
+        )
+        for item in configured_items
+    }
+    if not configured_payload_map:
         raise RuntimeError("create_record 节点至少需要 1 个 fieldValues")
+    fields: List[dict] = []
+    for control in target_controls:
+        if not isinstance(control, dict):
+            continue
+        control_id = str(control.get("controlId", "")).strip()
+        if not control_id:
+            continue
+        payload = configured_payload_map.get(control_id)
+        if payload is None:
+            payload = {
+                "fieldId": control_id,
+                "type": control.get("type", 2),
+                "enumDefault": control.get("enumDefault", 0),
+                "nodeId": "",
+                "nodeName": "",
+                "fieldValueId": "",
+                "fieldValueName": "",
+                "fieldValue": "[]" if control_id == "ownerid" else "",
+                "nodeAppId": "",
+            }
+        fields.append(payload)
     return {
         "processId": process_id,
         "nodeId": node_id,
@@ -289,6 +385,20 @@ def build_create_node_save_payload(
         "fields": fields,
         "filters": [],
     }
+
+
+def collect_source_field_ids(source_nodes: List[dict]) -> set[str]:
+    result: set[str] = set()
+    for source_node in source_nodes:
+        if not isinstance(source_node, dict):
+            continue
+        for control in source_node.get("controls", []) or []:
+            if not isinstance(control, dict):
+                continue
+            control_id = str(control.get("controlId", "")).strip()
+            if control_id:
+                result.add(control_id)
+    return result
 
 
 def get_supported_reason(workflow: dict) -> str:
@@ -378,17 +488,11 @@ class WorkflowPrivateApiAdapter:
         )
         append_response_trace(responses_payload, "saveTriggerNode", trigger_resp)
         ensure_state_success(trigger_resp, "SaveTriggerNode")
-
-        source_nodes = fetch_available_source_nodes(process_id, start_node_id)
-        available_source_field_ids: set[str] = set()
-        for source_node in source_nodes:
-            if not isinstance(source_node, dict):
-                continue
-            for control in source_node.get("controls", []) or []:
-                if isinstance(control, dict):
-                    control_id = str(control.get("controlId", "")).strip()
-                    if control_id:
-                        available_source_field_ids.add(control_id)
+        trigger_control_ids = {
+            str(item.get("controlId", "")).strip()
+            for item in trigger_payload.get("controls", []) or []
+            if isinstance(item, dict) and str(item.get("controlId", "")).strip()
+        }
 
         previous_node_id = start_node_id
         for idx, node in enumerate(workflow.get("nodes", []) or [], start=1):
@@ -411,6 +515,9 @@ class WorkflowPrivateApiAdapter:
             action_node_id = str(add_flow_nodes[0].get("id", "")).strip()
             if not action_node_id:
                 raise RuntimeError(f"AddActionNode#{idx} 未返回节点 id: {add_node_resp}")
+
+            source_nodes = fetch_available_source_nodes(process_id, action_node_id)
+            available_source_field_ids = collect_source_field_ids(source_nodes) | trigger_control_ids
 
             save_node_payload = build_create_node_save_payload(
                 process_id=process_id,
