@@ -44,6 +44,282 @@ from workflow_common import (
 DEFAULT_MODEL = "gemini-2.5-pro"
 REQUIRED_KEYS = ["worksheet_create_trigger", "worksheet_update_trigger", "scheduled_trigger"]
 EXECUTABLE_NODE_TYPES = {"create_record"}
+SYSTEM_FIELD_IDS = {
+    "ctime",
+    "wfctime",
+    "wfcotime",
+    "wfdtime",
+    "utime",
+    "wfrtime",
+    "wfname",
+    "rowid",
+    "caid",
+    "wfftime",
+    "wfcaid",
+    "ownerid",
+    "uaid",
+    "wfstatus",
+    "wfcuaids",
+}
+SYSTEM_FIELD_NAMES = {
+    "创建时间",
+    "发起时间",
+    "审批完成时间",
+    "截止时间",
+    "最近修改时间",
+    "节点开始时间",
+    "流程名称",
+    "记录ID",
+    "创建人",
+    "剩余时间",
+    "发起人",
+    "拥有者",
+    "最近修改人",
+    "流程状态",
+    "节点负责人",
+}
+UNPLANNABLE_FIELD_TYPES = {"Relation", "Collaborator", "DateFormula", "Dropdown"}
+DESIRED_FIELD_COUNT = {
+    "worksheet_create_trigger": 8,
+    "worksheet_update_trigger": 7,
+    "scheduled_trigger": 6,
+}
+
+
+def get_worksheet_fields(schema: dict, worksheet_id: str) -> List[dict]:
+    worksheet = find_worksheet(schema, worksheet_id)
+    if not worksheet:
+        return []
+    fields = worksheet.get("fields", [])
+    return [item for item in fields if isinstance(item, dict)]
+
+
+def is_system_field(field: dict) -> bool:
+    field_id = str(field.get("fieldId", "")).strip()
+    field_name = str(field.get("fieldName", "")).strip()
+    return field_id in SYSTEM_FIELD_IDS or field_name in SYSTEM_FIELD_NAMES
+
+
+def is_plannable_target_field(field: dict) -> bool:
+    field_type = str(field.get("fieldType", "")).strip()
+    return not is_system_field(field) and field_type not in UNPLANNABLE_FIELD_TYPES
+
+
+def normalize_name(text: str) -> str:
+    return (
+        str(text or "")
+        .strip()
+        .replace("关联", "")
+        .replace("自动", "")
+        .replace("建议", "")
+        .replace("下次", "")
+        .replace("预计", "")
+        .replace("总额", "总金额")
+        .replace("应付", "")
+        .replace("实付", "")
+        .replace("金额", "金额")
+        .replace("日期", "时间")
+        .replace("编号", "单号")
+        .replace("单据号", "单号")
+    )
+
+
+def can_map_trigger_value(target_type: str, source_type: str) -> bool:
+    allowed_pairs = {
+        ("Text", "Text"),
+        ("Text", "Number"),
+        ("Number", "Number"),
+        ("Date", "Date"),
+        ("Date", "DateTime"),
+        ("DateTime", "Date"),
+        ("DateTime", "DateTime"),
+    }
+    return (target_type, source_type) in allowed_pairs
+
+
+def build_trigger_field_item(field_id: str, source_field_id: str) -> dict:
+    return {
+        "fieldId": field_id,
+        "valueType": "trigger_field",
+        "value": None,
+        "sourceFieldId": source_field_id,
+    }
+
+
+def build_static_field_item(field_id: str, value: Any) -> dict:
+    return {
+        "fieldId": field_id,
+        "valueType": "static",
+        "value": value,
+        "sourceFieldId": None,
+    }
+
+
+def find_source_field_by_keywords(source_fields: List[dict], keywords: List[str], field_types: set[str] | None = None) -> dict | None:
+    for field in source_fields:
+        field_name = str(field.get("fieldName", "")).strip()
+        field_type = str(field.get("fieldType", "")).strip()
+        if field_types and field_type not in field_types:
+            continue
+        if any(keyword and keyword in field_name for keyword in keywords):
+            return field
+    return None
+
+
+def find_same_name_source_field(target_field: dict, source_fields: List[dict]) -> dict | None:
+    target_name = normalize_name(str(target_field.get("fieldName", "")).strip())
+    target_type = str(target_field.get("fieldType", "")).strip()
+    for source_field in source_fields:
+        source_name = normalize_name(str(source_field.get("fieldName", "")).strip())
+        source_type = str(source_field.get("fieldType", "")).strip()
+        if target_name and source_name == target_name and can_map_trigger_value(target_type, source_type):
+            return source_field
+    return None
+
+
+def default_static_value_for_field(field: dict, workflow: dict, source_fields: List[dict]) -> Any:
+    field_name = str(field.get("fieldName", "")).strip()
+    field_type = str(field.get("fieldType", "")).strip()
+    source_worksheet_name = str(workflow.get("trigger", {}).get("worksheetName", "")).strip()
+
+    if field_type == "SingleSelect":
+        if "结算状态" in field_name:
+            return "待支付"
+        if "支付方式" in field_name:
+            return "现金"
+        if "结算类型" in field_name:
+            if "保养" in source_worksheet_name:
+                return "保养"
+            if "维修" in source_worksheet_name:
+                return "维修"
+            return "综合"
+        if "工单状态" in field_name:
+            return "待处理"
+        if "工单类型" in field_name:
+            return "常规维修"
+        if "保养套餐" in field_name:
+            return "基础保养套餐"
+    if field_type == "Number":
+        if any(keyword in field_name for keyword in ["金额", "费用", "费", "里程"]):
+            return "0"
+    if field_type in {"Text", "Date", "DateTime"} and "备注" in field_name:
+        note_source = find_source_field_by_keywords(source_fields, ["客户描述故障", "维修项目清单", "套餐外增项", "备注"], {"Text"})
+        if note_source:
+            return None
+        return str(workflow.get("summary", "")).strip() or "系统自动生成"
+    return None
+
+
+def suggest_field_value(field: dict, workflow: dict, source_fields: List[dict], allow_trigger_fields: bool = True) -> dict | None:
+    field_id = str(field.get("fieldId", "")).strip()
+    field_name = str(field.get("fieldName", "")).strip()
+    field_type = str(field.get("fieldType", "")).strip()
+
+    same_name_source = find_same_name_source_field(field, source_fields)
+    if allow_trigger_fields and same_name_source:
+        return build_trigger_field_item(field_id, str(same_name_source.get("fieldId", "")).strip())
+
+    if field_type == "Text":
+        if allow_trigger_fields and any(keyword in field_name for keyword in ["单号", "编号"]):
+            source_field = find_source_field_by_keywords(source_fields, ["工单号", "单号", "编号", "记录编号"], {"Text"})
+            if source_field:
+                return build_trigger_field_item(field_id, str(source_field.get("fieldId", "")).strip())
+        if allow_trigger_fields and "备注" in field_name:
+            source_field = find_source_field_by_keywords(source_fields, ["客户描述故障", "维修项目清单", "套餐外增项", "备注"], {"Text"})
+            if source_field:
+                return build_trigger_field_item(field_id, str(source_field.get("fieldId", "")).strip())
+
+    if field_type == "Number":
+        if allow_trigger_fields and ("应付" in field_name or "实付" in field_name or "总金额" in field_name or "总额" in field_name):
+            source_field = find_source_field_by_keywords(source_fields, ["总金额", "应付总额", "实付总额"], {"Number"})
+            if source_field:
+                return build_trigger_field_item(field_id, str(source_field.get("fieldId", "")).strip())
+        if allow_trigger_fields and "材料费" in field_name:
+            source_field = find_source_field_by_keywords(source_fields, ["材料费", "配件费"], {"Number"})
+            if source_field:
+                return build_trigger_field_item(field_id, str(source_field.get("fieldId", "")).strip())
+        if allow_trigger_fields and "工时费" in field_name:
+            source_field = find_source_field_by_keywords(source_fields, ["工时费"], {"Number"})
+            if source_field:
+                return build_trigger_field_item(field_id, str(source_field.get("fieldId", "")).strip())
+        static_value = default_static_value_for_field(field, workflow, source_fields)
+        if static_value is not None:
+            return build_static_field_item(field_id, static_value)
+
+    if allow_trigger_fields and field_type in {"Date", "DateTime"} and not any(keyword in field_name for keyword in ["下次", "建议"]):
+        source_field = find_source_field_by_keywords(source_fields, ["保养日期", "预计完工时间", "创建时间"], {"Date", "DateTime"})
+        if source_field:
+            return build_trigger_field_item(field_id, str(source_field.get("fieldId", "")).strip())
+
+    if field_type == "SingleSelect":
+        static_value = default_static_value_for_field(field, workflow, source_fields)
+        if static_value is not None:
+            return build_static_field_item(field_id, static_value)
+
+    if field_type == "Text":
+        static_value = default_static_value_for_field(field, workflow, source_fields)
+        if static_value is not None:
+            return build_static_field_item(field_id, static_value)
+
+    return None
+
+
+def repair_existing_field_value(item: dict, field: dict, workflow: dict) -> dict:
+    value_type = str(item.get("valueType", "")).strip()
+    if value_type != "static":
+        return item
+    field_name = str(field.get("fieldName", "")).strip()
+    field_type = str(field.get("fieldType", "")).strip()
+    current_value = str(item.get("value", "")).strip()
+    if field_type == "SingleSelect":
+        if "结算状态" in field_name and current_value == "待结算":
+            item["value"] = "待支付"
+        elif "支付方式" in field_name and current_value in {"", "待定", "未定"}:
+            item["value"] = "现金"
+        elif "保养套餐" in field_name and current_value in {"维修", "保养"}:
+            item["value"] = "基础保养套餐"
+        elif "工单类型" in field_name and current_value not in {"事故维修", "常规维修", "故障诊断", "索赔维修", "加装改装"}:
+            item["value"] = "常规维修"
+    return item
+
+
+def enrich_field_values(workflow: dict, schema: dict) -> None:
+    trigger = workflow.get("trigger", {}) if isinstance(workflow.get("trigger"), dict) else {}
+    source_fields = get_worksheet_fields(schema, str(trigger.get("worksheetId", "")).strip())
+    desired_count = DESIRED_FIELD_COUNT.get(str(workflow.get("key", "")).strip(), 6)
+    allow_trigger_fields = str(trigger.get("type", "")).strip() != "schedule"
+    for node in workflow.get("nodes", []) or []:
+        if not isinstance(node, dict) or str(node.get("nodeType", "")).strip() != "create_record":
+            continue
+        config = node.get("config", {}) if isinstance(node.get("config"), dict) else {}
+        target_fields = get_worksheet_fields(schema, str(config.get("targetWorksheetId", "")).strip())
+        field_map = {str(field.get("fieldId", "")).strip(): field for field in target_fields}
+        values = [item for item in config.get("fieldValues", []) or [] if isinstance(item, dict) and str(item.get("fieldId", "")).strip()]
+        normalized_values: List[dict] = []
+        seen_ids: set[str] = set()
+        for item in values:
+            field_id = str(item.get("fieldId", "")).strip()
+            field = field_map.get(field_id)
+            if not field:
+                continue
+            if not is_plannable_target_field(field):
+                continue
+            fixed_item = repair_existing_field_value(dict(item), field, workflow)
+            normalized_values.append(fixed_item)
+            seen_ids.add(field_id)
+        for field in target_fields:
+            field_id = str(field.get("fieldId", "")).strip()
+            if field_id in seen_ids or not is_plannable_target_field(field):
+                continue
+            suggested = suggest_field_value(field, workflow, source_fields, allow_trigger_fields=allow_trigger_fields)
+            if suggested is None:
+                continue
+            normalized_values.append(suggested)
+            seen_ids.add(field_id)
+            if len(normalized_values) >= desired_count:
+                break
+        config["fieldValues"] = normalized_values
+        node["config"] = config
 
 
 def build_prompt(schema: dict) -> str:
@@ -183,9 +459,10 @@ def build_prompt(schema: dict) -> str:
 7. nodeType=create_record 时，config 必须包含 targetWorksheetId、targetWorksheetName、fieldValues 数组。
 8. fieldValues 每项必须包含 fieldId、valueType。valueType=static 时填写 value；valueType=trigger_field 时填写 sourceFieldId。
 9. 如果目标字段是单选/多选，static 的 value 必须直接使用 schema 中该字段已有的原始选项名，不允许自造近义词、缩写或业务概括词。
-10. scheduled_trigger 没有触发记录，fieldValues 只能使用 static。
-11. 更新触发尽量选择 1-3 个 triggerFieldIds；新增触发和定时触发的 triggerFieldIds 必须为空数组。
-12. output 必须是合法 JSON。
+10. 每个 create_record 节点尽量填写 6-8 个高价值字段，优先填写 单号/编号、状态、类型、金额、费用、备注、日期时间 这些业务字段，不要只填 2-3 个字段。
+11. scheduled_trigger 没有触发记录，fieldValues 只能使用 static。
+12. 更新触发尽量选择 1-3 个 triggerFieldIds；新增触发和定时触发的 triggerFieldIds 必须为空数组。
+13. output 必须是合法 JSON。
 """.strip()
 
 
@@ -252,6 +529,8 @@ def validate_node(node: Any, schema: dict, workflow_key: str) -> List[str]:
 
 def normalize_workflow_plan(raw: dict, schema: dict) -> dict:
     raw_workflows = raw.get("workflows")
+    if not isinstance(raw_workflows, list) and all(key in raw for key in ("key", "trigger", "nodes")):
+        raw_workflows = [raw]
     if not isinstance(raw_workflows, list):
         raise ValueError("Gemini 返回缺少 workflows 数组")
     workflows: List[dict] = []
@@ -296,6 +575,8 @@ def normalize_workflow_plan(raw: dict, schema: dict) -> dict:
                 "enable": bool(workflow.get("enable", True)),
             }
         )
+    for workflow in workflows:
+        enrich_field_values(workflow, schema)
     return {
         "schemaVersion": "workflow_plan_v1",
         "createdAt": now_iso(),
