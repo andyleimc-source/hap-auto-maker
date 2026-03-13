@@ -126,7 +126,14 @@ def main() -> None:
     error = ""
 
     try:
-        if not schema_json:
+        if plan_json:
+            append_log(
+                pipeline_log,
+                "step_skipped",
+                title="Step 1/3 导出工作流 schema",
+                reason="使用 --plan-json，直接跳过 schema 导出",
+            )
+        elif not schema_json:
             step1_cmd = [
                 sys.executable,
                 str(SCRIPT_EXPORT),

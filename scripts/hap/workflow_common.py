@@ -49,9 +49,16 @@ WORKFLOW_DOC_DIR = Path(__file__).resolve().parents[2] / "data" / "api_docs" / "
 PRIVATE_WORKFLOW_API_MD = WORKFLOW_DOC_DIR / "private_workflow_api.md"
 PRIVATE_WORKFLOW_API_JSON = WORKFLOW_DOC_DIR / "private_workflow_api.json"
 
-START_PROCESS_URL = "https://www.mingdao.com/api/WorkFlow/SaveFlow"
-PUBLISH_PROCESS_URL = "https://www.mingdao.com/workflow/ajaxPublish"
-ENABLE_PROCESS_URL = "https://www.mingdao.com/workflow/ajaxUpdateStatus"
+PROCESS_ADD_URL = "https://api.mingdao.com/workflow/process/add"
+PROCESS_GET_URL = "https://api.mingdao.com/workflow/flowNode/get"
+PROCESS_UPDATE_URL = "https://api.mingdao.com/workflow/process/update"
+PROCESS_PUBLISH_URL = "https://api.mingdao.com/workflow/process/publish"
+APP_MANAGEMENT_ADD_WORKFLOW_URL = "https://www.mingdao.com/api/AppManagement/AddWorkflow"
+FLOW_NODE_ADD_URL = "https://api.mingdao.com/workflow/flowNode/add"
+FLOW_NODE_SAVE_URL = "https://api.mingdao.com/workflow/flowNode/saveNode"
+FLOW_NODE_DETAIL_URL = "https://api.mingdao.com/workflow/flowNode/getNodeDetail"
+FLOW_NODE_APP_TEMPLATE_CONTROLS_URL = "https://api.mingdao.com/workflow/flowNode/getAppTemplateControls"
+FLOW_NODE_APP_DTOS_URL = "https://api.mingdao.com/workflow/flowNode/getFlowNodeAppDtos"
 
 SUPPORTED_TRIGGER_EVENTS = {"create", "update", "schedule"}
 SUPPORTED_NODE_TYPES = {"update_fields", "create_record", "send_notice"}
@@ -328,11 +335,11 @@ def load_private_workflow_api_doc() -> Tuple[Optional[dict], Optional[Path]]:
     return None, None
 
 
-def build_private_headers(referer: str) -> dict:
+def build_private_headers(referer: str, content_type: str = "application/json") -> dict:
     account_id, authorization, cookie = load_web_auth(AUTH_CONFIG_PATH)
     return {
         "Accept": "application/json, text/plain, */*",
-        "Content-Type": "application/json",
+        "Content-Type": content_type,
         "AccountId": account_id,
         "accountid": account_id,
         "Authorization": authorization,
@@ -347,6 +354,16 @@ def post_private_json(url: str, payload: dict, referer: str) -> dict:
     import requests
 
     response = requests.post(url, headers=build_private_headers(referer), json=payload, timeout=30)
+    try:
+        return response.json()
+    except Exception as exc:
+        raise RuntimeError(f"私有接口返回非 JSON: status={response.status_code}, body={response.text[:500]}") from exc
+
+
+def get_private_json(url: str, referer: str, params: Optional[dict] = None) -> dict:
+    import requests
+
+    response = requests.get(url, headers=build_private_headers(referer), params=params or None, timeout=30)
     try:
         return response.json()
     except Exception as exc:
@@ -376,4 +393,3 @@ def build_schedule_defaults() -> dict:
 
 def make_workflow_output_path(output_dir: Path, prefix: str, app_id: str, suffix: str = "") -> Path:
     return make_output_path(output_dir, prefix, app_id, suffix=suffix)
-

@@ -1,7 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-根据 workflow_plan_v1 生成工作流私有接口请求，支持 dry-run，保留适配器骨架。
+根据 workflow_plan_v1 创建工作流。
+
+当前仅接入了来自 `record/action/创建工作流.har` 验证过的最小链路：
+- 工作表事件触发
+- 新增记录节点
+- 更新流程名称
+- 发布流程
+
+未覆盖的触发器 / 动作节点会被标记为 skipped，不会让整条 pipeline 直接失败。
 """
 
 from __future__ import annotations
@@ -11,21 +19,31 @@ import json
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
+from urllib.parse import urlencode
 
 CURRENT_DIR = Path(__file__).resolve().parent
 if str(CURRENT_DIR) not in sys.path:
     sys.path.insert(0, str(CURRENT_DIR))
 
+from mock_data_common import fetch_worksheet_controls, load_web_auth
 from workflow_common import (
-    ENABLE_PROCESS_URL,
+    APP_MANAGEMENT_ADD_WORKFLOW_URL,
+    FLOW_NODE_ADD_URL,
+    FLOW_NODE_APP_DTOS_URL,
+    FLOW_NODE_APP_TEMPLATE_CONTROLS_URL,
+    FLOW_NODE_DETAIL_URL,
+    FLOW_NODE_SAVE_URL,
     PRIVATE_WORKFLOW_API_JSON,
     PRIVATE_WORKFLOW_API_MD,
-    PUBLISH_PROCESS_URL,
-    START_PROCESS_URL,
+    PROCESS_ADD_URL,
+    PROCESS_GET_URL,
+    PROCESS_PUBLISH_URL,
+    PROCESS_UPDATE_URL,
     WORKFLOW_CREATE_DIR,
     append_log,
     ensure_state_success,
     ensure_workflow_dirs,
+    get_private_json,
     load_json,
     load_private_workflow_api_doc,
     make_workflow_log_path,
@@ -36,83 +54,272 @@ from workflow_common import (
     write_json_with_latest,
 )
 
+TRIGGER_EVENT_TO_ID = {
+    "create": "2",
+    "update": "3",
+}
 
-def build_trigger_payload(trigger: dict) -> dict:
-    payload = {
-        "type": str(trigger.get("type", "")).strip(),
-        "worksheetId": str(trigger.get("worksheetId", "")).strip(),
-        "worksheetName": str(trigger.get("worksheetName", "")).strip(),
-        "event": str(trigger.get("event", "")).strip(),
-        "triggerFieldIds": [
+SUPPORTED_TRIGGER_TYPES = {"worksheet"}
+SUPPORTED_NODE_TYPES = {"create_record"}
+DEFAULT_ICON_COLOR = "#1677ff"
+
+
+def build_process_add_payload(app: dict, workflow: dict) -> dict:
+    return {
+        "companyId": "",
+        "relationId": str(app.get("appId", "")).strip(),
+        "relationType": 2,
+        "startEventAppType": 1,
+        "name": str(workflow.get("name", "")).strip() or "未命名工作流",
+        "explain": str(workflow.get("summary", "")).strip(),
+    }
+
+
+def build_process_update_payload(company_id: str, process_id: str, workflow: dict) -> dict:
+    return {
+        "companyId": company_id,
+        "processId": process_id,
+        "name": str(workflow.get("name", "")).strip() or "未命名工作流",
+        "explain": str(workflow.get("summary", "")).strip(),
+        "iconColor": DEFAULT_ICON_COLOR,
+    }
+
+
+def append_request_trace(items: List[dict], name: str, url: str, payload: Any = None) -> None:
+    record: Dict[str, Any] = {"name": name, "url": url}
+    if payload is not None:
+        record["payload"] = payload
+    items.append(record)
+
+
+def append_response_trace(items: List[dict], name: str, response: dict) -> None:
+    items.append({"name": name, "response": response})
+
+
+def build_url_with_params(url: str, params: dict) -> str:
+    return f"{url}?{urlencode(params)}"
+
+
+def get_workflow_referer(process_id: str = "") -> str:
+    if process_id:
+        return f"https://www.mingdao.com/workflowedit/{process_id}"
+    return "https://www.mingdao.com/"
+
+
+def build_trigger_payload(process_id: str, start_node_id: str, workflow: dict) -> dict:
+    trigger = workflow.get("trigger", {}) if isinstance(workflow.get("trigger"), dict) else {}
+    event = str(trigger.get("event", "")).strip()
+    trigger_id = TRIGGER_EVENT_TO_ID.get(event, "")
+    if not trigger_id:
+        raise RuntimeError(f"当前未支持的 trigger.event: {event}")
+    worksheet_id = str(trigger.get("worksheetId", "")).strip()
+    controls_payload = fetch_worksheet_controls(worksheet_id, load_web_auth()).get("controls", [])
+    return {
+        "appId": worksheet_id,
+        "appType": 1,
+        "assignFieldIds": [
             str(item).strip()
             for item in trigger.get("triggerFieldIds", []) or []
             if str(item).strip()
         ],
-        "conditions": trigger.get("conditions", []) or [],
-    }
-    if isinstance(trigger.get("schedule"), dict):
-        payload["schedule"] = dict(trigger["schedule"])
-    return payload
-
-
-def build_node_payloads(nodes: List[dict]) -> List[dict]:
-    payloads: List[dict] = []
-    for index, node in enumerate(nodes, start=1):
-        payloads.append(
-            {
-                "sort": index,
-                "nodeType": str(node.get("nodeType", "")).strip(),
-                "name": str(node.get("name", "")).strip(),
-                "config": node.get("config", {}) if isinstance(node.get("config"), dict) else {},
-            }
-        )
-    return payloads
-
-
-def build_draft_payload(app: dict, workflow: dict) -> dict:
-    return {
-        "schemaVersion": "workflow_private_request_draft_v1",
-        "appId": str(app.get("appId", "")).strip(),
-        "appName": str(app.get("appName", "")).strip(),
-        "name": str(workflow.get("name", "")).strip(),
-        "summary": str(workflow.get("summary", "")).strip(),
-        "key": str(workflow.get("key", "")).strip(),
-        "trigger": build_trigger_payload(workflow.get("trigger", {}) if isinstance(workflow.get("trigger"), dict) else {}),
-        "nodes": build_node_payloads(workflow.get("nodes", []) if isinstance(workflow.get("nodes"), list) else []),
-        "publish": bool(workflow.get("publish", True)),
-        "enable": bool(workflow.get("enable", True)),
+        "processId": process_id,
+        "nodeId": start_node_id,
+        "flowNodeType": 0,
+        "operateCondition": trigger.get("conditions", []) or [],
+        "triggerId": trigger_id,
+        "name": "工作表事件触发",
+        "controls": controls_payload,
     }
 
 
-def build_publish_payload(process_id: str, workflow: dict) -> dict:
+def build_create_node_add_payload(process_id: str, previous_node_id: str, node: dict) -> dict:
     return {
         "processId": process_id,
-        "publish": bool(workflow.get("publish", True)),
-        "key": str(workflow.get("key", "")).strip(),
+        "actionId": "1",
+        "appType": 1,
+        "name": str(node.get("name", "")).strip() or "新增记录",
+        "prveId": previous_node_id,
+        "typeId": 6,
     }
 
 
-def build_enable_payload(process_id: str, workflow: dict) -> dict:
+def fetch_process_graph(process_id: str, requests_payload: List[dict], responses_payload: List[dict]) -> dict:
+    params = {"processId": process_id, "count": 200}
+    url = build_url_with_params(PROCESS_GET_URL, params)
+    append_request_trace(requests_payload, "getProcessGraph", url)
+    resp = get_private_json(PROCESS_GET_URL, referer=get_workflow_referer(process_id), params=params)
+    append_response_trace(responses_payload, "getProcessGraph", resp)
+    ensure_state_success(resp, "GetProcessGraph")
+    data = resp.get("data", {}) if isinstance(resp.get("data"), dict) else {}
+    if not data:
+        raise RuntimeError(f"GetProcessGraph 未返回 data: {resp}")
+    return data
+
+
+def fetch_node_detail(process_id: str, node_id: str, flow_node_type: int, worksheet_id: str) -> dict:
+    params = {
+        "processId": process_id,
+        "nodeId": node_id,
+        "flowNodeType": flow_node_type,
+        "appId": worksheet_id,
+        "instanceId": "",
+    }
+    return get_private_json(FLOW_NODE_DETAIL_URL, referer=get_workflow_referer(process_id), params=params)
+
+
+def fetch_target_controls(process_id: str, node_id: str, target_worksheet_id: str) -> List[dict]:
+    params = {
+        "processId": process_id,
+        "nodeId": node_id,
+        "selectNodeId": "",
+        "appId": target_worksheet_id,
+        "appType": 1,
+    }
+    resp = get_private_json(
+        FLOW_NODE_APP_TEMPLATE_CONTROLS_URL,
+        referer=get_workflow_referer(process_id),
+        params=params,
+    )
+    ensure_state_success(resp, "GetAppTemplateControls")
+    data = resp.get("data", [])
+    if not isinstance(data, list):
+        raise RuntimeError(f"GetAppTemplateControls 返回格式错误: {resp}")
+    return data
+
+
+def fetch_available_source_nodes(process_id: str, node_id: str) -> List[dict]:
+    params = {
+        "nodeId": node_id,
+        "processId": process_id,
+        "sourceAppId": "",
+        "type": 2,
+        "enumDefault": 0,
+        "selectNodeId": "",
+        "dataSource": "",
+        "current": "false",
+        "filterType": 0,
+    }
+    resp = get_private_json(
+        FLOW_NODE_APP_DTOS_URL,
+        referer=get_workflow_referer(process_id),
+        params=params,
+    )
+    ensure_state_success(resp, "GetFlowNodeAppDtos")
+    data = resp.get("data", [])
+    if not isinstance(data, list):
+        raise RuntimeError(f"GetFlowNodeAppDtos 返回格式错误: {resp}")
+    return data
+
+
+def stringify_static_value(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    return str(value)
+
+
+def build_action_field_payload(
+    field_value_item: dict,
+    target_control_map: dict,
+    trigger_node_id: str,
+    available_source_field_ids: set[str],
+) -> dict:
+    field_id = str(field_value_item.get("fieldId", "")).strip()
+    control = target_control_map.get(field_id)
+    if not control:
+        raise RuntimeError(f"目标字段不存在于目标工作表控件中: fieldId={field_id}")
+
+    value_type = str(field_value_item.get("valueType", "")).strip()
+    if value_type == "trigger_field":
+        source_field_id = str(field_value_item.get("sourceFieldId", "")).strip()
+        if not source_field_id:
+            raise RuntimeError(f"fieldId={field_id} 缺少 sourceFieldId")
+        if source_field_id not in available_source_field_ids:
+            raise RuntimeError(f"sourceFieldId 不在可引用触发字段中: {source_field_id}")
+        field_value = f"${trigger_node_id}-{source_field_id}$"
+    elif value_type == "static":
+        field_value = stringify_static_value(field_value_item.get("value"))
+    else:
+        raise RuntimeError(f"暂不支持的 valueType: {value_type}")
+
+    return {
+        "fieldId": field_id,
+        "type": control.get("type", 2),
+        "enumDefault": control.get("enumDefault", 0),
+        "nodeId": "",
+        "nodeName": "",
+        "fieldValueId": "",
+        "fieldValueName": "",
+        "fieldValue": field_value,
+    }
+
+
+def build_create_node_save_payload(
+    process_id: str,
+    node_id: str,
+    node: dict,
+    trigger_node_id: str,
+    available_source_field_ids: set[str],
+) -> dict:
+    config = node.get("config", {}) if isinstance(node.get("config"), dict) else {}
+    target_worksheet_id = str(config.get("targetWorksheetId", "")).strip()
+    target_controls = fetch_target_controls(process_id, node_id, target_worksheet_id)
+    target_control_map = {
+        str(item.get("controlId", "")).strip(): item
+        for item in target_controls
+        if isinstance(item, dict) and str(item.get("controlId", "")).strip()
+    }
+    fields = [
+        build_action_field_payload(item, target_control_map, trigger_node_id, available_source_field_ids)
+        for item in config.get("fieldValues", []) or []
+        if isinstance(item, dict)
+    ]
+    if not fields:
+        raise RuntimeError("create_record 节点至少需要 1 个 fieldValues")
     return {
         "processId": process_id,
-        "status": 1 if bool(workflow.get("enable", True)) else 0,
-        "key": str(workflow.get("key", "")).strip(),
+        "nodeId": node_id,
+        "flowNodeType": 6,
+        "actionId": "1",
+        "name": str(node.get("name", "")).strip() or "新增记录",
+        "selectNodeId": "",
+        "appId": target_worksheet_id,
+        "appType": 1,
+        "fields": fields,
+        "filters": [],
     }
 
 
-def get_referer(app_id: str, worksheet_id: str = "") -> str:
-    if worksheet_id:
-        return f"https://www.mingdao.com/app/{app_id}/{worksheet_id}"
-    return f"https://www.mingdao.com/app/{app_id}"
+def get_supported_reason(workflow: dict) -> str:
+    trigger = workflow.get("trigger", {}) if isinstance(workflow.get("trigger"), dict) else {}
+    trigger_type = str(trigger.get("type", "")).strip()
+    if trigger_type not in SUPPORTED_TRIGGER_TYPES:
+        return f"当前 HAR 仅覆盖 worksheet 触发，暂不支持 {trigger_type or 'unknown'}"
+    event = str(trigger.get("event", "")).strip()
+    if event not in TRIGGER_EVENT_TO_ID:
+        return f"当前 HAR 仅接入 create/update 触发，暂不支持 {event or 'unknown'}"
+    nodes = workflow.get("nodes", []) if isinstance(workflow.get("nodes"), list) else []
+    for node in nodes:
+        node_type = str(node.get("nodeType", "")).strip()
+        if node_type not in SUPPORTED_NODE_TYPES:
+            return f"当前 HAR 仅覆盖 create_record 动作节点，暂不支持 {node_type or 'unknown'}"
+    return ""
 
 
 class WorkflowPrivateApiAdapter:
     def __init__(self, config: dict | None):
         self.config = config or {}
         self.enabled = bool(self.config.get("enabled", False))
-        self.save_url = str(self.config.get("saveFlowUrl", "")).strip() or START_PROCESS_URL
-        self.publish_url = str(self.config.get("publishUrl", "")).strip() or PUBLISH_PROCESS_URL
-        self.enable_url = str(self.config.get("enableUrl", "")).strip() or ENABLE_PROCESS_URL
+        self.process_add_url = str(self.config.get("processAddUrl", "")).strip() or PROCESS_ADD_URL
+        self.process_get_url = str(self.config.get("processGetUrl", "")).strip() or PROCESS_GET_URL
+        self.process_update_url = str(self.config.get("processUpdateUrl", "")).strip() or PROCESS_UPDATE_URL
+        self.process_publish_url = str(self.config.get("processPublishUrl", "")).strip() or PROCESS_PUBLISH_URL
+        self.app_management_add_workflow_url = (
+            str(self.config.get("appManagementAddWorkflowUrl", "")).strip() or APP_MANAGEMENT_ADD_WORKFLOW_URL
+        )
+        self.flow_node_add_url = str(self.config.get("flowNodeAddUrl", "")).strip() or FLOW_NODE_ADD_URL
+        self.flow_node_save_url = str(self.config.get("flowNodeSaveUrl", "")).strip() or FLOW_NODE_SAVE_URL
 
     def ensure_available(self) -> None:
         if self.enabled:
@@ -120,42 +327,142 @@ class WorkflowPrivateApiAdapter:
         hint = PRIVATE_WORKFLOW_API_JSON if PRIVATE_WORKFLOW_API_JSON.exists() else PRIVATE_WORKFLOW_API_MD
         raise RuntimeError(
             "当前未配置可执行的工作流私有接口适配器。"
-            f"请补充 {hint}，至少提供 enabled=true 及接口 URL，再执行非 dry-run 创建。"
+            f"请补充 {hint}，至少提供 enabled=true，再执行非 dry-run 创建。"
         )
 
     def create_workflow(self, app: dict, workflow: dict) -> Tuple[List[dict], List[dict], Dict[str, str]]:
         self.ensure_available()
-        app_id = str(app.get("appId", "")).strip()
-        trigger = workflow.get("trigger", {}) if isinstance(workflow.get("trigger"), dict) else {}
-        referer = get_referer(app_id, str(trigger.get("worksheetId", "")).strip())
+        requests_payload: List[dict] = []
+        responses_payload: List[dict] = []
 
-        draft_payload = build_draft_payload(app, workflow)
-        save_resp = post_private_json(self.save_url, draft_payload, referer=referer)
-        ensure_state_success(save_resp, "SaveFlow")
-        save_data = save_resp.get("data", {}) if isinstance(save_resp.get("data"), dict) else {}
-        process_id = str(save_data.get("processId", "") or save_resp.get("processId", "")).strip()
-        version_id = str(save_data.get("versionId", "") or save_resp.get("versionId", "")).strip()
+        process_add_payload = build_process_add_payload(app, workflow)
+        append_request_trace(requests_payload, "processAdd", self.process_add_url, process_add_payload)
+        process_add_resp = post_private_json(self.process_add_url, process_add_payload, referer=get_workflow_referer())
+        append_response_trace(responses_payload, "processAdd", process_add_resp)
+        ensure_state_success(process_add_resp, "ProcessAdd")
+        process_data = process_add_resp.get("data", {}) if isinstance(process_add_resp.get("data"), dict) else {}
+        process_id = str(process_data.get("id", "")).strip()
+        company_id = str(process_data.get("companyId", "")).strip()
         if not process_id:
-            raise RuntimeError(f"SaveFlow 未返回 processId: {save_resp}")
+            raise RuntimeError(f"ProcessAdd 未返回 processId: {process_add_resp}")
 
-        requests_payload = [{"name": "saveFlow", "url": self.save_url, "payload": draft_payload}]
-        responses_payload = [{"name": "saveFlow", "response": save_resp}]
+        add_workflow_payload = {
+            "projectId": company_id,
+            "name": str(workflow.get("name", "")).strip() or "未命名工作流",
+        }
+        append_request_trace(
+            requests_payload,
+            "appManagementAddWorkflow",
+            self.app_management_add_workflow_url,
+            add_workflow_payload,
+        )
+        add_workflow_resp = post_private_json(
+            self.app_management_add_workflow_url,
+            add_workflow_payload,
+            referer=get_workflow_referer(process_id),
+        )
+        append_response_trace(responses_payload, "appManagementAddWorkflow", add_workflow_resp)
 
+        graph = fetch_process_graph(process_id, requests_payload, responses_payload)
+        start_node_id = str(graph.get("startEventId", "")).strip()
+        if not start_node_id:
+            raise RuntimeError(f"GetProcessGraph 未返回 startEventId: {graph}")
+
+        trigger = workflow.get("trigger", {}) if isinstance(workflow.get("trigger"), dict) else {}
+        trigger_payload = build_trigger_payload(process_id, start_node_id, workflow)
+        append_request_trace(requests_payload, "saveTriggerNode", self.flow_node_save_url, trigger_payload)
+        trigger_resp = post_private_json(
+            self.flow_node_save_url,
+            trigger_payload,
+            referer=get_workflow_referer(process_id),
+        )
+        append_response_trace(responses_payload, "saveTriggerNode", trigger_resp)
+        ensure_state_success(trigger_resp, "SaveTriggerNode")
+
+        source_nodes = fetch_available_source_nodes(process_id, start_node_id)
+        available_source_field_ids: set[str] = set()
+        for source_node in source_nodes:
+            if not isinstance(source_node, dict):
+                continue
+            for control in source_node.get("controls", []) or []:
+                if isinstance(control, dict):
+                    control_id = str(control.get("controlId", "")).strip()
+                    if control_id:
+                        available_source_field_ids.add(control_id)
+
+        previous_node_id = start_node_id
+        for idx, node in enumerate(workflow.get("nodes", []) or [], start=1):
+            add_node_payload = build_create_node_add_payload(process_id, previous_node_id, node)
+            append_request_trace(requests_payload, f"addActionNode#{idx}", self.flow_node_add_url, add_node_payload)
+            add_node_resp = post_private_json(
+                self.flow_node_add_url,
+                add_node_payload,
+                referer=get_workflow_referer(process_id),
+            )
+            append_response_trace(responses_payload, f"addActionNode#{idx}", add_node_resp)
+            ensure_state_success(add_node_resp, f"AddActionNode#{idx}")
+            add_flow_nodes = (
+                add_node_resp.get("data", {}).get("addFlowNodes", [])
+                if isinstance(add_node_resp.get("data"), dict)
+                else []
+            )
+            if not isinstance(add_flow_nodes, list) or not add_flow_nodes:
+                raise RuntimeError(f"AddActionNode#{idx} 未返回 addFlowNodes: {add_node_resp}")
+            action_node_id = str(add_flow_nodes[0].get("id", "")).strip()
+            if not action_node_id:
+                raise RuntimeError(f"AddActionNode#{idx} 未返回节点 id: {add_node_resp}")
+
+            save_node_payload = build_create_node_save_payload(
+                process_id=process_id,
+                node_id=action_node_id,
+                node=node,
+                trigger_node_id=start_node_id,
+                available_source_field_ids=available_source_field_ids,
+            )
+            append_request_trace(requests_payload, f"saveActionNode#{idx}", self.flow_node_save_url, save_node_payload)
+            save_node_resp = post_private_json(
+                self.flow_node_save_url,
+                save_node_payload,
+                referer=get_workflow_referer(process_id),
+            )
+            append_response_trace(responses_payload, f"saveActionNode#{idx}", save_node_resp)
+            ensure_state_success(save_node_resp, f"SaveActionNode#{idx}")
+            previous_node_id = action_node_id
+
+        process_update_payload = build_process_update_payload(company_id, process_id, workflow)
+        append_request_trace(requests_payload, "processUpdate", self.process_update_url, process_update_payload)
+        process_update_resp = post_private_json(
+            self.process_update_url,
+            process_update_payload,
+            referer=get_workflow_referer(process_id),
+        )
+        append_response_trace(responses_payload, "processUpdate", process_update_resp)
+        ensure_state_success(process_update_resp, "ProcessUpdate")
+
+        published_process_id = ""
         if bool(workflow.get("publish", True)):
-            publish_payload = build_publish_payload(process_id, workflow)
-            publish_resp = post_private_json(self.publish_url, publish_payload, referer=referer)
-            ensure_state_success(publish_resp, "PublishFlow")
-            requests_payload.append({"name": "publish", "url": self.publish_url, "payload": publish_payload})
-            responses_payload.append({"name": "publish", "response": publish_resp})
+            publish_params = {"isPublish": "true", "processId": process_id}
+            publish_url = build_url_with_params(self.process_publish_url, publish_params)
+            append_request_trace(requests_payload, "processPublish", publish_url)
+            publish_resp = get_private_json(
+                self.process_publish_url,
+                referer=get_workflow_referer(process_id),
+                params=publish_params,
+            )
+            append_response_trace(responses_payload, "processPublish", publish_resp)
+            ensure_state_success(publish_resp, "ProcessPublish")
+            publish_data = publish_resp.get("data", {}) if isinstance(publish_resp.get("data"), dict) else {}
+            process_info = publish_data.get("process", {}) if isinstance(publish_data.get("process"), dict) else {}
+            published_process_id = str(process_info.get("id", "")).strip()
 
-        if bool(workflow.get("enable", True)):
-            enable_payload = build_enable_payload(process_id, workflow)
-            enable_resp = post_private_json(self.enable_url, enable_payload, referer=referer)
-            ensure_state_success(enable_resp, "EnableFlow")
-            requests_payload.append({"name": "enable", "url": self.enable_url, "payload": enable_payload})
-            responses_payload.append({"name": "enable", "response": enable_resp})
-
-        return requests_payload, responses_payload, {"processId": process_id, "versionId": version_id}
+        return (
+            requests_payload,
+            responses_payload,
+            {
+                "processId": process_id,
+                "publishedProcessId": published_process_id,
+            },
+        )
 
 
 def main() -> None:
@@ -180,6 +487,7 @@ def main() -> None:
     results: List[dict] = []
     ok_count = 0
     fail_count = 0
+    skipped_count = 0
 
     for index, workflow in enumerate(plan.get("workflows", []) or [], start=1):
         workflow_key = str(workflow.get("key", "")).strip()
@@ -190,26 +498,90 @@ def main() -> None:
             "workflowKey": workflow_key,
             "workflowName": workflow_name,
             "ok": False,
-            "remoteIds": {"processId": "", "versionId": ""},
+            "skipped": False,
+            "remoteIds": {"processId": "", "publishedProcessId": ""},
             "requests": [],
             "responses": [],
             "error": "",
         }
         try:
-            draft_payload = build_draft_payload(app, workflow)
-            if args.dry_run:
-                dry_run_requests = [{"name": "saveFlow", "url": adapter.save_url, "payload": draft_payload}]
-                if bool(workflow.get("publish", True)):
-                    dry_run_requests.append(
-                        {"name": "publish", "url": adapter.publish_url, "payload": build_publish_payload("DRY_RUN_PROCESS_ID", workflow)}
+            unsupported_reason = get_supported_reason(workflow)
+            if unsupported_reason:
+                item_result["skipped"] = True
+                item_result["error"] = unsupported_reason
+                skipped_count += 1
+                append_log(
+                    log_path,
+                    "workflow_skipped",
+                    index=index,
+                    workflowKey=workflow_key,
+                    reason=unsupported_reason,
+                )
+            elif args.dry_run:
+                draft_requests = [
+                    {
+                        "name": "processAdd",
+                        "url": adapter.process_add_url,
+                        "payload": build_process_add_payload(app, workflow),
+                    },
+                    {
+                        "name": "saveTriggerNode",
+                        "url": adapter.flow_node_save_url,
+                        "payload": {
+                            "processId": "DRY_RUN_PROCESS_ID",
+                            "nodeId": "DRY_RUN_START_NODE_ID",
+                            "flowNodeType": 0,
+                            "appId": workflow.get("trigger", {}).get("worksheetId", ""),
+                            "triggerId": TRIGGER_EVENT_TO_ID.get(
+                                str(workflow.get("trigger", {}).get("event", "")).strip(),
+                                "",
+                            ),
+                            "assignFieldIds": workflow.get("trigger", {}).get("triggerFieldIds", []),
+                            "operateCondition": workflow.get("trigger", {}).get("conditions", []),
+                        },
+                    },
+                    {
+                        "name": "processUpdate",
+                        "url": adapter.process_update_url,
+                        "payload": build_process_update_payload("DRY_RUN_COMPANY_ID", "DRY_RUN_PROCESS_ID", workflow),
+                    },
+                ]
+                for node_index, node in enumerate(workflow.get("nodes", []) or [], start=1):
+                    draft_requests.append(
+                        {
+                            "name": f"addActionNode#{node_index}",
+                            "url": adapter.flow_node_add_url,
+                            "payload": build_create_node_add_payload("DRY_RUN_PROCESS_ID", "PREVIOUS_NODE_ID", node),
+                        }
                     )
-                if bool(workflow.get("enable", True)):
-                    dry_run_requests.append(
-                        {"name": "enable", "url": adapter.enable_url, "payload": build_enable_payload("DRY_RUN_PROCESS_ID", workflow)}
+                    draft_requests.append(
+                        {
+                            "name": f"saveActionNode#{node_index}",
+                            "url": adapter.flow_node_save_url,
+                            "payload": {
+                                "processId": "DRY_RUN_PROCESS_ID",
+                                "nodeId": f"DRY_RUN_NODE_{node_index}",
+                                "flowNodeType": 6,
+                                "actionId": "1",
+                                "appId": node.get("config", {}).get("targetWorksheetId", ""),
+                                "appType": 1,
+                                "fields": node.get("config", {}).get("fieldValues", []),
+                                "filters": [],
+                            },
+                        }
+                    )
+                if bool(workflow.get("publish", True)):
+                    draft_requests.append(
+                        {
+                            "name": "processPublish",
+                            "url": build_url_with_params(
+                                adapter.process_publish_url,
+                                {"isPublish": "true", "processId": "DRY_RUN_PROCESS_ID"},
+                            ),
+                        }
                     )
                 item_result["ok"] = True
-                item_result["requests"] = dry_run_requests
-                item_result["responses"] = []
+                item_result["requests"] = draft_requests
                 ok_count += 1
                 append_log(log_path, "workflow_finished", index=index, workflowKey=workflow_key, dryRun=True)
             else:
@@ -225,17 +597,16 @@ def main() -> None:
                     index=index,
                     workflowKey=workflow_key,
                     processId=remote_ids.get("processId", ""),
-                    versionId=remote_ids.get("versionId", ""),
+                    publishedProcessId=remote_ids.get("publishedProcessId", ""),
                 )
         except Exception as exc:
             item_result["error"] = str(exc)
-            item_result["requests"] = item_result["requests"] or [{"name": "saveFlow", "url": adapter.save_url, "payload": build_draft_payload(app, workflow)}]
             fail_count += 1
             append_log(log_path, "workflow_failed", index=index, workflowKey=workflow_key, error=str(exc))
         results.append(item_result)
 
     result = {
-        "schemaVersion": "workflow_create_result_v1",
+        "schemaVersion": "workflow_create_result_v2",
         "createdAt": now_iso(),
         "sourcePlanJson": str(plan_path),
         "app": app,
@@ -243,15 +614,19 @@ def main() -> None:
         "adapter": {
             "enabled": bool(adapter.enabled),
             "configPath": str(private_api_path) if private_api_path else "",
-            "saveFlowUrl": adapter.save_url,
-            "publishUrl": adapter.publish_url,
-            "enableUrl": adapter.enable_url,
+            "processAddUrl": adapter.process_add_url,
+            "processGetUrl": adapter.process_get_url,
+            "processUpdateUrl": adapter.process_update_url,
+            "processPublishUrl": adapter.process_publish_url,
+            "flowNodeAddUrl": adapter.flow_node_add_url,
+            "flowNodeSaveUrl": adapter.flow_node_save_url,
         },
         "results": results,
         "summary": {
             "total": len(results),
             "success": ok_count,
             "failed": fail_count,
+            "skipped": skipped_count,
         },
         "logFile": str(log_path),
     }
@@ -261,12 +636,20 @@ def main() -> None:
     else:
         output_path = make_workflow_output_path(WORKFLOW_CREATE_DIR, "workflow_create_result", app_id)
     write_json_with_latest(WORKFLOW_CREATE_DIR, output_path, "workflow_create_result_latest.json", result)
-    append_log(log_path, "finished", output=str(output_path), successCount=ok_count, failedCount=fail_count)
+    append_log(
+        log_path,
+        "finished",
+        output=str(output_path),
+        successCount=ok_count,
+        failedCount=fail_count,
+        skippedCount=skipped_count,
+    )
 
     print("工作流创建阶段完成")
     print(f"- 应用: {app_name} ({app_id})")
     print(f"- dry-run: {bool(args.dry_run)}")
     print(f"- 成功: {ok_count}")
+    print(f"- 跳过: {skipped_count}")
     print(f"- 失败: {fail_count}")
     print(f"- 结果文件: {output_path}")
     print(f"- 日志文件: {log_path}")

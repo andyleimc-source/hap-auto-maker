@@ -43,6 +43,7 @@ from workflow_common import (
 
 DEFAULT_MODEL = "gemini-2.5-pro"
 REQUIRED_KEYS = ["worksheet_create_trigger", "worksheet_update_trigger", "scheduled_trigger"]
+EXECUTABLE_NODE_TYPES = {"create_record"}
 
 
 def build_prompt(schema: dict) -> str:
@@ -78,9 +79,20 @@ def build_prompt(schema: dict) -> str:
       }},
       "nodes": [
         {{
-          "nodeType": "update_fields|create_record|send_notice",
+          "nodeType": "create_record",
           "name": "节点名称",
-          "config": {{}}
+          "config": {{
+            "targetWorksheetId": "必须存在于 schema",
+            "targetWorksheetName": "必须与 schema 对应",
+            "fieldValues": [
+              {{
+                "fieldId": "目标字段ID",
+                "valueType": "static|trigger_field",
+                "value": "静态值时填写",
+                "sourceFieldId": "引用触发记录字段时填写"
+              }}
+            ]
+          }}
         }}
       ],
       "publish": true,
@@ -100,9 +112,20 @@ def build_prompt(schema: dict) -> str:
       }},
       "nodes": [
         {{
-          "nodeType": "update_fields|create_record|send_notice",
+          "nodeType": "create_record",
           "name": "节点名称",
-          "config": {{}}
+          "config": {{
+            "targetWorksheetId": "必须存在于 schema",
+            "targetWorksheetName": "必须与 schema 对应",
+            "fieldValues": [
+              {{
+                "fieldId": "目标字段ID",
+                "valueType": "static|trigger_field",
+                "value": "静态值时填写",
+                "sourceFieldId": "引用触发记录字段时填写"
+              }}
+            ]
+          }}
         }}
       ],
       "publish": true,
@@ -128,9 +151,20 @@ def build_prompt(schema: dict) -> str:
       }},
       "nodes": [
         {{
-          "nodeType": "update_fields|create_record|send_notice",
+          "nodeType": "create_record",
           "name": "节点名称",
-          "config": {{}}
+          "config": {{
+            "targetWorksheetId": "必须存在于 schema",
+            "targetWorksheetName": "必须与 schema 对应",
+            "fieldValues": [
+              {{
+                "fieldId": "目标字段ID",
+                "valueType": "static",
+                "value": "定时触发没有触发记录，建议只输出静态值",
+                "sourceFieldId": ""
+              }}
+            ]
+          }}
         }}
       ],
       "publish": true,
@@ -144,11 +178,11 @@ def build_prompt(schema: dict) -> str:
 2. 所有 worksheetId、fieldId 必须来自提供的 schema。
 3. 新增触发和更新触发必须引用两个不同的工作流对象，event 分别固定为 create 和 update。
 4. schedule 工作流必须带完整 schedule，frequency 只能是 weekday 或 daily。
-5. nodeType 仅允许 update_fields、create_record、send_notice。
+5. 当前可执行节点仅允许 create_record，不要输出 update_fields 或 send_notice。
 6. 每个工作流至少 1 个节点，最多 2 个节点。
-7. 若 nodeType=update_fields，config 必须包含 targetWorksheetId、targetWorksheetName、fieldUpdates 数组。
-8. 若 nodeType=create_record，config 必须包含 targetWorksheetId、targetWorksheetName、fieldValues 数组。
-9. 若 nodeType=send_notice，config 必须包含 channel、message。
+7. nodeType=create_record 时，config 必须包含 targetWorksheetId、targetWorksheetName、fieldValues 数组。
+8. fieldValues 每项必须包含 fieldId、valueType。valueType=static 时填写 value；valueType=trigger_field 时填写 sourceFieldId。
+9. scheduled_trigger 没有触发记录，fieldValues 只能使用 static。
 10. 更新触发尽量选择 1-3 个 triggerFieldIds；新增触发和定时触发的 triggerFieldIds 必须为空数组。
 11. output 必须是合法 JSON。
 """.strip()
@@ -177,38 +211,40 @@ def validate_node(node: Any, schema: dict, workflow_key: str) -> List[str]:
     node_type = str(node.get("nodeType", "")).strip()
     if node_type not in SUPPORTED_NODE_TYPES:
         return [f"{workflow_key} 的 nodeType 不支持: {node_type}"]
+    if node_type not in EXECUTABLE_NODE_TYPES:
+        return [f"{workflow_key} 的 nodeType 当前未接入真实 HAR 执行链: {node_type}"]
     config = node.get("config")
     if not isinstance(config, dict):
         return [f"{workflow_key} 的 {node_type} 节点 config 必须是对象"]
 
-    if node_type in {"update_fields", "create_record"}:
-        target_ws_id = str(config.get("targetWorksheetId", "")).strip()
-        if not target_ws_id:
-            errors.append(f"{workflow_key} 的 {node_type} 缺少 targetWorksheetId")
-        elif not find_worksheet(schema, target_ws_id):
-            errors.append(f"{workflow_key} 的 {node_type} 引用了不存在的 targetWorksheetId={target_ws_id}")
-        array_key = "fieldUpdates" if node_type == "update_fields" else "fieldValues"
-        values = config.get(array_key)
-        if not isinstance(values, list) or not values:
-            errors.append(f"{workflow_key} 的 {node_type} 缺少非空 {array_key}")
-        else:
-            for idx, item in enumerate(values, start=1):
-                if not isinstance(item, dict):
-                    errors.append(f"{workflow_key} 的 {array_key}[{idx}] 必须是对象")
-                    continue
-                field_id = str(item.get("fieldId", "")).strip()
-                if not field_id:
-                    errors.append(f"{workflow_key} 的 {array_key}[{idx}] 缺少 fieldId")
-                    continue
-                if target_ws_id and not find_field(schema, target_ws_id, field_id):
-                    errors.append(
-                        f"{workflow_key} 的 {array_key}[{idx}] 引用了不存在的 fieldId={field_id}"
-                    )
-    elif node_type == "send_notice":
-        if not str(config.get("channel", "")).strip():
-            errors.append(f"{workflow_key} 的 send_notice 缺少 channel")
-        if not str(config.get("message", "")).strip():
-            errors.append(f"{workflow_key} 的 send_notice 缺少 message")
+    target_ws_id = str(config.get("targetWorksheetId", "")).strip()
+    if not target_ws_id:
+        errors.append(f"{workflow_key} 的 {node_type} 缺少 targetWorksheetId")
+    elif not find_worksheet(schema, target_ws_id):
+        errors.append(f"{workflow_key} 的 {node_type} 引用了不存在的 targetWorksheetId={target_ws_id}")
+    values = config.get("fieldValues")
+    if not isinstance(values, list) or not values:
+        errors.append(f"{workflow_key} 的 {node_type} 缺少非空 fieldValues")
+    else:
+        for idx, item in enumerate(values, start=1):
+            if not isinstance(item, dict):
+                errors.append(f"{workflow_key} 的 fieldValues[{idx}] 必须是对象")
+                continue
+            field_id = str(item.get("fieldId", "")).strip()
+            if not field_id:
+                errors.append(f"{workflow_key} 的 fieldValues[{idx}] 缺少 fieldId")
+            elif target_ws_id and not find_field(schema, target_ws_id, field_id):
+                errors.append(f"{workflow_key} 的 fieldValues[{idx}] 引用了不存在的 fieldId={field_id}")
+            value_type = str(item.get("valueType", "")).strip()
+            if value_type not in {"static", "trigger_field"}:
+                errors.append(f"{workflow_key} 的 fieldValues[{idx}] valueType 仅允许 static 或 trigger_field")
+                continue
+            if value_type == "static" and item.get("value", None) in (None, ""):
+                errors.append(f"{workflow_key} 的 fieldValues[{idx}] 使用 static 时必须提供 value")
+            if value_type == "trigger_field":
+                source_field_id = str(item.get("sourceFieldId", "")).strip()
+                if not source_field_id:
+                    errors.append(f"{workflow_key} 的 fieldValues[{idx}] 使用 trigger_field 时必须提供 sourceFieldId")
 
     return errors
 
@@ -330,6 +366,7 @@ def validate_plan(plan: dict, schema: dict) -> List[str]:
                     errors.append(f"{key} 引用了不存在的触发字段 fieldId={field_id}")
 
         errors.extend(validate_conditions(trigger.get("conditions"), schema, worksheet_id))
+        nodes = workflow.get("nodes")
         if key == "scheduled_trigger":
             schedule = trigger.get("schedule")
             if not isinstance(schedule, dict):
@@ -341,8 +378,12 @@ def validate_plan(plan: dict, schema: dict) -> List[str]:
                     errors.append("scheduled_trigger.schedule.time 不能为空")
                 if not str(schedule.get("timezone", "")).strip():
                     errors.append("scheduled_trigger.schedule.timezone 不能为空")
+            for node in nodes or []:
+                config = node.get("config", {}) if isinstance(node, dict) else {}
+                for idx, item in enumerate(config.get("fieldValues", []) or [], start=1):
+                    if isinstance(item, dict) and str(item.get("valueType", "")).strip() != "static":
+                        errors.append(f"{key} 的 fieldValues[{idx}] 仅允许 static")
 
-        nodes = workflow.get("nodes")
         if not isinstance(nodes, list) or not nodes:
             errors.append(f"{key} 至少需要 1 个节点")
         elif len(nodes) > 2:
