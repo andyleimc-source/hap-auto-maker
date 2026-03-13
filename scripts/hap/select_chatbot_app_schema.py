@@ -99,21 +99,66 @@ def main() -> None:
         item = {
             "schemaVersion": "chatbot_app_schema_v1",
             "generatedAt": now_iso(),
-            "app": {
-                "appId": app["appId"],
-                "appName": str(app_meta.get("name", "")).strip() or app["appName"],
-                "projectId": project_id,
-                "baseUrl": args.base_url,
-                "authFile": app["authFile"],
-                "authPath": app["authPath"],
-            },
-            "selectedSection": section,
-            "sections": sections,
+            "appName": str(app_meta.get("name", "")).strip() or app["appName"],
             "summary": {
                 "worksheetCount": schema["worksheetCount"],
                 "fieldCount": schema["fieldCount"],
             },
-            "worksheets": schema["worksheets"],
+            "worksheets": [
+                {
+                    "worksheetName": str(ws.get("worksheetName", "")).strip(),
+                    "fields": [
+                        {
+                            "fieldName": str(field.get("name", "")).strip(),
+                            "fieldType": str(field.get("type", "")).strip(),
+                            "values": [
+                                str(opt.get("value", "")).strip()
+                                for opt in field.get("options", []) or []
+                                if str(opt.get("value", "")).strip()
+                            ],
+                        }
+                        for field in ws.get("fields", []) or []
+                        if str(field.get("name", "")).strip()
+                    ],
+                    "relations": [
+                        {
+                            "sourceFieldName": str(field.get("name", "")).strip(),
+                            "targetWorksheetId": str(field.get("dataSource", "")).strip(),
+                            "targetWorksheetName": next(
+                                (
+                                    str(target_ws.get("worksheetName", "")).strip()
+                                    for target_ws in schema["worksheets"]
+                                    if str(target_ws.get("worksheetId", "")).strip()
+                                    == str(field.get("dataSource", "")).strip()
+                                ),
+                                "",
+                            ),
+                            "multiple": int(field.get("subType", 0) or 0) == 2,
+                        }
+                        for field in ws.get("fields", []) or []
+                        if str(field.get("type", "")).strip() == "Relation"
+                        and str(field.get("name", "")).strip()
+                        and str(field.get("dataSource", "")).strip()
+                    ],
+                    "fieldNames": [
+                        str(field.get("name", "")).strip()
+                        for field in ws.get("fields", []) or []
+                        if str(field.get("name", "")).strip()
+                    ],
+                }
+                for ws in schema["worksheets"]
+            ],
+            "runtime": {
+                "app": {
+                    "appId": app["appId"],
+                    "appName": str(app_meta.get("name", "")).strip() or app["appName"],
+                    "projectId": project_id,
+                    "baseUrl": args.base_url,
+                    "authFile": app["authFile"],
+                    "authPath": app["authPath"],
+                },
+                "selectedSection": section,
+            },
         }
         schema_items.append(item)
         append_log(log_path, "finished", worksheetCount=schema["worksheetCount"])
@@ -132,8 +177,8 @@ def main() -> None:
         )
         append_log(bundle_log_path, "finished", output=str(output_path), appCount=1)
         print("应用结构导出完成")
-        print(f"- 应用: {result['app']['appName']} ({result['app']['appId']})")
-        print(f"- 目标分组: {result['selectedSection']['name']} ({result['selectedSection']['appSectionId']})")
+        print(f"- 应用: {result['runtime']['app']['appName']} ({result['runtime']['app']['appId']})")
+        print(f"- 目标分组: {result['runtime']['selectedSection']['name']} ({result['runtime']['selectedSection']['appSectionId']})")
         print(f"- 工作表数量: {result['summary']['worksheetCount']}")
         print(f"- 字段数量: {result['summary']['fieldCount']}")
         print(f"- 结果文件: {output_path}")

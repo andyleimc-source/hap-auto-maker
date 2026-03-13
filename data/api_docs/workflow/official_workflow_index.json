@@ -1,0 +1,31 @@
+{
+  "schemaVersion": "workflow_official_doc_index_v1",
+  "updatedAt": "2026-03-13T18:00:00+08:00",
+  "notesFile": "/Users/andy/Desktop/hap_auto/data/api_docs/workflow/official_workflow_notes.md",
+  "documents": [
+    {
+      "key": "create_overview",
+      "title": "如何创建自动工作流",
+      "url": "https://help.mingdao.com/workflow/create",
+      "tags": ["workflow", "create", "publish", "test", "status"]
+    },
+    {
+      "key": "trigger_by_worksheet",
+      "title": "工作流触发方式--工作表事件触发",
+      "url": "https://help.mingdao.com/workflow/trigger-by-worksheet/",
+      "tags": ["workflow", "trigger", "worksheet", "create", "update", "conditions"]
+    },
+    {
+      "key": "trigger_by_schedule",
+      "title": "工作流触发方式--定时触发",
+      "url": "https://help.mingdao.com/workflow/trigger-by-scheduled/",
+      "tags": ["workflow", "trigger", "schedule", "time", "recurrence"]
+    },
+    {
+      "key": "trigger_info",
+      "title": "工作流的触发信息介绍",
+      "url": "https://help.mingdao.com/workflow/trigger-info/",
+      "tags": ["workflow", "trigger", "runtime", "context", "record"]
+    }
+  ]
+}

@@ -166,10 +166,17 @@ def main() -> None:
     ensure_chatbot_dirs()
     plan_path = Path(args.plan_json).expanduser().resolve() if args.plan_json else (CHATBOT_CREATE_DIR.parent / "plans" / "chatbot_plan_latest.json").resolve()
     plan = load_plan_json(plan_path)
-    app = plan["app"]
+    runtime = plan.get("runtime", {})
+    if not isinstance(runtime, dict):
+        raise ValueError("plan.runtime 缺失，无法创建机器人")
+    app = runtime.get("app", {})
+    if not isinstance(app, dict):
+        raise ValueError("plan.runtime.app 缺失，无法创建机器人")
     app_id = str(app["appId"]).strip()
-    app_name = str(app["appName"]).strip()
-    app_section = plan["selectedSection"]
+    app_name = str(plan.get("appName", "")).strip() or str(app["appName"]).strip()
+    app_section = runtime.get("selectedSection", {})
+    if not isinstance(app_section, dict):
+        raise ValueError("plan.runtime.selectedSection 缺失，无法创建机器人")
     app_section_id = str(app_section["appSectionId"]).strip()
     project_id = str(app.get("projectId", "")).strip()
     if not project_id:

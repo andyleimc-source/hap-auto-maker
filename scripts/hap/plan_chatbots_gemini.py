@@ -43,18 +43,49 @@ def build_schema_summary(schema: dict) -> str:
         ws_name = str(worksheet.get("worksheetName", "")).strip()
         if not ws_name:
             continue
-        fields = worksheet.get("fields", []) or []
-        field_names = [str(field.get("name", "")).strip() for field in fields if str(field.get("name", "")).strip()]
-        preview = "、".join(field_names[:12])
-        if len(field_names) > 12:
-            preview += " 等"
+        parts: List[str] = []
+        for field in worksheet.get("fields", []) or []:
+            if not isinstance(field, dict):
+                continue
+            field_name = str(field.get("fieldName", "")).strip()
+            if not field_name:
+                continue
+            field_type = str(field.get("fieldType", "")).strip() or "Unknown"
+            text = f"{field_name}<{field_type}>"
+            values = [str(x).strip() for x in (field.get("values", []) or []) if str(x).strip()]
+            if values:
+                text += f"[可选值:{'/'.join(values[:5])}]"
+            parts.append(text)
+        relation_parts: List[str] = []
+        for relation in worksheet.get("relations", []) or []:
+            if not isinstance(relation, dict):
+                continue
+            source_field = str(relation.get("sourceFieldName", "")).strip()
+            target_name = str(relation.get("targetWorksheetName", "")).strip()
+            if not source_field or not target_name:
+                continue
+            multi_text = "多条" if relation.get("multiple") else "单条"
+            relation_parts.append(f"{source_field}->{target_name}({multi_text})")
+        preview = "；".join(parts[:10])
+        if len(parts) > 10:
+            preview += "；等"
+        if relation_parts:
+            relation_preview = "；".join(relation_parts[:5])
+            if len(relation_parts) > 5:
+                relation_preview += "；等"
+            if preview:
+                preview += f"；关联关系:{relation_preview}"
+            else:
+                preview = f"关联关系:{relation_preview}"
         lines.append(f"- {ws_name}: {preview}")
     return "\n".join(lines) if lines else "- 该应用下暂无工作表"
 
 
 def build_prompt(schema: dict, feedback_history: List[dict], previous_proposals: List[dict]) -> str:
-    app = schema["app"]
-    selected_section = schema["selectedSection"]
+    runtime = schema.get("runtime", {})
+    runtime_app = runtime.get("app", {}) if isinstance(runtime, dict) else {}
+    selected_section = runtime.get("selectedSection", {}) if isinstance(runtime, dict) else {}
+    app_name = str(schema.get("appName", "")).strip() or str(runtime_app.get("appName", "")).strip()
     feedback_text = "无"
     if feedback_history:
         parts = []
@@ -69,8 +100,8 @@ def build_prompt(schema: dict, feedback_history: List[dict], previous_proposals:
     return f"""
 你是明道云 HAP 对话机器人策划顾问。请基于以下应用结构，为该应用随机生成 2 个高质量、彼此差异明显的对话机器人方案。
 
-应用名称：{app['appName']}
-目标分组：{selected_section['name']}
+应用名称：{app_name}
+目标分组：{str(selected_section.get('name', '')).strip() or '默认分组'}
 工作表与字段概览：
 {build_schema_summary(schema)}
 
@@ -145,8 +176,11 @@ def main() -> None:
     ensure_chatbot_dirs()
     schema_path = Path(args.schema_json).expanduser().resolve() if args.schema_json else (CHATBOT_SCHEMA_DIR / "chatbot_app_schema_latest.json").resolve()
     schema = load_schema_json(schema_path)
-    app_id = str(schema["app"]["appId"]).strip()
-    app_name = str(schema["app"]["appName"]).strip()
+    runtime = schema.get("runtime", {})
+    runtime_app = runtime.get("app", {}) if isinstance(runtime, dict) else {}
+    selected_section = runtime.get("selectedSection", {}) if isinstance(runtime, dict) else {}
+    app_id = str(runtime_app.get("appId", "")).strip()
+    app_name = str(schema.get("appName", "")).strip() or str(runtime_app.get("appName", "")).strip()
 
     log_path = make_chatbot_log_path("chatbot_plan", app_id)
     append_log(log_path, "start", schemaJson=str(schema_path), appId=app_id, appName=app_name, model=args.model)
@@ -191,12 +225,15 @@ def main() -> None:
             "round": round_no,
             "model": args.model,
             "sourceSchemaJson": str(schema_path),
-            "app": schema["app"],
-            "selectedSection": schema["selectedSection"],
+            "appName": app_name,
             "summary": str(raw.get("summary", "")).strip(),
             "proposals": current_proposals,
             "notes": [str(x).strip() for x in raw.get("notes", []) if str(x).strip()] if isinstance(raw.get("notes"), list) else [],
             "feedbackHistory": feedback_history,
+            "runtime": {
+                "app": runtime_app,
+                "selectedSection": selected_section,
+            },
         }
         draft_path = save_round_snapshot(app_id, round_no, round_payload)
         append_log(log_path, "round_snapshot_saved", round=round_no, path=str(draft_path))
@@ -210,12 +247,15 @@ def main() -> None:
                 "approvedAt": now_iso(),
                 "model": args.model,
                 "sourceSchemaJson": str(schema_path),
-                "app": schema["app"],
-                "selectedSection": schema["selectedSection"],
+                "appName": app_name,
                 "summary": round_payload["summary"],
                 "proposals": current_proposals,
                 "notes": round_payload["notes"],
                 "feedbackHistory": feedback_history,
+                "runtime": {
+                    "app": runtime_app,
+                    "selectedSection": selected_section,
+                },
             }
             if args.output:
                 output_path = Path(args.output).expanduser().resolve()
