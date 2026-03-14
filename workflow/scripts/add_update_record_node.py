@@ -299,19 +299,53 @@ def run_once(args: argparse.Namespace, account_id: str, authorization: str, cook
         )
         if controls_resp.get("status") != 1:
             raise RuntimeError(f"getAppTemplateControls failed: {controls_resp}")
-        fields = [
-            {
-                "addType": 0,
-                "fieldId": c["controlId"],
-                "type": c["type"],
-                "enumDefault": c.get("enumDefault", 0),
-                "fieldValue": f"${args.select_node_id}-{c['controlId']}$",
-                "fieldValueId": "",
-                "nodeId": "",
-                "nodeAppId": "",
-            }
-            for c in (controls_resp.get("data") or [])
-        ]
+        fields = []
+        for c in (controls_resp.get("data") or []):
+            ctype = c["type"]
+            if ctype == 16:
+                # Date field: use system "当前时间" node
+                fields.append({
+                    "addType": 0,
+                    "fieldId": c["controlId"],
+                    "type": 16,
+                    "enumDefault": c.get("enumDefault", 0),
+                    "fieldValue": "",
+                    "fieldValueId": "nowTime",
+                    "nodeId": "5d39140d381d42d20db0c4da",
+                    "nodeName": "系统",
+                    "fieldValueName": "当前时间",
+                    "fieldValueType": 16,
+                    "nodeTypeId": 100,
+                    "appType": 100,
+                    "actionId": "",
+                    "isSourceApp": False,
+                    "sourceType": 0,
+                })
+            elif ctype == 26:
+                # Person field: clear value
+                fields.append({
+                    "addType": 0,
+                    "fieldId": c["controlId"],
+                    "type": 26,
+                    "enumDefault": c.get("enumDefault", 0),
+                    "fieldValue": "[]",
+                    "fieldValueId": "",
+                    "nodeId": "",
+                    "nodeAppId": "",
+                    "isClear": True,
+                })
+            else:
+                # All other fields: dynamic ref from selectNode
+                fields.append({
+                    "addType": 0,
+                    "fieldId": c["controlId"],
+                    "type": ctype,
+                    "enumDefault": c.get("enumDefault", 0),
+                    "fieldValue": f"${args.select_node_id}-{c['controlId']}$",
+                    "fieldValueId": "",
+                    "nodeId": "",
+                    "nodeAppId": "",
+                })
         print(
             f"[debug] auto-built {len(fields)} field(s): "
             + ", ".join(f"{c['controlId']}({c['controlName']})" for c in (controls_resp.get("data") or [])),
@@ -334,6 +368,7 @@ def run_once(args: argparse.Namespace, account_id: str, authorization: str, cook
             "actionId": "2",
             "name": args.name,
             "selectNodeId": args.select_node_id,
+            "appId": args.app_id,
             "appType": 1,
             "fields": fields,
             "filters": filters,
