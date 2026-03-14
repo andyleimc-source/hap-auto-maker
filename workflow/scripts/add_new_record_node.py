@@ -68,8 +68,9 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-import urllib.error
-import urllib.request
+import time
+
+from workflow_io import Session, persist
 
 
 # ---------------------------------------------------------------------------
@@ -151,41 +152,6 @@ def parse_args() -> argparse.Namespace:
 
 
 # ---------------------------------------------------------------------------
-# HTTP helpers
-# ---------------------------------------------------------------------------
-
-def _make_headers(base: dict) -> dict:
-    return {k: v for k, v in base.items() if v}
-
-
-def post_json(url: str, payload: dict, headers: dict) -> dict:
-    data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(url=url, data=data, method="POST")
-    for k, v in _make_headers(headers).items():
-        req.add_header(k, v)
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            return json.loads(resp.read().decode("utf-8", errors="replace"))
-    except urllib.error.HTTPError as err:
-        raise RuntimeError(f"HTTP {err.code}: {err.read().decode()}") from err
-    except urllib.error.URLError as err:
-        raise RuntimeError(f"Network error: {err}") from err
-
-
-def get_json(url: str, headers: dict) -> dict:
-    req = urllib.request.Request(url=url, method="GET")
-    for k, v in _make_headers(headers).items():
-        req.add_header(k, v)
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            return json.loads(resp.read().decode("utf-8", errors="replace"))
-    except urllib.error.HTTPError as err:
-        raise RuntimeError(f"HTTP {err.code}: {err.read().decode()}") from err
-    except urllib.error.URLError as err:
-        raise RuntimeError(f"Network error: {err}") from err
-
-
-# ---------------------------------------------------------------------------
 # Auth helpers
 # ---------------------------------------------------------------------------
 
@@ -241,25 +207,11 @@ def load_fields(fields_arg: str) -> list:
     return json.loads(fields_arg)
 
 
-def run_once(args: argparse.Namespace, account_id: str, authorization: str, cookie: str) -> dict:
-    base_headers = {
-        "Accept": "application/json, text/plain, */*",
-        "Content-Type": "application/json",
-        "Origin": args.origin,
-        "Referer": "https://www.mingdao.com/",
-        "X-Requested-With": "XMLHttpRequest",
-        "Cookie": cookie,
-    }
-    if account_id:
-        base_headers["AccountId"] = account_id
-        base_headers["accountid"] = account_id
-    if authorization:
-        base_headers["Authorization"] = authorization
-
+def run_once(args: argparse.Namespace, session: Session) -> dict:
     fields = load_fields(args.fields)
 
     # Step 1: add the node skeleton
-    add_resp = post_json(
+    add_resp = session.post(
         "https://api.mingdao.com/workflow/flowNode/add",
         {
             "processId": args.process_id,
@@ -269,7 +221,6 @@ def run_once(args: argparse.Namespace, account_id: str, authorization: str, cook
             "prveId": args.prev_node_id,
             "typeId": 6,           # 6 = 动作节点
         },
-        base_headers,
     )
     print(
         f"[debug] flowNode/add → status={add_resp.get('status')} msg={add_resp.get('msg')}",
@@ -285,7 +236,7 @@ def run_once(args: argparse.Namespace, account_id: str, authorization: str, cook
     print(f"[debug] new nodeId = {node_id}", file=sys.stderr)
 
     # Step 2: configure the node (target worksheet + field mappings)
-    save_resp = post_json(
+    save_resp = session.post(
         "https://api.mingdao.com/workflow/flowNode/saveNode",
         {
             "processId": args.process_id,
@@ -299,7 +250,6 @@ def run_once(args: argparse.Namespace, account_id: str, authorization: str, cook
             "fields": fields,
             "filters": [],
         },
-        base_headers,
     )
     print(
         f"[debug] flowNode/saveNode → status={save_resp.get('status')} msg={save_resp.get('msg')}",
@@ -311,9 +261,8 @@ def run_once(args: argparse.Namespace, account_id: str, authorization: str, cook
     # Step 3: publish (optional)
     publish_result = None
     if args.publish:
-        pub_resp = get_json(
+        pub_resp = session.get(
             f"https://api.mingdao.com/workflow/process/publish?isPublish=true&processId={args.process_id}",
-            base_headers,
         )
         print(
             f"[debug] process/publish → status={pub_resp.get('status')} "
@@ -346,8 +295,10 @@ def run_once(args: argparse.Namespace, account_id: str, authorization: str, cook
 # ---------------------------------------------------------------------------
 
 def main() -> int:
+    started_at = time.time()
     args = parse_args()
     auth_config_path = Path(args.auth_config).expanduser().resolve()
+    log_args = {k: v for k, v in vars(args).items() if k != "cookie"}
 
     if args.refresh_auth:
         print("Refreshing auth before run...", file=sys.stderr)
@@ -356,23 +307,33 @@ def main() -> int:
     account_id, authorization, cookie, cookie_source = resolve_auth(args.cookie, auth_config_path)
     if not cookie:
         print("Error: missing cookie.", file=sys.stderr)
+        persist("add_new_record_node", None, args=log_args,
+                error="missing cookie", started_at=started_at)
         return 2
 
+    session = Session(cookie, account_id, authorization, args.origin)
+
     try:
-        result = run_once(args, account_id, authorization, cookie)
+        result = run_once(args, session)
     except Exception as exc:
         if not args.refresh_on_fail:
+            persist("add_new_record_node", None, args=log_args,
+                    error=str(exc), started_at=started_at, session=session)
             raise
         print(f"Failed ({exc}), refreshing auth and retrying...", file=sys.stderr)
         refresh_auth(headless=args.headless)
         account_id, authorization, cookie, _ = resolve_auth(args.cookie, auth_config_path)
         if not cookie:
             print("Retry aborted: cookie still missing.", file=sys.stderr)
+            persist("add_new_record_node", None, args=log_args,
+                    error="cookie missing after refresh", started_at=started_at, session=session)
             return 2
-        result = run_once(args, account_id, authorization, cookie)
+        session = Session(cookie, account_id, authorization, args.origin)
+        result = run_once(args, session)
 
     result["cookie_source"] = cookie_source
     print(json.dumps(result, ensure_ascii=False, indent=2))
+    persist("add_new_record_node", result, args=log_args, started_at=started_at, session=session)
     return 0
 
 

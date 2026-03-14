@@ -1,1 +1,6 @@
 action/
+output/
+logs/
+.claude/
+__pycache__/
+*.pyc

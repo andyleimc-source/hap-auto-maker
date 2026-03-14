@@ -24,12 +24,88 @@ workflow/
 - 示例：`01_login_20260314.har`
 - 每个 HAR 尽量只覆盖一个核心节点，避免噪音请求过多。
 
+## 脚本开发规范
+
+所有节点脚本必须遵守以下规范，保证风格统一、方便串联。
+
+### 1. 使用共享 Session（`workflow_io.py`）
+
+不要在脚本里直接用 `urllib` 或裸 `requests`，统一用 `workflow_io.Session`：
+
+```python
+from workflow_io import Session, persist
+
+session = Session(cookie, account_id, authorization, origin)
+resp = session.post(url, payload)
+resp = session.get(url)
+```
+
+`Session` 会自动注入所有必要的鉴权 Header，并记录每次请求的 method / url / status / 耗时。
+
+### 2. 输出落盘（固定文件名）
+
+每个脚本在结束时调用 `persist()`，将结果写到 `output/{script}_latest.json`：
+
+- 文件名固定（`_latest`），下游脚本可直接硬编码路径引用，无需知道时间戳
+- 不保留带时间戳的历史 output（日志已覆盖历史）
+
+```python
+persist(
+    script     = Path(__file__).stem,  # 脚本名，无后缀
+    output     = result,               # 任意可序列化对象
+    args       = vars(args),
+    error      = None,                 # 有异常时传 str(e)
+    started_at = started_at,           # time.time() 记录的开始时间
+    session    = session,
+)
+```
+
+### 3. 运行日志（带时间戳）
+
+`persist()` 同时写 `logs/{script}_{timestamp}.json`，内容包含：
+
+- 运行参数、完整 HTTP 请求历史（含状态码和耗时）、输出结果、错误信息、总耗时
+
+排查问题直接看 `logs/`，不需要翻 output 历史。
+
+### 4. 目录不入库
+
+`output/`、`logs/`、`.claude/`、`__pycache__/` 均已加入 `.gitignore`，不提交到 Git。
+产物只在本地留存，Git 仓库只保存脚本本身。
+
+### 5. 鉴权优先级
+
+所有脚本统一按以下顺序读取认证信息：
+
+1. `--cookie` CLI 参数
+2. 环境变量 `MINGDAO_COOKIE`
+3. `config/credentials/auth_config.py` 中的 `COOKIE` 变量
+
+`account_id` / `authorization` 同理，从 `MINGDAO_ACCOUNT_ID` / `MINGDAO_AUTHORIZATION` 或 `auth_config.py` 中加载。
+
+### 6. 脚本间数据传递
+
+上游脚本通过 `output/{script}_latest.json` 输出，下游脚本直接读取该文件。
+不使用进程参数或标准输出传递结构化数据。
+
+```python
+# 下游脚本读取上游结果示例
+import json
+from pathlib import Path
+
+plan = json.loads((Path(__file__).parents[1] / "output" / "workflow_plan_latest.json").read_text())
+```
+
+---
+
 ## 操作节点清单（持续补充）
 
 | 节点ID | 节点名称 | 目标页面/模块 | HAR文件 | 状态 | 备注 |
 |---|---|---|---|---|---|
-| N001 | 创建工作流 | 工作流编辑页 | `action/创建工作流.har` | 已完成首版脚本 | 需传 `--worksheet-id` 才能出现在列表 |
+| N001 | 创建工作流-工作表事件触发 | 工作流编辑页 | `action/创建工作流.har` | 已完成首版脚本 | 需传 `--worksheet-id` 才能出现在列表 |
 | N002 | 添加新增记录节点 | 工作流编辑页 | `action/创建新增记录节点.har` | 已完成首版脚本 | 支持字段映射 + 一键发布 |
+| N003 | 创建工作流-时间触发 | 工作流编辑页 | `action/创建工作流-时间触发.har` | 已完成首版脚本 | 传 `--execute-time` 自动配置定时触发节点 |
+| N004 | 创建工作流-自定义动作触发 | 工作表设置页 | `action/创建工作流-自定义动作触发.har` | 已完成首版脚本 | 无 process/add；工作流由 SaveWorksheetBtn 自动创建 |
 
 ## 已提炼接口（N001）
 
@@ -73,18 +149,24 @@ workflow/
 - 备注：{重放注意事项}
 ```
 
-## 脚本清单（后续补充）
+## 脚本清单
 
 | 脚本名 | 对应节点ID | 输入 | 输出 | 依赖 | 状态 |
 |---|---|---|---|---|---|
-| `scripts/create_workflow.py` | N001 | `relation_id`、`name`、Cookie | `process_id`、`publish_status` | Python3 | 可运行 |
+| `scripts/create_workflow_worksheet_trigger.py` | N001 | `relation_id`、`worksheet_id`、`name`、Cookie | `process_id`、`publish_status` | Python3 | 可运行 |
+| `scripts/create_workflow_time_trigger.py` | N003 | `relation_id`、`execute_time`、`name`、Cookie | `process_id`、`publish_status` | Python3 | 可运行 |
+| `scripts/create_workflow_custom_action_trigger.py` | N004 | `worksheet_id`、`app_id`、`name`、Cookie | `btn_id`、`process_id`、`start_event_id` | Python3 | 可运行 |
+| `scripts/delete_workflow.py` | — | `relation_id`、Cookie | 交互式删除 | Python3 | 可运行 |
+| `scripts/generate_workflow_plan.py` | — | 应用结构 JSON + Gemini Key | `output/workflow_plan_latest.json` | Python3、google-generativeai | 可运行 |
+| `scripts/execute_workflow_plan.py` | — | `output/workflow_plan_latest.json`、Cookie | 批量创建结果 JSON | Python3 | 可运行 |
 
-### N001 运行方式
+### N001 运行方式（工作表事件触发）
 
 ```bash
 cd /Users/andy/Desktop/hap_auto/workflow
-python3 scripts/create_workflow.py \
+python3 scripts/create_workflow_worksheet_trigger.py \
   --relation-id 'c2259f27-8b27-4ecb-8def-10fdff5911d9' \
+  --worksheet-id '69aead6f952cd046bb57e3f2' \
   --name '未命名工作流'
 ```
 
@@ -94,22 +176,143 @@ python3 scripts/create_workflow.py \
 2. 环境变量 `MINGDAO_COOKIE`
 3. `/Users/andy/Desktop/hap_auto/config/credentials/auth_config.py` 的 `COOKIE`
 
-如果你希望脚本自动刷新并回写最新登录态（复用旧项目方法）：
+如果你希望脚本自动刷新并回写最新登录态：
 
 ```bash
-python3 scripts/create_workflow.py \
+python3 scripts/create_workflow_worksheet_trigger.py \
   --relation-id 'c2259f27-8b27-4ecb-8def-10fdff5911d9' \
+  --worksheet-id '69aead6f952cd046bb57e3f2' \
   --name '未命名工作流' \
   --refresh-auth \
   --refresh-on-fail
 ```
 
-`--refresh-auth` 会调用 `/Users/andy/Desktop/hap_auto/scripts/refresh_auth.py`，自动获取并设置最新 Cookie 到 `auth_config.py`。
-
 成功后会输出 JSON，关键字段：
 
 - `process_id`：新建流程 ID
 - `publish_status`：理论应为 `0`（未发布）
+
+### N003 运行方式（时间触发）
+
+```bash
+cd /Users/andy/Desktop/hap_auto/workflow
+python3 scripts/create_workflow_time_trigger.py \
+  --relation-id 'c2259f27-8b27-4ecb-8def-10fdff5911d9' \
+  --name '定时工作流' \
+  --execute-time '2026-03-14 18:25' \
+  --execute-end-time '2026-03-31 18:25'
+```
+
+`--execute-time` 不传则只创建工作流，不调用 saveNode（触发节点留空，可在 UI 手动配置）。
+
+可选时间参数：
+
+| 参数 | 含义 | 默认值 |
+|---|---|---|
+| `--execute-time` | 首次执行时间 `YYYY-MM-DD HH:MM` | 空（不调用 saveNode） |
+| `--execute-end-time` | 结束执行时间 `YYYY-MM-DD HH:MM` | `""` |
+| `--repeat-type` | 重复类型 | `1` |
+| `--interval` | 间隔数值 | `1` |
+| `--frequency` | 频率单位 | `1` |
+| `--week-days` | 按周重复的星期数组（JSON） | `[]` |
+
+成功后会输出 JSON，关键字段：
+
+- `process_id`：新建流程 ID
+- `trigger_type`：`"time"`
+- `execute_time`：配置的首次执行时间
+
+### N004 运行方式（自定义动作触发）
+
+```bash
+cd /Users/andy/Desktop/hap_auto/workflow
+python3 scripts/create_workflow_custom_action_trigger.py \
+  --worksheet-id '69aead6fd777aea8806b9302' \
+  --app-id 'c2259f27-8b27-4ecb-8def-10fdff5911d9' \
+  --name '开发票'
+```
+
+加 `--publish` 立即发布：
+
+```bash
+python3 scripts/create_workflow_custom_action_trigger.py \
+  --worksheet-id '69aead6fd777aea8806b9302' \
+  --app-id 'c2259f27-8b27-4ecb-8def-10fdff5911d9' \
+  --name '开发票' \
+  --publish
+```
+
+可选参数：
+
+| 参数 | 含义 | 默认值 |
+|---|---|---|
+| `--confirm-msg` | 确认弹窗提示语 | `你确认执行此操作吗？` |
+| `--sure-name` | 确认按钮文案 | `确认` |
+| `--cancel-name` | 取消按钮文案 | `取消` |
+| `--publish` | 创建后立即发布 | 否 |
+
+成功后输出 JSON，关键字段：
+
+- `btn_id`：自定义动作按钮 ID
+- `process_id`：工作流 ID
+- `start_event_id`：触发节点 ID（串联下游节点时的 `prev-node-id`）
+
+## 已提炼接口（N004）
+
+### 接口一：创建按钮并自动生成工作流
+- 节点ID：N004
+- Method：POST
+- URL：`https://www.mingdao.com/api/Worksheet/SaveWorksheetBtn`
+- Body（首次创建，`btnId` 和 `workflowId` 均为空）：
+  - `name`：按钮名称（同时作为工作流名称）
+  - `worksheetId`：目标工作表 ID
+  - `appId`：应用 ID
+  - `workflowType`：`1`（触发工作流类型）
+  - `clickType`：`1`，`showType`：`1`
+  - `confirmMsg` / `sureName` / `cancelName`：确认弹窗文案
+- 成功响应：`state=1`，`data` 为新建 `btnId`（同时作为 `triggerId`）
+
+### 接口二：获取自动创建的工作流 ID
+- 节点ID：N004
+- Method：GET
+- URL：`https://api.mingdao.com/workflow/process/getProcessByTriggerId?appId={worksheetId}&triggerId={btnId}`
+- 成功响应：`status=1`，`data[0].id` 为 `processId`，`data[0].startEventId` 为触发节点 ID
+
+### 接口三：回填 workflowId 绑定按钮与工作流
+- 节点ID：N004
+- Method：POST
+- URL：同接口一
+- Body：同首次创建，但 `btnId` 和 `workflowId` 填入实际值
+- 成功响应：`state=1`
+
+---
+
+## 已提炼接口（N003）
+
+### 接口：创建定时触发流程
+- 节点ID：N003
+- 场景：新建时间触发工作流（进入编辑态，未发布）
+- Method：POST
+- URL：`https://api.mingdao.com/workflow/process/add`
+- Body：与 N001 相同，但 `startEventAppType: 5`（N001 为 1）
+- 成功响应：`status=1`，`data.id` 为新建 `processId`
+
+### 接口：配置定时触发节点
+- 节点ID：N003
+- Method：POST
+- URL：`https://api.mingdao.com/workflow/flowNode/saveNode`
+- Body：
+  - `appType`: `5`（时间触发；工作表事件为 1）
+  - `flowNodeType`: `0`（触发节点）
+  - `name`: `"定时触发"`
+  - `executeTime`: 首次执行时间（`"YYYY-MM-DD HH:MM"`）
+  - `executeEndTime`: 结束执行时间
+  - `repeatType`: 重复类型
+  - `interval`: 间隔数值
+  - `frequency`: 频率单位
+  - `weekDays`: 按周重复的星期数组
+  - 无 `appId`、`triggerId`、`operateCondition`（仅工作表事件触发才有）
+- 成功响应：`status=1`
 
 ## 已提炼接口（N002）
 
