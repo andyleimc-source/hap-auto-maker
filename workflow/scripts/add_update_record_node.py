@@ -305,7 +305,7 @@ def run_once(args: argparse.Namespace, account_id: str, authorization: str, cook
                 "fieldId": c["controlId"],
                 "type": c["type"],
                 "enumDefault": c.get("enumDefault", 0),
-                "fieldValue": "",
+                "fieldValue": f"${args.select_node_id}-{c['controlId']}$",
                 "fieldValueId": "",
                 "nodeId": "",
                 "nodeAppId": "",
@@ -347,7 +347,7 @@ def run_once(args: argparse.Namespace, account_id: str, authorization: str, cook
     if save_resp.get("status") != 1:
         raise RuntimeError(f"flowNode/saveNode failed: {save_resp}")
 
-    # Step 3: publish (optional)
+    # Step 5: publish (optional)
     publish_result = None
     if args.publish:
         pub_resp = get_json(
