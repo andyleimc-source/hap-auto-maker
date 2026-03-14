@@ -215,13 +215,13 @@ python3 /Users/andy/Desktop/hap_auto/scripts/clear_app_records.py
 ### 8.6 已有应用：工作流流水线
 
 ```bash
-python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_workflows.py --dry-run
+python3 /Users/andy/Desktop/hap_auto/old_workflow/scripts/pipeline_workflows.py --dry-run
 ```
 
 说明：
 - Step 1 导出当前应用的工作流 schema
 - Step 2 调用 Gemini 规划 3 个典型工作流
-- Step 3 生成私有接口请求草稿；补齐 `data/api_docs/workflow/private_workflow_api.json` 后可切换到真实创建
+- Step 3 生成私有接口请求草稿；补齐 `old_workflow/data/api_docs/workflow/private_workflow_api.json` 后可切换到真实创建
 - 所有阶段都会落盘 JSON 与 JSONL 日志到 `data/outputs/workflow_*`
 
 ## 9. 功能与主流程

@@ -1,8 +1,8 @@
 # 工作流私有接口文档（基于 `创建工作流.har`）
 
 更新时间：2026-03-13  
-用途：记录工作流创建、发布、启停相关私有接口，供 `scripts/hap/create_workflows_from_plan.py` 落地真实请求。  
-当前状态：已接入 `record/action/创建工作流.har` 中验证过的最小可用链路，可真实创建：
+用途：记录工作流创建、发布、启停相关私有接口，供 `old_workflow/scripts/hap/create_workflows_from_plan.py` 落地真实请求。  
+当前状态：已接入 `old_workflow/record/action/创建工作流.har` 中验证过的最小可用链路，可真实创建：
 - 工作表事件触发
 - 新增记录动作节点
 - 流程名称更新
@@ -19,7 +19,7 @@
   - dry-run 落盘
   - JSONL 日志
 - 非 dry-run 模式要求提供私有接口配置文件：
-  - `/Users/andy/Desktop/hap_auto/data/api_docs/workflow/private_workflow_api.json`
+  - `/Users/andy/Desktop/hap_auto/old_workflow/data/api_docs/workflow/private_workflow_api.json`
 
 ## 2. 当前已验证接口链
 1. `POST https://api.mingdao.com/workflow/process/add`

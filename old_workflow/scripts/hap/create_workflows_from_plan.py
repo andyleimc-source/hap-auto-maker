@@ -3,7 +3,7 @@
 """
 根据 workflow_plan_v1 创建工作流。
 
-当前仅接入了来自 `record/action/创建工作流.har` 验证过的最小链路：
+当前仅接入了来自 `old_workflow/record/action/创建工作流.har` 验证过的最小链路：
 - 工作表事件触发
 - 新增记录节点
 - 更新流程名称
@@ -24,6 +24,9 @@ from urllib.parse import urlencode
 CURRENT_DIR = Path(__file__).resolve().parent
 if str(CURRENT_DIR) not in sys.path:
     sys.path.insert(0, str(CURRENT_DIR))
+REPO_HAP_DIR = CURRENT_DIR.parents[2] / "scripts" / "hap"
+if str(REPO_HAP_DIR) not in sys.path:
+    sys.path.insert(0, str(REPO_HAP_DIR))
 
 from mock_data_common import fetch_worksheet_controls, load_web_auth
 from workflow_common import (

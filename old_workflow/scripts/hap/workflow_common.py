@@ -11,6 +11,13 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import sys
+
+CURRENT_DIR = Path(__file__).resolve().parent
+REPO_HAP_DIR = CURRENT_DIR.parents[2] / "scripts" / "hap"
+if str(REPO_HAP_DIR) not in sys.path:
+    sys.path.insert(0, str(REPO_HAP_DIR))
+
 from mock_data_common import (
     APP_AUTH_DIR,
     AUTH_CONFIG_PATH,

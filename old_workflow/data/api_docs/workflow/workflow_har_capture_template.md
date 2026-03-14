@@ -1,7 +1,7 @@
 # 工作流 HAR 采集模板
 
 用途：后续你继续抓“触发器”或“动作节点”的 HAR 时，统一按这个模板补资料。  
-当前基线 HAR：`/Users/andy/Desktop/hap_auto/record/action/创建工作流.har`
+当前基线 HAR：`/Users/andy/Desktop/hap_auto/old_workflow/record/action/创建工作流.har`
 
 ## 1. 采集目标
 每次只抓一种“新增能力”，不要一次混很多变量。建议拆成以下粒度：

@@ -1,7 +1,7 @@
 {
   "schemaVersion": "workflow_official_doc_index_v1",
   "updatedAt": "2026-03-13T18:00:00+08:00",
-  "notesFile": "/Users/andy/Desktop/hap_auto/data/api_docs/workflow/official_workflow_notes.md",
+  "notesFile": "/Users/andy/Desktop/hap_auto/old_workflow/data/api_docs/workflow/official_workflow_notes.md",
   "documents": [
     {
       "key": "create_overview",
