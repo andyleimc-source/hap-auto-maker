@@ -7,12 +7,16 @@
 import argparse
 import json
 import re
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 from google import genai
 from google.genai import types
+
+NETWORK_MAX_RETRIES = 3
+NETWORK_RETRY_DELAY = 5
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 CONFIG_PATH = BASE_DIR / "config" / "credentials" / "gemini_auth.json"
@@ -159,11 +163,22 @@ icon 库（fileName）：
 
     api_key = load_api_key(Path(args.config).expanduser().resolve())
     client = genai.Client(api_key=api_key)
-    response = client.models.generate_content(
-        model=args.model,
-        contents=prompt,
-        config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0.2),
-    )
+    response = None
+    for net_try in range(1, NETWORK_MAX_RETRIES + 1):
+        try:
+            response = client.models.generate_content(
+                model=args.model,
+                contents=prompt,
+                config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0.2),
+            )
+            break
+        except Exception as e:
+            if net_try < NETWORK_MAX_RETRIES:
+                wait = NETWORK_RETRY_DELAY * net_try
+                print(f"[网络重试 {net_try}/{NETWORK_MAX_RETRIES}] {type(e).__name__}: {e}，{wait}s 后重试...")
+                time.sleep(wait)
+            else:
+                raise
     result = extract_json(response.text or "")
 
     valid_icons = set(icon_names)

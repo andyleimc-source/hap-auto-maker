@@ -171,6 +171,7 @@ def main() -> None:
     parser.add_argument("--config", default="", help="Gemini 配置 JSON 路径")
     parser.add_argument("--output", default="", help="最终输出 JSON 文件路径")
     parser.add_argument("--max-retries", type=int, default=3, help="单轮 Gemini 最大重试次数")
+    parser.add_argument("--auto", action="store_true", help="自动确认第一次生成的方案，跳过人工审核（用于自动化流水线）")
     args = parser.parse_args()
 
     ensure_chatbot_dirs()
@@ -240,7 +241,11 @@ def main() -> None:
 
         print("\n本轮候选方案：")
         print(json.dumps(round_payload, ensure_ascii=False, indent=2))
-        user_text = input("\n输入 /done 确认；直接输入反馈继续调整；回车则重新随机生成: ").strip()
+        if args.auto:
+            print("\n[auto] 自动确认首轮生成方案（--auto）")
+            user_text = "/done"
+        else:
+            user_text = input("\n输入 /done 确认；直接输入反馈继续调整；回车则重新随机生成: ").strip()
         if user_text == "/done":
             final_payload = {
                 "schemaVersion": "chatbot_plan_v1",

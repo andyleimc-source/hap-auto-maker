@@ -9,8 +9,12 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Any, Dict, List
+
+NETWORK_MAX_RETRIES = 3
+NETWORK_RETRY_DELAY = 5
 
 from google import genai
 from google.genai import types
@@ -285,14 +289,25 @@ def main() -> None:
     api_key = load_gemini_api_key(Path(args.config).expanduser().resolve())
     client = genai.Client(api_key=api_key)
 
-    response = client.models.generate_content(
-        model=args.model,
-        contents=build_prompt(snapshot, write_result),
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            temperature=0.2,
-        ),
-    )
+    response = None
+    for net_try in range(1, NETWORK_MAX_RETRIES + 1):
+        try:
+            response = client.models.generate_content(
+                model=args.model,
+                contents=build_prompt(snapshot, write_result),
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    temperature=0.2,
+                ),
+            )
+            break
+        except Exception as e:
+            if net_try < NETWORK_MAX_RETRIES:
+                wait = NETWORK_RETRY_DELAY * net_try
+                print(f"[网络重试 {net_try}/{NETWORK_MAX_RETRIES}] {type(e).__name__}: {e}，{wait}s 后重试...")
+                time.sleep(wait)
+            else:
+                raise
     raw = extract_json_object(response.text or "")
     result = validate_relation_plan(raw, snapshot, write_result)
     output_path = (

@@ -84,6 +84,7 @@ def main() -> None:
     parser.add_argument("--config", default="", help="Gemini 配置 JSON 路径")
     parser.add_argument("--upload-permission", default="11", help="上传权限，默认 11")
     parser.add_argument("--dry-run-create", action="store_true", help="创建阶段仅 dry-run")
+    parser.add_argument("--auto", action="store_true", help="自动确认机器人规划方案，不等待人工审核（用于自动化流水线）")
     args = parser.parse_args()
 
     ensure_chatbot_dirs()
@@ -126,7 +127,11 @@ def main() -> None:
         ]
         if args.config:
             step2_cmd.extend(["--config", args.config])
-        run_step_interactive(step2_cmd, "Step 2/3 Gemini 交互式规划机器人", pipeline_log)
+        if args.auto:
+            step2_cmd.append("--auto")
+            run_step_capture(step2_cmd, "Step 2/3 Gemini 规划机器人（auto）", pipeline_log)
+        else:
+            run_step_interactive(step2_cmd, "Step 2/3 Gemini 交互式规划机器人", pipeline_log)
 
         step3_cmd = [
             sys.executable,

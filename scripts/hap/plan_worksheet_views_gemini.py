@@ -332,7 +332,7 @@ def build_prompt(app_name: str, worksheet_name: str, worksheet_id: str, fields: 
 1) 仅允许 viewType=0(表格),1(看板),3(画廊),4(日历)。
 2) 视图数量 1-4 个，必须实用，不要凑数。
 3) displayControls / coverCid / viewControl 必须来自提供的字段ID；无法确定时填空或省略。
-4) 日历视图建议在 postCreateUpdates.advancedSetting 中提供 calendarcids（字符串化 JSON）。
+4) 日历视图必须在 postCreateUpdates.advancedSetting 中提供 calendarcids（字符串化 JSON），格式必须为：'[{{"begin":"日期字段ID","end":"结束日期字段ID或空字符串"}}]'。begin 为开始日期字段ID（必填），end 为结束日期字段ID（无则填空字符串）。
 5) 看板视图建议设置 viewControl 为单选字段ID（若存在）。
 6) 若字段不支持某视图，请不要输出该视图类型。
 7) 输出必须是可解析 JSON。

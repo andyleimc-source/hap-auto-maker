@@ -114,11 +114,29 @@ def publish_process(session: Session, process_id: str) -> bool:
     """调用 process/publish 将工作流设为开启状态，返回是否成功。"""
     try:
         resp = session.get(
-            f"https://api.mingdao.com/workflow/process/publish?isPublish=true&processId={process_id}"
+            f"https://api.mingdao.com/workflow/process/publish?isPublish=true&processId={process_id}",
         )
-        ok = resp.get("status") == 1
-        print(f"    process/publish → status={resp.get('status')} {'✓ 已开启' if ok else '✗ 发布失败'}", file=sys.stderr)
-        return ok
+        data = resp.get("data") or {}
+        is_publish = data.get("isPublish")
+        error_nodes = data.get("errorNodeIds") or []
+        warnings = data.get("processWarnings") or []
+        if is_publish:
+            print(f"    process/publish → ✓ 已开启", file=sys.stderr)
+            return True
+        else:
+            print(f"    process/publish → ✗ 未开启  errorNodes={error_nodes}  warnings={warnings}", file=sys.stderr)
+            # 如果有错误节点，尝试第二次发布（某些场景下首次调用仅做校验）
+            if error_nodes:
+                print(f"    process/publish → 重试发布...", file=sys.stderr)
+                resp2 = session.get(
+                    f"https://api.mingdao.com/workflow/process/publish?isPublish=true&processId={process_id}",
+                )
+                data2 = resp2.get("data") or {}
+                if data2.get("isPublish"):
+                    print(f"    process/publish → ✓ 重试成功，已开启", file=sys.stderr)
+                    return True
+                print(f"    process/publish → ✗ 重试仍失败  errorNodes={data2.get('errorNodeIds')}", file=sys.stderr)
+            return False
     except Exception as exc:
         print(f"    process/publish → 异常：{exc}", file=sys.stderr)
         return False
@@ -593,7 +611,7 @@ def execute_time_triggers(
             print(f"    ⏭  跳过（已存在）：{name}", file=sys.stderr)
             results.append({"ok": True, "skipped": True, "name": name}); continue
         try:
-            r = _create_time_based(session, app_id, fallback_ws_id, tt_plan, "time_trigger", publish)
+            r = _create_time_based(session, app_id, fallback_ws_id, tt_plan, "time_trigger", False)
         except Exception as exc:
             r = {"ok": False, "step": "exception", "error": str(exc)}
             print(f"    ❌ 异常：{exc}", file=sys.stderr)

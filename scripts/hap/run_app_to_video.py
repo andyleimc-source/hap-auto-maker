@@ -139,6 +139,9 @@ def collect_artifact_sources(execution_report: dict) -> Dict[str, str]:
         "tableview_filter_plan_json",
         "tableview_filter_apply_result_json",
         "mock_data_run_json",
+        "chatbot_pipeline_result_json",
+        "workflow_plan_json",
+        "workflow_execute_result_json",
     ]
     out: Dict[str, str] = {}
     for key in keys:

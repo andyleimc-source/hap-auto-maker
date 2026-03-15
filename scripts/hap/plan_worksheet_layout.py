@@ -9,9 +9,13 @@ import argparse
 import importlib.util
 import json
 import re
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+
+NETWORK_MAX_RETRIES = 3
+NETWORK_RETRY_DELAY = 5
 
 import requests
 from google import genai
@@ -448,11 +452,22 @@ def main() -> None:
 
     prompt = build_prompt(app_name=app_name, worksheet_brief=worksheet_brief, requirements=args.requirements.strip())
     client = genai.Client(api_key=load_api_key())
-    response = client.models.generate_content(
-        model=args.model,
-        contents=prompt,
-        config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0.2),
-    )
+    response = None
+    for net_try in range(1, NETWORK_MAX_RETRIES + 1):
+        try:
+            response = client.models.generate_content(
+                model=args.model,
+                contents=prompt,
+                config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0.2),
+            )
+            break
+        except Exception as e:
+            if net_try < NETWORK_MAX_RETRIES:
+                wait = NETWORK_RETRY_DELAY * net_try
+                print(f"[网络重试 {net_try}/{NETWORK_MAX_RETRIES}] {type(e).__name__}: {e}，{wait}s 后重试...")
+                time.sleep(wait)
+            else:
+                raise
     raw_result = extract_json(response.text or "")
     normalized = normalize_plan(raw_result, worksheet_brief)
 
