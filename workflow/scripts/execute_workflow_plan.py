@@ -2,44 +2,22 @@
 """
 执行工作流规划 JSON，批量创建工作流（execute_workflow_plan.py）
 
-读取 output/workflow_plan_latest.json（由 pipeline_workflows.py 生成），
-为每个工作表创建：
-  - 3 个自定义动作（按钮触发工作流）
-  - 1 个工作表事件触发工作流
-  - 1 个定时触发工作流
+读取 output/pipeline_workflows_latest.json（由 pipeline_workflows.py 生成），
+为每个工作表创建 6 个工作流，每个工作流包含触发节点 + 2-3 个有字段映射的动作节点：
+  - 自定义动作 × 3  （触发：按钮；动作节点：来自规划）
+  - 工作表事件触发 × 1（触发：数据变化；动作节点：来自规划）
+  - 时间触发 × 1    （触发：一次性定时；动作节点：来自规划）
+  - 定时触发 × 1    （触发：循环定时；动作节点：来自规划）
 
-执行完成后，每个工作表理论上拥有 5 个新工作流：
-  custom_action × 3 + worksheet_event × 1 + time_trigger × 1
-
-结果写入：
-  output/execute_workflow_plan_latest.json      - 执行汇总（最新覆盖）
-  logs/execute_workflow_plan_{timestamp}.json   - 每次运行的详细日志
+字段值中的 {{trigger.FIELD_ID}} 会在执行时自动替换为 $startNodeId-FIELD_ID$。
 
 用法：
   cd /Users/andy/Desktop/hap_auto/workflow
 
-  # 基础：读取默认 plan 文件，用 auth_config.py 或环境变量中的 Cookie
   python3 scripts/execute_workflow_plan.py
-
-  # 指定 plan 文件
-  python3 scripts/execute_workflow_plan.py \\
-    --plan-file output/my_plan.json
-
-  # 指定 Cookie（覆盖自动读取）
-  python3 scripts/execute_workflow_plan.py \\
-    --cookie 'your_cookie_here'
-
-  # 跳过已成功创建的工作表（防止重复执行）
-  python3 scripts/execute_workflow_plan.py \\
-    --skip-existing
-
-  # 只执行指定工作表（调试用）
-  python3 scripts/execute_workflow_plan.py \\
-    --only-worksheet 69aead6f952cd046bb57e3f2
-
-  # 发布所有自定义动作工作流
-  python3 scripts/execute_workflow_plan.py \\
-    --publish-custom-actions
+  python3 scripts/execute_workflow_plan.py --skip-existing
+  python3 scripts/execute_workflow_plan.py --plan-file output/my_plan.json
+  python3 scripts/execute_workflow_plan.py --only-worksheet 69aead6f952cd046bb57e3f2
 """
 
 from __future__ import annotations
@@ -49,6 +27,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import sys
 import time
 
@@ -65,43 +44,16 @@ def parse_args() -> argparse.Namespace:
     default_plan = scripts_dir.parent / "output" / "pipeline_workflows_latest.json"
 
     parser = argparse.ArgumentParser(
-        description="执行 workflow_plan_latest.json，批量创建所有工作流。"
+        description="执行 pipeline_workflows_latest.json，批量创建工作流（含动作节点和字段映射）。"
     )
-    parser.add_argument(
-        "--plan-file",
-        default=str(default_plan),
-        help=f"工作流规划 JSON 文件路径（默认：{default_plan}）。",
-    )
-    parser.add_argument(
-        "--cookie",
-        default="",
-        help="Cookie header 值。留空则自动从环境变量或 auth_config.py 加载。",
-    )
-    parser.add_argument(
-        "--auth-config",
-        default=str(default_auth_config),
-        help="auth_config.py 路径（默认：config/credentials/auth_config.py）。",
-    )
-    parser.add_argument(
-        "--origin",
-        default="https://www.mingdao.com",
-        help="请求 Origin header。",
-    )
-    parser.add_argument(
-        "--publish-custom-actions",
-        action="store_true",
-        help="创建自定义动作后立即发布工作流（默认只创建不发布）。",
-    )
-    parser.add_argument(
-        "--only-worksheet",
-        default="",
-        help="只执行指定工作表 ID（调试用，不填则执行全部）。",
-    )
-    parser.add_argument(
-        "--skip-on-error",
-        action="store_true",
-        help="遇到错误时跳过当前工作流，继续执行后续（默认：继续）。",
-    )
+    parser.add_argument("--plan-file", default=str(default_plan), help="工作流规划 JSON 文件路径。")
+    parser.add_argument("--cookie", default="", help="Cookie header 值。")
+    parser.add_argument("--auth-config", default=str(default_auth_config), help="auth_config.py 路径。")
+    parser.add_argument("--origin", default="https://www.mingdao.com", help="请求 Origin header。")
+    parser.add_argument("--publish", action="store_true", help="所有工作流创建后立即发布（开启状态）。")
+    parser.add_argument("--publish-custom-actions", action="store_true", help="（兼容旧参数）自定义动作创建后立即发布，推荐改用 --publish。")
+    parser.add_argument("--only-worksheet", default="", help="只执行指定工作表 ID（调试用）。")
+    parser.add_argument("--skip-existing", action="store_true", help="跳过已存在同名工作流（防重复）。")
     return parser.parse_args()
 
 
@@ -115,14 +67,15 @@ def load_auth_from_auth_config(path: Path) -> tuple[str, str, str]:
         return "", "", ""
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    account_id = str(getattr(module, "ACCOUNT_ID", "")).strip()
-    authorization = str(getattr(module, "AUTHORIZATION", "")).strip()
-    cookie = str(getattr(module, "COOKIE", "")).strip()
-    return account_id, authorization, cookie
+    return (
+        str(getattr(module, "ACCOUNT_ID", "")).strip(),
+        str(getattr(module, "AUTHORIZATION", "")).strip(),
+        str(getattr(module, "COOKIE", "")).strip(),
+    )
 
 
 def resolve_auth(cli_cookie: str, auth_config_path: Path) -> tuple[str, str, str, str]:
-    account_id = os.environ.get("MINGDAO_ACCOUNT_ID", "").strip()
+    account_id    = os.environ.get("MINGDAO_ACCOUNT_ID", "").strip()
     authorization = os.environ.get("MINGDAO_AUTHORIZATION", "").strip()
 
     if cli_cookie.strip():
@@ -137,22 +90,184 @@ def resolve_auth(cli_cookie: str, auth_config_path: Path) -> tuple[str, str, str
     return "", "", "", "none"
 
 
+# ── 去重 ───────────────────────────────────────────────────────────────────────
+
+def fetch_existing_names(session: Session, app_id: str) -> set[str]:
+    try:
+        resp  = session.get(f"https://api.mingdao.com/workflow/v1/process/listAll?relationId={app_id}")
+        names: set[str] = set()
+        for group in resp.get("data") or []:
+            for item in group.get("processList") or []:
+                name = item.get("name", "")
+                if name:
+                    names.add(name)
+        print(f"[skip-existing] 已有工作流 {len(names)} 个", file=sys.stderr)
+        return names
+    except Exception as exc:
+        print(f"[skip-existing] 拉取失败，不跳过：{exc}", file=sys.stderr)
+        return set()
+
+
+# ── 发布工作流 ────────────────────────────────────────────────────────────────
+
+def publish_process(session: Session, process_id: str) -> bool:
+    """调用 process/publish 将工作流设为开启状态，返回是否成功。"""
+    try:
+        resp = session.get(
+            f"https://api.mingdao.com/workflow/process/publish?isPublish=true&processId={process_id}"
+        )
+        ok = resp.get("status") == 1
+        print(f"    process/publish → status={resp.get('status')} {'✓ 已开启' if ok else '✗ 发布失败'}", file=sys.stderr)
+        return ok
+    except Exception as exc:
+        print(f"    process/publish → 异常：{exc}", file=sys.stderr)
+        return False
+
+
+# ── 动作节点：字段值处理 & 创建 ───────────────────────────────────────────────
+
+def _resolve_field_value(raw_value: str, start_node_id: str) -> str:
+    """
+    将 {{trigger.FIELD_ID}} 替换为 $startNodeId-FIELD_ID$，支持多个占位符。
+    时间触发类工作流的字段值不应包含占位符，但也不会报错——只是替换后无意义。
+    """
+    if not isinstance(raw_value, str):
+        return str(raw_value) if raw_value is not None else ""
+    return re.sub(
+        r"\{\{trigger\.([^}]+)\}\}",
+        lambda m: f"${start_node_id}-{m.group(1)}$",
+        raw_value,
+    )
+
+
+def _build_fields(raw_fields: list, start_node_id: str) -> list:
+    """处理字段数组：替换动态引用，补全 nodeAppId。"""
+    result = []
+    for f in raw_fields:
+        field = {
+            "fieldId":     f.get("fieldId", ""),
+            "type":        f.get("type", 2),
+            "enumDefault": f.get("enumDefault", 0),
+            "fieldValue":  _resolve_field_value(str(f.get("fieldValue", "") or ""), start_node_id),
+            "nodeAppId":   f.get("nodeAppId", ""),
+        }
+        if field["fieldId"]:
+            result.append(field)
+    return result
+
+
+def add_action_nodes(
+    session:       Session,
+    process_id:    str,
+    start_node_id: str,
+    worksheet_id:  str,
+    action_nodes:  list,
+) -> list[dict]:
+    """
+    按顺序创建 action_nodes 列表中每个节点，链式串联（前一个节点的 ID 作为下一个的 prveId）。
+
+    - prveId：上一个节点 ID（控制 UI 中的连接关系）
+    - selectNodeId：始终为 start_node_id（记录上下文来源于触发节点）
+    - fieldValue 中的 {{trigger.xxx}} 在此处替换为 $startNodeId-xxx$
+
+    若 action_nodes 为空，自动添加一个默认空节点（防止工作流无动作）。
+    """
+    if not action_nodes:
+        # 兜底：至少保证一个空节点
+        action_nodes = [{"name": "更新记录", "type": "update_record", "target_worksheet_id": worksheet_id, "fields": []}]
+
+    results: list[dict]  = []
+    prev_node_id: str    = start_node_id
+
+    for i, node_plan in enumerate(action_nodes, 1):
+        node_type = node_plan.get("type", "update_record")
+        action_id = "1" if node_type == "add_record" else "2"
+        name      = node_plan.get("name", f"动作节点{i}")
+        target_ws = node_plan.get("target_worksheet_id", "") or worksheet_id
+        fields    = _build_fields(node_plan.get("fields", []), start_node_id)
+
+        print(
+            f"      [动作{i}] {name}  type={node_type}  fields={len(fields)}  target={target_ws[:16]}",
+            file=sys.stderr,
+        )
+
+        # Step A: 添加节点骨架
+        add_resp = session.post(
+            "https://api.mingdao.com/workflow/flowNode/add",
+            {
+                "processId": process_id,
+                "actionId":  action_id,
+                "appType":   1,
+                "name":      name,
+                "prveId":    prev_node_id,
+                "typeId":    6,
+            },
+        )
+        print(f"        flowNode/add → status={add_resp.get('status')}", file=sys.stderr)
+
+        if add_resp.get("status") != 1:
+            results.append({"ok": False, "step": "flowNode/add", "name": name, "raw": add_resp})
+            continue
+
+        added = add_resp.get("data", {}).get("addFlowNodes", [])
+        if not added:
+            results.append({"ok": False, "step": "addFlowNodes empty", "name": name})
+            continue
+
+        node_id = added[0]["id"]
+
+        # Step B: 保存节点配置（含字段映射）
+        save_resp = session.post(
+            "https://api.mingdao.com/workflow/flowNode/saveNode",
+            {
+                "processId":    process_id,
+                "nodeId":       node_id,
+                "flowNodeType": 6,
+                "actionId":     action_id,
+                "name":         name,
+                # update_record: selectNodeId = 触发节点（提供记录上下文）
+                # add_record:    selectNodeId = ""
+                "selectNodeId": start_node_id if action_id == "2" else "",
+                "appId":        target_ws,
+                "appType":      1,
+                "fields":       fields,
+                "filters":      [],
+            },
+        )
+        ok = save_resp.get("status") == 1
+        print(
+            f"        flowNode/saveNode → status={save_resp.get('status')} msg={save_resp.get('msg')!r}",
+            file=sys.stderr,
+        )
+
+        results.append({
+            "ok":          ok,
+            "node_id":     node_id,
+            "type":        node_type,
+            "name":        name,
+            "fields_count": len(fields),
+        })
+        if ok:
+            prev_node_id = node_id  # 下一个节点接在本节点之后
+
+    return results
+
+
 # ── 创建自定义动作工作流 ───────────────────────────────────────────────────────
 
 def create_custom_action(
-    session: Session,
+    session:      Session,
     worksheet_id: str,
-    app_id: str,
-    name: str,
-    confirm_msg: str,
-    sure_name: str,
-    cancel_name: str,
-    publish: bool = False,
+    app_id:       str,
+    action_plan:  dict,
+    publish:      bool = False,
 ) -> dict:
-    """
-    创建自定义动作触发工作流（按钮触发）。
-    流程：SaveWorksheetBtn → getProcessByTriggerId → (publish) → SaveWorksheetBtn(回填workflowId)
-    """
+    name        = action_plan.get("name", "未命名按钮")
+    confirm_msg = action_plan.get("confirm_msg", "你确认执行此操作吗？")
+    sure_name   = action_plan.get("sure_name", "确认")
+    cancel_name = action_plan.get("cancel_name", "取消")
+    action_nodes_plan = action_plan.get("action_nodes", [])
+
     btn_payload = {
         "btnId": "",
         "name": name,
@@ -174,25 +289,13 @@ def create_custom_action(
         "writeObject": "",
         "clickType": 1,
         "showType": 1,
-        "advancedSetting": {
-            "remarkrequired": "1",
-            "remarkname": "操作原因",
-            "tiptext": "操作完成",
-        },
+        "advancedSetting": {"remarkrequired": "1", "remarkname": "操作原因", "tiptext": "操作完成"},
         "workflowType": 1,
     }
 
     # Step 1: 创建按钮（后端自动创建工作流）
-    btn_resp = session.post(
-        "https://www.mingdao.com/api/Worksheet/SaveWorksheetBtn",
-        btn_payload,
-    )
-    print(
-        f"    [SaveWorksheetBtn] state={btn_resp.get('state')} "
-        f"data={btn_resp.get('data')!r}",
-        file=sys.stderr,
-    )
-
+    btn_resp = session.post("https://www.mingdao.com/api/Worksheet/SaveWorksheetBtn", btn_payload)
+    print(f"    SaveWorksheetBtn → state={btn_resp.get('state')}", file=sys.stderr)
     if btn_resp.get("state") != 1:
         return {"ok": False, "step": "SaveWorksheetBtn(create)", "raw": btn_resp}
 
@@ -200,16 +303,12 @@ def create_custom_action(
     if not btn_id:
         return {"ok": False, "step": "btnId empty", "raw": btn_resp}
 
-    # Step 2: 获取 processId
+    # Step 2: 获取 processId + startEventId
     trigger_resp = session.get(
         f"https://api.mingdao.com/workflow/process/getProcessByTriggerId"
         f"?appId={worksheet_id}&triggerId={btn_id}",
     )
-    print(
-        f"    [getProcessByTriggerId] status={trigger_resp.get('status')}",
-        file=sys.stderr,
-    )
-
+    print(f"    getProcessByTriggerId → status={trigger_resp.get('status')}", file=sys.stderr)
     if trigger_resp.get("status") != 1:
         return {"ok": False, "step": "getProcessByTriggerId", "raw": trigger_resp}
 
@@ -217,45 +316,38 @@ def create_custom_action(
     if not processes:
         return {"ok": False, "step": "no process found", "raw": trigger_resp}
 
-    process = processes[0]
-    process_id = str(process.get("id", "")).strip()
+    process        = processes[0]
+    process_id     = str(process.get("id", "")).strip()
     start_event_id = str(process.get("startEventId", "")).strip()
-
     if not process_id:
         return {"ok": False, "step": "processId empty", "raw": trigger_resp}
 
-    # Step 3: 可选发布
-    if publish:
-        pub_resp = session.get(
-            f"https://api.mingdao.com/workflow/process/publish?isPublish=true&processId={process_id}",
-        )
-        print(
-            f"    [publish] isPublish={pub_resp.get('data', {}).get('isPublish')}",
-            file=sys.stderr,
-        )
-
-    # Step 4: 回填 workflowId
+    # Step 3: 回填 workflowId
     btn_payload_update = dict(btn_payload)
-    btn_payload_update["btnId"] = btn_id
+    btn_payload_update["btnId"]      = btn_id
     btn_payload_update["workflowId"] = process_id
+    session.post("https://www.mingdao.com/api/Worksheet/SaveWorksheetBtn", btn_payload_update)
 
-    btn_update_resp = session.post(
-        "https://www.mingdao.com/api/Worksheet/SaveWorksheetBtn",
-        btn_payload_update,
-    )
-    print(
-        f"    [SaveWorksheetBtn(update)] state={btn_update_resp.get('state')}",
-        file=sys.stderr,
-    )
+    # Step 4: 创建动作节点（含字段映射）
+    action_results = []
+    if start_event_id:
+        print(f"    [action nodes] 创建 {len(action_nodes_plan) or 1} 个...", file=sys.stderr)
+        action_results = add_action_nodes(session, process_id, start_event_id, worksheet_id, action_nodes_plan)
+
+    # Step 5: 发布（动作节点创建完后再发布）
+    published = False
+    if publish:
+        published = publish_process(session, process_id)
 
     return {
-        "ok": True,
-        "trigger_type": "custom_action",
-        "name": name,
-        "btn_id": btn_id,
-        "process_id": process_id,
+        "ok":            True,
+        "trigger_type":  "custom_action",
+        "name":          name,
+        "btn_id":        btn_id,
+        "process_id":    process_id,
         "start_event_id": start_event_id,
-        "publish_status": 1 if publish else 0,
+        "publish_status": 1 if published else 0,
+        "action_nodes":  action_results,
         "workflow_edit_url": f"https://www.mingdao.com/workflowedit/{process_id}",
     }
 
@@ -263,41 +355,29 @@ def create_custom_action(
 # ── 创建工作表事件触发工作流 ───────────────────────────────────────────────────
 
 def create_worksheet_event(
-    session: Session,
-    relation_id: str,
-    worksheet_id: str,
-    name: str,
-    trigger_id: str = "2",
+    session:           Session,
+    relation_id:       str,
+    worksheet_id:      str,
+    event_plan:        dict,
+    publish:           bool = False,
 ) -> dict:
-    """
-    创建工作表事件触发工作流。
-    流程：process/add → AppManagement/AddWorkflow → getProcessPublish → flowNode/saveNode
-    """
+    name             = event_plan.get("name", "工作表事件触发")
+    trigger_id       = str(event_plan.get("trigger_id", "2"))
+    action_nodes_plan = event_plan.get("action_nodes", [])
+
     # Step 1: 创建工作流
     add_resp = session.post(
         "https://api.mingdao.com/workflow/process/add",
-        {
-            "companyId": "",
-            "relationId": relation_id,
-            "relationType": 2,
-            "startEventAppType": 1,
-            "name": name,
-            "explain": "",
-        },
+        {"companyId": "", "relationId": relation_id, "relationType": 2,
+         "startEventAppType": 1, "name": name, "explain": ""},
     )
-    print(
-        f"    [process/add] status={add_resp.get('status')} "
-        f"id={add_resp.get('data', {}).get('id')!r}",
-        file=sys.stderr,
-    )
-
+    print(f"    process/add → status={add_resp.get('status')}", file=sys.stderr)
     if add_resp.get("status") != 1:
         return {"ok": False, "step": "process/add", "raw": add_resp}
 
-    data = add_resp.get("data") or {}
+    data       = add_resp.get("data") or {}
     process_id = str(data.get("id", "")).strip()
     company_id = str(data.get("companyId", "")).strip()
-
     if not (process_id and company_id):
         return {"ok": False, "step": "process_id/company_id empty", "raw": add_resp}
 
@@ -309,108 +389,77 @@ def create_worksheet_event(
     )
 
     # Step 3: 获取 startNodeId
-    publish_resp = session.get(
+    pub_resp = session.get(
         f"https://api.mingdao.com/workflow/process/getProcessPublish?processId={process_id}",
     )
     start_node_id = ""
-    if publish_resp.get("status") == 1:
-        pdata = publish_resp.get("data") or {}
-        start_node_id = str(pdata.get("startNodeId", "")).strip()
-    print(
-        f"    [getProcessPublish] startNodeId={start_node_id!r}",
-        file=sys.stderr,
-    )
+    if pub_resp.get("status") == 1:
+        start_node_id = str((pub_resp.get("data") or {}).get("startNodeId", "")).strip()
+    print(f"    getProcessPublish → startNodeId={start_node_id!r}", file=sys.stderr)
 
-    if not start_node_id:
-        return {
-            "ok": True,  # 工作流已创建，只是触发节点未配置
-            "trigger_type": "worksheet_event",
-            "name": name,
-            "process_id": process_id,
-            "start_node_configured": False,
-            "warning": "saveNode skipped: startNodeId not found",
-            "workflow_edit_url": f"https://www.mingdao.com/workflowedit/{process_id}",
-        }
+    action_results = []
+    if start_node_id:
+        # Step 4: 配置触发节点（绑定工作表）
+        session.post(
+            "https://api.mingdao.com/workflow/flowNode/saveNode",
+            {
+                "appId": worksheet_id, "appType": 1, "assignFieldIds": [],
+                "processId": process_id, "nodeId": start_node_id,
+                "flowNodeType": 0, "operateCondition": [],
+                "triggerId": trigger_id, "name": "工作表事件触发", "controls": [],
+            },
+        )
 
-    # Step 4: 配置触发节点（绑定工作表）
-    save_node_resp = session.post(
-        "https://api.mingdao.com/workflow/flowNode/saveNode",
-        {
-            "appId": worksheet_id,
-            "appType": 1,
-            "assignFieldIds": [],
-            "processId": process_id,
-            "nodeId": start_node_id,
-            "flowNodeType": 0,
-            "operateCondition": [],
-            "triggerId": trigger_id,
-            "name": "工作表事件触发",
-            "controls": [],
-        },
-    )
-    print(
-        f"    [flowNode/saveNode] status={save_node_resp.get('status')} "
-        f"msg={save_node_resp.get('msg')!r}",
-        file=sys.stderr,
-    )
+        # Step 5: 创建动作节点（含字段映射）
+        print(f"    [action nodes] 创建 {len(action_nodes_plan) or 1} 个...", file=sys.stderr)
+        action_results = add_action_nodes(session, process_id, start_node_id, worksheet_id, action_nodes_plan)
+
+    # Step 6: 发布
+    published = False
+    if publish and process_id:
+        published = publish_process(session, process_id)
 
     return {
-        "ok": True,
-        "trigger_type": "worksheet_event",
-        "name": name,
-        "process_id": process_id,
-        "trigger_id": trigger_id,
-        "start_node_configured": save_node_resp.get("status") == 1,
-        "publish_status": 0,
+        "ok": True, "trigger_type": "worksheet_event",
+        "name": name, "process_id": process_id, "trigger_id": trigger_id,
+        "start_node_configured": bool(start_node_id),
+        "action_nodes": action_results, "publish_status": 1 if published else 0,
         "workflow_edit_url": f"https://www.mingdao.com/workflowedit/{process_id}",
     }
 
 
-# ── 创建定时触发工作流 ─────────────────────────────────────────────────────────
+# ── 创建时间触发工作流（一次性 & 循环，共用逻辑）─────────────────────────────
 
-def create_time_trigger(
-    session: Session,
-    relation_id: str,
-    name: str,
-    execute_time: str,
-    execute_end_time: str = "",
-    repeat_type: str = "1",
-    interval: int = 1,
-    frequency: int = 7,
-    week_days: list | None = None,
+def _create_time_based(
+    session:          Session,
+    relation_id:      str,
+    worksheet_id:     str,
+    trigger_plan:     dict,
+    trigger_type_str: str,
+    publish:          bool = False,
 ) -> dict:
-    """
-    创建定时触发工作流。
-    流程：process/add（startEventAppType=5）→ AppManagement/AddWorkflow → flowNode/saveNode
-    """
-    if week_days is None:
-        week_days = []
+    name             = trigger_plan.get("name", "定时触发")
+    execute_time     = trigger_plan.get("execute_time", "")
+    execute_end_time = trigger_plan.get("execute_end_time", "")
+    repeat_type      = str(trigger_plan.get("repeat_type", "1"))
+    interval         = int(trigger_plan.get("interval", 1))
+    frequency        = int(trigger_plan.get("frequency", 7))
+    week_days        = trigger_plan.get("week_days") or []
+    action_nodes_plan = trigger_plan.get("action_nodes", [])
 
-    # Step 1: 创建工作流（时间触发 startEventAppType=5）
+    # Step 1: 创建工作流
     add_resp = session.post(
         "https://api.mingdao.com/workflow/process/add",
-        {
-            "companyId": "",
-            "relationId": relation_id,
-            "relationType": 2,
-            "startEventAppType": 5,
-            "name": name,
-            "explain": "",
-        },
+        {"companyId": "", "relationId": relation_id, "relationType": 2,
+         "startEventAppType": 5, "name": name, "explain": ""},
     )
-    print(
-        f"    [process/add] status={add_resp.get('status')} "
-        f"id={add_resp.get('data', {}).get('id')!r}",
-        file=sys.stderr,
-    )
-
+    print(f"    process/add → status={add_resp.get('status')}", file=sys.stderr)
     if add_resp.get("status") != 1:
         return {"ok": False, "step": "process/add", "raw": add_resp}
 
-    data = add_resp.get("data") or {}
+    data       = add_resp.get("data") or {}
     process_id = str(data.get("id", "")).strip()
     company_id = str(data.get("companyId", "")).strip()
-
     if not (process_id and company_id):
         return {"ok": False, "step": "process_id/company_id empty", "raw": add_resp}
 
@@ -422,312 +471,280 @@ def create_time_trigger(
     )
 
     # Step 3: 获取 startNodeId
-    publish_resp = session.get(
+    pub_resp = session.get(
         f"https://api.mingdao.com/workflow/process/getProcessPublish?processId={process_id}",
     )
     start_node_id = ""
-    if publish_resp.get("status") == 1:
-        pdata = publish_resp.get("data") or {}
-        start_node_id = str(pdata.get("startNodeId", "")).strip()
-    print(
-        f"    [getProcessPublish] startNodeId={start_node_id!r}",
-        file=sys.stderr,
-    )
+    if pub_resp.get("status") == 1:
+        start_node_id = str((pub_resp.get("data") or {}).get("startNodeId", "")).strip()
+    print(f"    getProcessPublish → startNodeId={start_node_id!r}", file=sys.stderr)
 
-    if not start_node_id:
-        return {
-            "ok": True,
-            "trigger_type": "time_trigger",
-            "name": name,
-            "process_id": process_id,
-            "timer_configured": False,
-            "warning": "saveNode skipped: startNodeId not found",
-            "workflow_edit_url": f"https://www.mingdao.com/workflowedit/{process_id}",
-        }
+    action_results = []
+    if start_node_id:
+        # Step 4: 配置定时触发节点
+        session.post(
+            "https://api.mingdao.com/workflow/flowNode/saveNode",
+            {
+                "appType": 5, "assignFieldIds": [], "processId": process_id,
+                "nodeId": start_node_id, "flowNodeType": 0, "name": "定时触发",
+                "executeTime": execute_time, "executeEndTime": execute_end_time,
+                "repeatType": repeat_type, "interval": interval,
+                "frequency": frequency, "weekDays": week_days,
+                "controls": [], "returns": [],
+            },
+        )
 
-    # Step 4: 配置定时触发节点
-    save_node_resp = session.post(
-        "https://api.mingdao.com/workflow/flowNode/saveNode",
-        {
-            "appType": 5,
-            "assignFieldIds": [],
-            "processId": process_id,
-            "nodeId": start_node_id,
-            "flowNodeType": 0,
-            "name": "定时触发",
-            "executeTime": execute_time,
-            "executeEndTime": execute_end_time,
-            "repeatType": repeat_type,
-            "interval": interval,
-            "frequency": frequency,
-            "weekDays": week_days,
-            "controls": [],
-            "returns": [],
-        },
-    )
-    print(
-        f"    [flowNode/saveNode] status={save_node_resp.get('status')} "
-        f"msg={save_node_resp.get('msg')!r}",
-        file=sys.stderr,
-    )
+        # Step 5: 创建动作节点（时间触发：字段值不应含 trigger 引用，但不报错）
+        print(f"    [action nodes] 创建 {len(action_nodes_plan) or 1} 个...", file=sys.stderr)
+        action_results = add_action_nodes(session, process_id, start_node_id, worksheet_id, action_nodes_plan)
+
+    # Step 6: 发布
+    published = False
+    if publish and process_id:
+        published = publish_process(session, process_id)
 
     return {
-        "ok": True,
-        "trigger_type": "time_trigger",
-        "name": name,
-        "process_id": process_id,
-        "execute_time": execute_time,
-        "execute_end_time": execute_end_time,
-        "timer_configured": save_node_resp.get("status") == 1,
-        "publish_status": 0,
+        "ok": True, "trigger_type": trigger_type_str,
+        "name": name, "process_id": process_id,
+        "execute_time": execute_time, "repeat_type": repeat_type,
+        "timer_configured": bool(start_node_id),
+        "action_nodes": action_results, "publish_status": 1 if published else 0,
         "workflow_edit_url": f"https://www.mingdao.com/workflowedit/{process_id}",
     }
 
 
-# ── 执行单个工作表的所有工作流 ─────────────────────────────────────────────────
+# ── 执行单个工作表的 6 个工作流 ───────────────────────────────────────────────
 
 def execute_worksheet_plan(
-    session: Session,
-    app_id: str,
-    ws_plan: dict,
+    session:               Session,
+    app_id:                str,
+    ws_plan:               dict,
+    publish:               bool = False,
     publish_custom_actions: bool = False,
+    existing_names:        set | None = None,
 ) -> dict:
-    """
-    对一个工作表执行完整的 5 个工作流创建：
-      3 × custom_action + 1 × worksheet_event + 1 × time_trigger
-    返回该工作表的执行结果汇总。
-    """
-    worksheet_id = ws_plan.get("worksheet_id", "")
+    worksheet_id   = ws_plan.get("worksheet_id", "")
     worksheet_name = ws_plan.get("worksheet_name", worksheet_id)
     results: list[dict] = []
 
-    # ── 3 个自定义动作 ─────────────────────────────────────────────────────────
-    for i, action in enumerate(ws_plan.get("custom_actions", [])[:3], 1):
-        name = action.get("name", f"自定义动作{i}")
-        confirm_msg = action.get("confirm_msg", "你确认执行此操作吗？")
-        sure_name = action.get("sure_name", "确认")
-        cancel_name = action.get("cancel_name", "取消")
+    def _skip(name: str) -> bool:
+        if existing_names and name in existing_names:
+            print(f"    ⏭  跳过（已存在）：{name}", file=sys.stderr)
+            return True
+        return False
 
-        print(
-            f"\n  [{i}/5] 自定义动作 \"{name}\"",
-            file=sys.stderr,
-        )
+    # ── 3 个自定义动作 ────────────────────────────────────────────────────────
+    for i, action_plan in enumerate((ws_plan.get("custom_actions") or [])[:3], 1):
+        name = action_plan.get("name", f"自定义动作{i}")
+        print(f"\n  [{i}/6] 自定义动作「{name}」", file=sys.stderr)
+        if _skip(name):
+            results.append({"ok": True, "skipped": True, "name": name, "seq": i}); continue
         try:
-            result = create_custom_action(
-                session=session,
-                worksheet_id=worksheet_id,
-                app_id=app_id,
-                name=name,
-                confirm_msg=confirm_msg,
-                sure_name=sure_name,
-                cancel_name=cancel_name,
-                publish=publish_custom_actions,
-            )
+            r = create_custom_action(session, worksheet_id, app_id, action_plan, publish or publish_custom_actions)
         except Exception as exc:
-            result = {"ok": False, "step": "exception", "error": str(exc)}
+            r = {"ok": False, "step": "exception", "error": str(exc)}
             print(f"    ❌ 异常：{exc}", file=sys.stderr)
+        r["seq"] = i
+        results.append(r)
+        print(f"    {'✓' if r.get('ok') else '✗'}  process_id={r.get('process_id')}", file=sys.stderr)
 
-        result["seq"] = i
-        results.append(result)
-        status_icon = "✓" if result.get("ok") else "✗"
-        print(f"    {status_icon} process_id={result.get('process_id')}", file=sys.stderr)
-
-    # ── 工作表事件触发 ─────────────────────────────────────────────────────────
-    ws_event = ws_plan.get("worksheet_event", {})
-    event_name = ws_event.get("name", "工作表事件触发")
-    trigger_id = str(ws_event.get("trigger_id", "2"))
-
-    print(f"\n  [4/5] 工作表事件触发 \"{event_name}\"", file=sys.stderr)
-    try:
-        result = create_worksheet_event(
-            session=session,
-            relation_id=app_id,
-            worksheet_id=worksheet_id,
-            name=event_name,
-            trigger_id=trigger_id,
-        )
-    except Exception as exc:
-        result = {"ok": False, "step": "exception", "error": str(exc)}
-        print(f"    ❌ 异常：{exc}", file=sys.stderr)
-
-    result["seq"] = 4
-    results.append(result)
-    status_icon = "✓" if result.get("ok") else "✗"
-    print(f"    {status_icon} process_id={result.get('process_id')}", file=sys.stderr)
-
-    # ── 定时触发 ──────────────────────────────────────────────────────────────
-    tt = ws_plan.get("time_trigger", {})
-    tt_name = tt.get("name", "定时触发")
-    execute_time = tt.get("execute_time", "")
-    execute_end_time = tt.get("execute_end_time", "")
-    repeat_type = str(tt.get("repeat_type", "1"))
-    interval = int(tt.get("interval", 1))
-    frequency = int(tt.get("frequency", 7))
-    week_days = tt.get("week_days") or []
-
-    print(f"\n  [5/5] 定时触发 \"{tt_name}\"", file=sys.stderr)
-    try:
-        result = create_time_trigger(
-            session=session,
-            relation_id=app_id,
-            name=tt_name,
-            execute_time=execute_time,
-            execute_end_time=execute_end_time,
-            repeat_type=repeat_type,
-            interval=interval,
-            frequency=frequency,
-            week_days=week_days,
-        )
-    except Exception as exc:
-        result = {"ok": False, "step": "exception", "error": str(exc)}
-        print(f"    ❌ 异常：{exc}", file=sys.stderr)
-
-    result["seq"] = 5
-    results.append(result)
-    status_icon = "✓" if result.get("ok") else "✗"
-    print(f"    {status_icon} process_id={result.get('process_id')}", file=sys.stderr)
+    # ── 3 个工作表事件触发 ────────────────────────────────────────────────────
+    for j, event_plan in enumerate((ws_plan.get("worksheet_events") or [])[:3], 1):
+        seq      = 3 + j   # 4, 5, 6
+        ev_name  = event_plan.get("name", f"工作表事件触发{j}")
+        print(f"\n  [{seq}/6] 工作表事件触发{j}「{ev_name}」", file=sys.stderr)
+        if _skip(ev_name):
+            results.append({"ok": True, "skipped": True, "name": ev_name, "seq": seq}); continue
+        try:
+            r = create_worksheet_event(session, app_id, worksheet_id, event_plan, publish)
+        except Exception as exc:
+            r = {"ok": False, "step": "exception", "error": str(exc)}
+            print(f"    ❌ 异常：{exc}", file=sys.stderr)
+        r["seq"] = seq
+        results.append(r)
+        print(f"    {'✓' if r.get('ok') else '✗'}  process_id={r.get('process_id')}", file=sys.stderr)
 
     ok_count = sum(1 for r in results if r.get("ok"))
     return {
-        "worksheet_id": worksheet_id,
-        "worksheet_name": worksheet_name,
-        "total": len(results),
-        "ok": ok_count,
-        "failed": len(results) - ok_count,
+        "worksheet_id": worksheet_id, "worksheet_name": worksheet_name,
+        "total": len(results), "ok": ok_count, "failed": len(results) - ok_count,
         "workflows": results,
     }
+
+
+# ── 执行全局时间触发工作流（整个应用共 3 个）─────────────────────────────────
+
+def execute_time_triggers(
+    session:        Session,
+    app_id:         str,
+    time_triggers:  list,
+    fallback_ws_id: str,
+    publish:        bool = False,
+    existing_names: set | None = None,
+) -> list[dict]:
+    """执行规划中全局的 time_triggers（最多 3 个）。"""
+    results: list[dict] = []
+    for i, tt_plan in enumerate(time_triggers[:3], 1):
+        name = tt_plan.get("name", f"定时触发{i}")
+        print(f"\n  [时间触发 {i}/3]「{name}」", file=sys.stderr)
+        if existing_names and name in existing_names:
+            print(f"    ⏭  跳过（已存在）：{name}", file=sys.stderr)
+            results.append({"ok": True, "skipped": True, "name": name}); continue
+        try:
+            r = _create_time_based(session, app_id, fallback_ws_id, tt_plan, "time_trigger", publish)
+        except Exception as exc:
+            r = {"ok": False, "step": "exception", "error": str(exc)}
+            print(f"    ❌ 异常：{exc}", file=sys.stderr)
+        results.append(r)
+        print(f"    {'✓' if r.get('ok') else '✗'}  process_id={r.get('process_id')}", file=sys.stderr)
+    return results
 
 
 # ── 主流程 ─────────────────────────────────────────────────────────────────────
 
 def main() -> int:
-    started_at = time.time()
-    args = parse_args()
+    started_at  = time.time()
+    args        = parse_args()
     script_name = Path(__file__).stem
     auth_config_path = Path(args.auth_config).expanduser().resolve()
-    log_args = {k: v for k, v in vars(args).items() if k != "cookie"}
+    log_args    = {k: v for k, v in vars(args).items() if k != "cookie"}
 
     # 1. 读取规划文件
     plan_path = Path(args.plan_file).expanduser().resolve()
     print(f"\n[step 1/3] 读取规划文件：{plan_path}", file=sys.stderr)
     if not plan_path.exists():
-        print(
-            f"Error: 规划文件不存在：{plan_path}\n"
-            "  请先运行：python3 scripts/pipeline_workflows.py --relation-id <appId>",
-            file=sys.stderr,
+        msg = (
+            f"规划文件不存在：{plan_path}\n"
+            "  请先运行：python3 scripts/pipeline_workflows.py --relation-id <appId>"
         )
-        persist(script_name, None, args=log_args, error="plan file not found", started_at=started_at)
+        print(f"Error: {msg}", file=sys.stderr)
+        persist(script_name, None, args=log_args, error=msg, started_at=started_at)
         return 2
 
-    plan = json.loads(plan_path.read_text(encoding="utf-8"))
-    app_id = plan.get("app_id", "")
-    app_name = plan.get("app_name", "未知应用")
-    worksheets = plan.get("worksheets", [])
+    plan          = json.loads(plan_path.read_text(encoding="utf-8"))
+    app_id        = plan.get("app_id", "")
+    app_name      = plan.get("app_name", "未知应用")
+    worksheets    = plan.get("worksheets", [])
+    time_triggers = plan.get("time_triggers", [])
 
     if not app_id:
-        print("Error: 规划文件中缺少 app_id 字段。", file=sys.stderr)
         persist(script_name, None, args=log_args, error="missing app_id in plan", started_at=started_at)
         return 2
 
-    # 过滤指定工作表
     if args.only_worksheet:
-        worksheets = [ws for ws in worksheets if ws.get("worksheet_id") == args.only_worksheet]
+        worksheets    = [ws for ws in worksheets if ws.get("worksheet_id") == args.only_worksheet]
+        time_triggers = []  # 指定单表时不执行全局时间触发
         if not worksheets:
             print(f"Error: 未找到工作表 ID：{args.only_worksheet}", file=sys.stderr)
             return 2
 
+    total_estimated = len(worksheets) * 6 + len(time_triggers)
     print(
-        f"[step 1/3] ✓ 应用：{app_name}，共 {len(worksheets)} 个工作表，"
-        f"预计创建 {len(worksheets) * 5} 个工作流",
+        f"[step 1/3] ✓ 应用：{app_name}，{len(worksheets)} 个工作表 × 6 = {len(worksheets)*6} 个"
+        f"，全局时间触发 {len(time_triggers)} 个，共 {total_estimated} 个工作流",
         file=sys.stderr,
     )
 
     # 2. 解析认证
     account_id, authorization, cookie, cookie_source = resolve_auth(args.cookie, auth_config_path)
     if not cookie:
-        print(
-            "Error: 缺少 Cookie。\n"
+        msg = (
+            "缺少 Cookie。\n"
             "  方式1：--cookie '...'\n"
             "  方式2：export MINGDAO_COOKIE='...'\n"
-            "  方式3：在 config/credentials/auth_config.py 中设置 COOKIE 变量",
-            file=sys.stderr,
+            "  方式3：在 config/credentials/auth_config.py 中设置 COOKIE 变量"
         )
-        persist(script_name, None, args=log_args, error="missing cookie", started_at=started_at)
+        print(f"Error: {msg}", file=sys.stderr)
+        persist(script_name, None, args=log_args, error=msg, started_at=started_at)
         return 2
 
     print(f"[step 2/3] Cookie 来源：{cookie_source}", file=sys.stderr)
     session = Session(cookie, account_id, authorization, args.origin)
 
-    # 3. 执行每个工作表的工作流创建
-    print(f"\n[step 3/3] 开始批量创建工作流...", file=sys.stderr)
+    # 3. 可选：拉取已有工作流名称
+    existing_names: set | None = None
+    if args.skip_existing:
+        print("[step 2/3] 拉取已有工作流（--skip-existing）...", file=sys.stderr)
+        existing_names = fetch_existing_names(session, app_id)
+
+    # 4. 批量创建（按工作表）
+    print(f"\n[step 3/3] 开始批量创建...", file=sys.stderr)
     print("=" * 60, file=sys.stderr)
 
     all_results: list[dict] = []
-    total_ok = 0
-    total_failed = 0
+    total_ok = total_failed = 0
 
     for idx, ws_plan in enumerate(worksheets, 1):
         ws_name = ws_plan.get("worksheet_name", ws_plan.get("worksheet_id", "?"))
-        ws_id = ws_plan.get("worksheet_id", "")
-        print(
-            f"\n【{idx}/{len(worksheets)}】工作表：{ws_name}（{ws_id}）",
-            file=sys.stderr,
-        )
-
+        ws_id   = ws_plan.get("worksheet_id", "")
+        print(f"\n【{idx}/{len(worksheets)}】工作表：{ws_name}（{ws_id}）", file=sys.stderr)
         try:
             ws_result = execute_worksheet_plan(
-                session=session,
-                app_id=app_id,
-                ws_plan=ws_plan,
-                publish_custom_actions=args.publish_custom_actions,
+                session                = session,
+                app_id                 = app_id,
+                ws_plan                = ws_plan,
+                publish                = args.publish,
+                publish_custom_actions = args.publish_custom_actions,
+                existing_names         = existing_names,
             )
         except Exception as exc:
             print(f"  ❌ 工作表执行异常：{exc}", file=sys.stderr)
             ws_result = {
-                "worksheet_id": ws_id,
-                "worksheet_name": ws_name,
-                "total": 5,
-                "ok": 0,
-                "failed": 5,
-                "error": str(exc),
-                "workflows": [],
+                "worksheet_id": ws_id, "worksheet_name": ws_name,
+                "total": 6, "ok": 0, "failed": 6,
+                "error": str(exc), "workflows": [],
             }
 
         all_results.append(ws_result)
-        total_ok += ws_result.get("ok", 0)
+        total_ok     += ws_result.get("ok", 0)
         total_failed += ws_result.get("failed", 0)
+        icon = "✅" if ws_result.get("failed", 0) == 0 else "⚠️ "
+        print(f"  {icon} {ws_result.get('ok')}/{ws_result.get('total')} 成功", file=sys.stderr)
 
-        ok_icon = "✅" if ws_result.get("failed", 0) == 0 else "⚠️ "
-        print(
-            f"  {ok_icon} 完成：{ws_result.get('ok')}/{ws_result.get('total')} 成功",
-            file=sys.stderr,
+    # 5. 全局时间触发（3 个，跨工作表）
+    tt_results: list[dict] = []
+    if time_triggers:
+        fallback_ws_id = worksheets[0].get("worksheet_id", "") if worksheets else ""
+        print(f"\n{'=' * 60}", file=sys.stderr)
+        print(f"【全局时间触发】共 {len(time_triggers)} 个", file=sys.stderr)
+        tt_results = execute_time_triggers(
+            session        = session,
+            app_id         = app_id,
+            time_triggers  = time_triggers,
+            fallback_ws_id = fallback_ws_id,
+            publish        = args.publish,
+            existing_names = existing_names,
         )
+        tt_ok     = sum(1 for r in tt_results if r.get("ok"))
+        tt_failed = len(tt_results) - tt_ok
+        total_ok     += tt_ok
+        total_failed += tt_failed
+        icon = "✅" if tt_failed == 0 else "⚠️ "
+        print(f"  {icon} 时间触发 {tt_ok}/{len(tt_results)} 成功", file=sys.stderr)
 
-    # 4. 汇总输出
-    print("\n" + "=" * 60, file=sys.stderr)
-
+    # 6. 汇总输出
+    import datetime as _dt
     output = {
-        "app_id": app_id,
-        "app_name": app_name,
+        "app_id": app_id, "app_name": app_name,
         "plan_file": str(plan_path),
-        "executed_at": __import__("datetime").datetime.now().isoformat(timespec="seconds"),
+        "executed_at": _dt.datetime.now().isoformat(timespec="seconds"),
         "total_workflows": total_ok + total_failed,
-        "ok": total_ok,
-        "failed": total_failed,
+        "ok": total_ok, "failed": total_failed,
         "worksheet_count": len(all_results),
+        "publish": args.publish,
         "publish_custom_actions": args.publish_custom_actions,
+        "skip_existing": args.skip_existing,
         "worksheets": all_results,
+        "time_triggers": tt_results,
     }
 
     persist(script_name, output, args=log_args, started_at=started_at, session=session)
 
-    # 打印汇总
-    overall_icon = "✅" if total_failed == 0 else "⚠️ "
-    print(f"{overall_icon} 执行完成！", file=sys.stderr)
-    print(f"   应用：{app_name}", file=sys.stderr)
-    print(f"   工作表数：{len(all_results)}", file=sys.stderr)
-    print(f"   工作流创建成功：{total_ok} / {total_ok + total_failed}", file=sys.stderr)
-    if total_failed > 0:
+    print("\n" + "=" * 60, file=sys.stderr)
+    icon = "✅" if total_failed == 0 else "⚠️ "
+    print(f"{icon} 执行完成！应用：{app_name}", file=sys.stderr)
+    print(f"   工作流成功：{total_ok} / {total_ok + total_failed}", file=sys.stderr)
+    if total_failed:
         print(f"   ⚠️  失败数：{total_failed}（详见 logs/ 目录）", file=sys.stderr)
     print(f"   结果文件：output/execute_workflow_plan_latest.json", file=sys.stderr)
     print("=" * 60, file=sys.stderr)
