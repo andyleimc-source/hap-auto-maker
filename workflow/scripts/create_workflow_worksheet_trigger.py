@@ -52,7 +52,8 @@ def parse_args() -> argparse.Namespace:
         "--trigger-id",
         default="2",
         help=(
-            "Trigger type ID passed to saveNode (default: 2 = 新增或更新字段时). "
+            "Trigger type ID passed to saveNode (default: 2 = 新增或更新记录时). "
+            "1=仅新增, 2=新增或更新, 3=删除, 4=仅更新. "
             "Only used when --worksheet-id is provided."
         ),
     )

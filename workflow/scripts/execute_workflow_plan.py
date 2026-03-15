@@ -3,11 +3,10 @@
 执行工作流规划 JSON，批量创建工作流（execute_workflow_plan.py）
 
 读取 output/pipeline_workflows_latest.json（由 pipeline_workflows.py 生成），
-为每个工作表创建 6 个工作流，每个工作流包含触发节点 + 2-3 个有字段映射的动作节点：
-  - 自定义动作 × 3  （触发：按钮；动作节点：来自规划）
-  - 工作表事件触发 × 1（触发：数据变化；动作节点：来自规划）
-  - 时间触发 × 1    （触发：一次性定时；动作节点：来自规划）
-  - 定时触发 × 1    （触发：循环定时；动作节点：来自规划）
+批量创建工作流，每个工作流包含触发节点 + 2-3 个有字段映射的动作节点：
+  - 自定义动作 × 3  （仅约一半工作表；触发：按钮；动作节点：来自规划）
+  - 工作表事件触发 × 2（每个工作表；触发：数据变化；动作节点：来自规划）
+  - 全局时间触发 × 2  （整个应用共 2 个；动作节点：来自规划）
 
 字段值中的 {{trigger.FIELD_ID}} 会在执行时自动替换为 $startNodeId-FIELD_ID$。
 
@@ -50,8 +49,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cookie", default="", help="Cookie header 值。")
     parser.add_argument("--auth-config", default=str(default_auth_config), help="auth_config.py 路径。")
     parser.add_argument("--origin", default="https://www.mingdao.com", help="请求 Origin header。")
-    parser.add_argument("--publish", action="store_true", help="所有工作流创建后立即发布（开启状态）。")
-    parser.add_argument("--publish-custom-actions", action="store_true", help="（兼容旧参数）自定义动作创建后立即发布，推荐改用 --publish。")
+    parser.add_argument("--no-publish", action="store_true", help="跳过发布步骤，工作流保持关闭状态（默认自动发布）。")
+    parser.add_argument("--publish", action="store_true", help="（兼容旧参数）等同于默认行为，保留向后兼容。")
+    parser.add_argument("--publish-custom-actions", action="store_true", help="（兼容旧参数）自定义动作创建后立即发布，推荐改用默认行为。")
     parser.add_argument("--only-worksheet", default="", help="只执行指定工作表 ID（调试用）。")
     parser.add_argument("--skip-existing", action="store_true", help="跳过已存在同名工作流（防重复）。")
     return parser.parse_args()
@@ -513,7 +513,7 @@ def _create_time_based(
     }
 
 
-# ── 执行单个工作表的 6 个工作流 ───────────────────────────────────────────────
+# ── 执行单个工作表的工作流（自定义动作 0 或 3 个 + 事件触发 2 个）────────────
 
 def execute_worksheet_plan(
     session:               Session,
@@ -533,10 +533,11 @@ def execute_worksheet_plan(
             return True
         return False
 
-    # ── 3 个自定义动作 ────────────────────────────────────────────────────────
-    for i, action_plan in enumerate((ws_plan.get("custom_actions") or [])[:3], 1):
+    # ── 自定义动作（仅被选中工作表有，每个 3 个）────────────────────────────
+    ca_plans = (ws_plan.get("custom_actions") or [])[:3]
+    for i, action_plan in enumerate(ca_plans, 1):
         name = action_plan.get("name", f"自定义动作{i}")
-        print(f"\n  [{i}/6] 自定义动作「{name}」", file=sys.stderr)
+        print(f"\n  [自定义动作 {i}/{len(ca_plans)}]「{name}」", file=sys.stderr)
         if _skip(name):
             results.append({"ok": True, "skipped": True, "name": name, "seq": i}); continue
         try:
@@ -548,19 +549,19 @@ def execute_worksheet_plan(
         results.append(r)
         print(f"    {'✓' if r.get('ok') else '✗'}  process_id={r.get('process_id')}", file=sys.stderr)
 
-    # ── 3 个工作表事件触发 ────────────────────────────────────────────────────
-    for j, event_plan in enumerate((ws_plan.get("worksheet_events") or [])[:3], 1):
-        seq      = 3 + j   # 4, 5, 6
+    # ── 2 个工作表事件触发 ────────────────────────────────────────────────────
+    ev_plans = (ws_plan.get("worksheet_events") or [])[:2]
+    for j, event_plan in enumerate(ev_plans, 1):
         ev_name  = event_plan.get("name", f"工作表事件触发{j}")
-        print(f"\n  [{seq}/6] 工作表事件触发{j}「{ev_name}」", file=sys.stderr)
+        print(f"\n  [事件触发 {j}/{len(ev_plans)}]「{ev_name}」", file=sys.stderr)
         if _skip(ev_name):
-            results.append({"ok": True, "skipped": True, "name": ev_name, "seq": seq}); continue
+            results.append({"ok": True, "skipped": True, "name": ev_name, "seq": len(ca_plans) + j}); continue
         try:
             r = create_worksheet_event(session, app_id, worksheet_id, event_plan, publish)
         except Exception as exc:
             r = {"ok": False, "step": "exception", "error": str(exc)}
             print(f"    ❌ 异常：{exc}", file=sys.stderr)
-        r["seq"] = seq
+        r["seq"] = len(ca_plans) + j
         results.append(r)
         print(f"    {'✓' if r.get('ok') else '✗'}  process_id={r.get('process_id')}", file=sys.stderr)
 
@@ -572,7 +573,7 @@ def execute_worksheet_plan(
     }
 
 
-# ── 执行全局时间触发工作流（整个应用共 3 个）─────────────────────────────────
+# ── 执行全局时间触发工作流（整个应用共 2 个）─────────────────────────────────
 
 def execute_time_triggers(
     session:        Session,
@@ -582,11 +583,12 @@ def execute_time_triggers(
     publish:        bool = False,
     existing_names: set | None = None,
 ) -> list[dict]:
-    """执行规划中全局的 time_triggers（最多 3 个）。"""
+    """执行规划中全局的 time_triggers（最多 2 个）。"""
     results: list[dict] = []
-    for i, tt_plan in enumerate(time_triggers[:3], 1):
+    tt_list = time_triggers[:2]
+    for i, tt_plan in enumerate(tt_list, 1):
         name = tt_plan.get("name", f"定时触发{i}")
-        print(f"\n  [时间触发 {i}/3]「{name}」", file=sys.stderr)
+        print(f"\n  [时间触发 {i}/{len(tt_list)}]「{name}」", file=sys.stderr)
         if existing_names and name in existing_names:
             print(f"    ⏭  跳过（已存在）：{name}", file=sys.stderr)
             results.append({"ok": True, "skipped": True, "name": name}); continue
@@ -608,6 +610,9 @@ def main() -> int:
     script_name = Path(__file__).stem
     auth_config_path = Path(args.auth_config).expanduser().resolve()
     log_args    = {k: v for k, v in vars(args).items() if k != "cookie"}
+
+    # 默认发布；只有传 --no-publish 才跳过
+    do_publish = not args.no_publish
 
     # 1. 读取规划文件
     plan_path = Path(args.plan_file).expanduser().resolve()
@@ -638,10 +643,13 @@ def main() -> int:
             print(f"Error: 未找到工作表 ID：{args.only_worksheet}", file=sys.stderr)
             return 2
 
-    total_estimated = len(worksheets) * 6 + len(time_triggers)
+    total_estimated = sum(
+        len(ws.get("custom_actions") or []) + len(ws.get("worksheet_events") or [])
+        for ws in worksheets
+    ) + len(time_triggers)
     print(
-        f"[step 1/3] ✓ 应用：{app_name}，{len(worksheets)} 个工作表 × 6 = {len(worksheets)*6} 个"
-        f"，全局时间触发 {len(time_triggers)} 个，共 {total_estimated} 个工作流",
+        f"[step 1/3] ✓ 应用：{app_name}，{len(worksheets)} 个工作表"
+        f"，全局时间触发 {len(time_triggers)} 个，预计共 {total_estimated} 个工作流",
         file=sys.stderr,
     )
 
@@ -683,7 +691,7 @@ def main() -> int:
                 session                = session,
                 app_id                 = app_id,
                 ws_plan                = ws_plan,
-                publish                = args.publish,
+                publish                = do_publish,
                 publish_custom_actions = args.publish_custom_actions,
                 existing_names         = existing_names,
             )
@@ -691,7 +699,7 @@ def main() -> int:
             print(f"  ❌ 工作表执行异常：{exc}", file=sys.stderr)
             ws_result = {
                 "worksheet_id": ws_id, "worksheet_name": ws_name,
-                "total": 6, "ok": 0, "failed": 6,
+                "total": 0, "ok": 0, "failed": 0,
                 "error": str(exc), "workflows": [],
             }
 
@@ -712,7 +720,7 @@ def main() -> int:
             app_id         = app_id,
             time_triggers  = time_triggers,
             fallback_ws_id = fallback_ws_id,
-            publish        = args.publish,
+            publish        = do_publish,
             existing_names = existing_names,
         )
         tt_ok     = sum(1 for r in tt_results if r.get("ok"))
@@ -731,7 +739,7 @@ def main() -> int:
         "total_workflows": total_ok + total_failed,
         "ok": total_ok, "failed": total_failed,
         "worksheet_count": len(all_results),
-        "publish": args.publish,
+        "publish": do_publish,
         "publish_custom_actions": args.publish_custom_actions,
         "skip_existing": args.skip_existing,
         "worksheets": all_results,
