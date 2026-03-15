@@ -405,30 +405,48 @@ def normalize_views(raw_views: Any, fields: List[dict]) -> List[dict]:
 
 
 def plan_views_for_worksheet(client: genai.Client, model: str, app_name: str, worksheet: dict, fields: List[dict]) -> dict:
-    prompt = build_prompt(app_name, worksheet["workSheetName"], worksheet["workSheetId"], fields)
-    last_exc: Optional[Exception] = None
-    for attempt in range(1, 4):
+    base_prompt = build_prompt(app_name, worksheet["workSheetName"], worksheet["workSheetId"], fields)
+    validation_retries = 3
+    views = None
+    last_error: Optional[str] = None
+    for val_attempt in range(1, validation_retries + 1):
+        prompt = base_prompt
+        if last_error:
+            prompt = base_prompt + f"\n\n# 上次输出验证失败（第 {val_attempt - 1} 次）\n错误信息：{last_error}\n请仔细检查并修正后重新输出。"
+        last_exc: Optional[Exception] = None
+        for attempt in range(1, 4):
+            try:
+                resp = client.models.generate_content(
+                    model=model,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0.2),
+                )
+                break
+            except Exception as exc:
+                last_exc = exc
+                if attempt >= 3:
+                    raise
+                wait_seconds = attempt * 2
+                print(
+                    f"Gemini 规划视图请求失败，worksheet={worksheet['workSheetName']} "
+                    f"attempt={attempt}/3，{wait_seconds} 秒后重试: {exc}"
+                )
+                time.sleep(wait_seconds)
+        else:
+            raise last_exc or RuntimeError("Gemini 规划视图失败")
+        parsed = extract_json(resp.text or "")
         try:
-            resp = client.models.generate_content(
-                model=model,
-                contents=prompt,
-                config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0.2),
-            )
+            views = normalize_views(parsed.get("views"), fields)
             break
         except Exception as exc:
-            last_exc = exc
-            if attempt >= 3:
+            last_error = str(exc)
+            if val_attempt >= validation_retries:
                 raise
-            wait_seconds = attempt * 2
             print(
-                f"Gemini 规划视图请求失败，worksheet={worksheet['workSheetName']} "
-                f"attempt={attempt}/3，{wait_seconds} 秒后重试: {exc}"
+                f"[验证重试 {val_attempt}/{validation_retries}] 视图验证失败，worksheet={worksheet['workSheetName']}，"
+                f"追加错误后重新生成：{exc}"
             )
-            time.sleep(wait_seconds)
-    else:
-        raise last_exc or RuntimeError("Gemini 规划视图失败")
-    parsed = extract_json(resp.text or "")
-    views = normalize_views(parsed.get("views"), fields)
+    assert views is not None
     return {
         "worksheetId": worksheet["workSheetId"],
         "worksheetName": worksheet["workSheetName"],
