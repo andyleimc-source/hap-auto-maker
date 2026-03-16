@@ -20,6 +20,12 @@ from typing import Dict, List, Optional, Tuple
 from google import genai
 from google.genai import types
 
+CURRENT_DIR = Path(__file__).resolve().parent
+if str(CURRENT_DIR) not in sys.path:
+    sys.path.insert(0, str(CURRENT_DIR))
+
+from script_locator import resolve_script
+
 # 启用终端行编辑（方向键左右移动等）
 try:
     import readline  # noqa: F401
@@ -37,7 +43,7 @@ GEMINI_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "gemini_auth.json"
 # 用户指定优先模型；若不可用则自动回退到已验证可用模型
 DEFAULT_MODEL = "gemini-2.5-pro"
 FALLBACK_MODELS = ("gemini-2.5-pro",)
-EXECUTE_REQUIREMENTS_SCRIPT = BASE_DIR / "scripts" / "execute_requirements.py"
+EXECUTE_REQUIREMENTS_SCRIPT = resolve_script("execute_requirements.py")
 
 
 def now_iso() -> str:

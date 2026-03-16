@@ -12,12 +12,18 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+CURRENT_DIR = Path(__file__).resolve().parent
+if str(CURRENT_DIR) not in sys.path:
+    sys.path.insert(0, str(CURRENT_DIR))
+
+from script_locator import resolve_script
+
 BASE_DIR = Path(__file__).resolve().parents[2]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 LAYOUT_PLAN_DIR = OUTPUT_ROOT / "worksheet_layout_plans"
 
-PLAN_SCRIPT = BASE_DIR / "scripts" / "hap" / "plan_worksheet_layout.py"
-APPLY_SCRIPT = BASE_DIR / "scripts" / "hap" / "apply_worksheet_layout.py"
+PLAN_SCRIPT = resolve_script("plan_worksheet_layout.py")
+APPLY_SCRIPT = resolve_script("apply_worksheet_layout.py")
 
 
 def run_step(cmd: list[str], title: str) -> None:

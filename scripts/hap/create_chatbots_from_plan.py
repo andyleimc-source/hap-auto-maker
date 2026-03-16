@@ -35,10 +35,11 @@ from chatbot_common import (
     post_json,
     write_json_with_latest,
 )
+from script_locator import resolve_script
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
-REFRESH_AUTH_SCRIPT = BASE_DIR / "scripts" / "refresh_auth.py"
+REFRESH_AUTH_SCRIPT = resolve_script("refresh_auth.py")
 
 
 def build_referer(app_id: str, app_section_id: str) -> str:

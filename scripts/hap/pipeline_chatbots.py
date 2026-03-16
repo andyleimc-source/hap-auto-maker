@@ -31,12 +31,11 @@ from chatbot_common import (
     now_iso,
     write_json_with_latest,
 )
+from script_locator import resolve_script
 
-BASE_DIR = Path(__file__).resolve().parents[2]
-SCRIPTS_DIR = BASE_DIR / "scripts"
-SCRIPT_SCHEMA = SCRIPTS_DIR / "select_chatbot_app_schema.py"
-SCRIPT_PLAN = SCRIPTS_DIR / "plan_chatbots_gemini.py"
-SCRIPT_CREATE = SCRIPTS_DIR / "create_chatbots_from_plan.py"
+SCRIPT_SCHEMA = resolve_script("select_chatbot_app_schema.py")
+SCRIPT_PLAN = resolve_script("plan_chatbots_gemini.py")
+SCRIPT_CREATE = resolve_script("create_chatbots_from_plan.py")
 
 
 def run_step_capture(cmd: List[str], title: str, log_path: Path) -> str:

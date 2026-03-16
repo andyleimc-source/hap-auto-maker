@@ -22,6 +22,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+CURRENT_DIR = Path(__file__).resolve().parent
+if str(CURRENT_DIR) not in sys.path:
+    sys.path.insert(0, str(CURRENT_DIR))
+
+from script_locator import resolve_script
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
@@ -30,8 +35,8 @@ REQUIREMENT_SPEC_LATEST = OUTPUT_ROOT / "requirement_specs" / "requirement_spec_
 EXECUTION_RUN_LATEST = OUTPUT_ROOT / "execution_runs" / "execution_run_latest.json"
 TASK_TEMPLATE = BASE_DIR / "record" / "task_template.txt"
 TASK_FILE = BASE_DIR / "record" / "task.txt"
-AGENT_COLLECT_SCRIPT = BASE_DIR / "scripts" / "agent_collect_requirements.py"
-FILL_TASK_SCRIPT = BASE_DIR / "scripts" / "fill_task_placeholders.py"
+AGENT_COLLECT_SCRIPT = resolve_script("agent_collect_requirements.py")
+FILL_TASK_SCRIPT = resolve_script("fill_task_placeholders.py")
 RUN_AGENT_SCRIPT = BASE_DIR / "record" / "run_agent.py"
 RECORD_VENV_PYTHON = BASE_DIR / "record" / "venv" / "bin" / "python3"
 

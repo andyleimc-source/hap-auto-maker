@@ -12,14 +12,20 @@ import subprocess
 import sys
 from pathlib import Path
 
+CURRENT_DIR = Path(__file__).resolve().parent
+if str(CURRENT_DIR) not in sys.path:
+    sys.path.insert(0, str(CURRENT_DIR))
+
+from script_locator import resolve_script
+
 BASE_DIR = Path(__file__).resolve().parents[2]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 WORKSHEET_INVENTORY_DIR = OUTPUT_ROOT / "worksheet_inventory"
 ICON_MATCH_DIR = OUTPUT_ROOT / "worksheet_icon_match_plans"
 
-LIST_SCRIPT = BASE_DIR / "scripts" / "hap" / "list_app_worksheets.py"
-MATCH_SCRIPT = BASE_DIR / "scripts" / "gemini" / "match_worksheet_icons_gemini.py"
-UPDATE_SCRIPT = BASE_DIR / "scripts" / "hap" / "update_worksheet_icons.py"
+LIST_SCRIPT = resolve_script("list_app_worksheets.py")
+MATCH_SCRIPT = resolve_script("match_worksheet_icons_gemini.py")
+UPDATE_SCRIPT = resolve_script("update_worksheet_icons.py")
 
 
 def run_step(cmd: list[str], title: str) -> None:

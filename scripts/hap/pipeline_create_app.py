@@ -16,15 +16,18 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+CURRENT_DIR = Path(__file__).resolve().parent
+if str(CURRENT_DIR) not in sys.path:
+    sys.path.insert(0, str(CURRENT_DIR))
+
+from script_locator import resolve_script
+
 BASE_DIR = Path(__file__).resolve().parents[2]
-SCRIPTS_DIR = BASE_DIR / "scripts"
-HAP_SCRIPTS_DIR = SCRIPTS_DIR / "hap"
-GEMINI_SCRIPTS_DIR = SCRIPTS_DIR / "gemini"
-CREATE_APP_SCRIPT = HAP_SCRIPTS_DIR / "create_app.py"
-GET_AUTH_SCRIPT = HAP_SCRIPTS_DIR / "get_app_authorize.py"
-LIST_APPS_SCRIPT = HAP_SCRIPTS_DIR / "list_apps_for_icon.py"
-MATCH_APPS_ICON_SCRIPT = GEMINI_SCRIPTS_DIR / "match_app_icons_gemini.py"
-UPDATE_APPS_ICON_SCRIPT = HAP_SCRIPTS_DIR / "update_app_icons.py"
+CREATE_APP_SCRIPT = resolve_script("create_app.py")
+GET_AUTH_SCRIPT = resolve_script("get_app_authorize.py")
+LIST_APPS_SCRIPT = resolve_script("list_apps_for_icon.py")
+MATCH_APPS_ICON_SCRIPT = resolve_script("match_app_icons_gemini.py")
+UPDATE_APPS_ICON_SCRIPT = resolve_script("update_app_icons.py")
 DEFAULT_GROUP_IDS = "69a794589860d96373beeb4d"
 
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"

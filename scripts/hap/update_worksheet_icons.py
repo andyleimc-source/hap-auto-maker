@@ -20,13 +20,19 @@ from typing import Dict, List, Optional, Tuple
 
 import requests
 
+CURRENT_DIR = Path(__file__).resolve().parent
+if str(CURRENT_DIR) not in sys.path:
+    sys.path.insert(0, str(CURRENT_DIR))
+
+from script_locator import resolve_script
+
 BASE_DIR = Path(__file__).resolve().parents[2]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 APP_AUTH_DIR = OUTPUT_ROOT / "app_authorizations"
 RESULT_DIR = OUTPUT_ROOT / "worksheet_icon_updates"
 ICON_MATCH_DIR = OUTPUT_ROOT / "worksheet_icon_match_plans"
 AUTH_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "auth_config.py"
-REFRESH_AUTH_SCRIPT = BASE_DIR / "scripts" / "auth" / "refresh_auth.py"
+REFRESH_AUTH_SCRIPT = resolve_script("refresh_auth.py")
 
 APP_INFO_URL = "https://api.mingdao.com/v3/app"
 EDIT_ICON_URL = "https://www.mingdao.com/api/AppManagement/EditWorkSheetInfoForApp"
