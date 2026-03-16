@@ -7,11 +7,15 @@
 import argparse
 import json
 import re
+import time
 from datetime import datetime
 from pathlib import Path
 
 from google import genai
 from google.genai import types
+
+NETWORK_MAX_RETRIES = 3
+NETWORK_RETRY_DELAY = 5  # seconds
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 CONFIG_PATH = BASE_DIR / "config" / "credentials" / "gemini_auth.json"
@@ -157,14 +161,26 @@ def main() -> None:
                 f"上一次结果不合规，请严格修正以下问题后重新输出完整 JSON：\n"
                 + "\n".join(f"- {item}" for item in validation_errors)
             )
-        response = client.models.generate_content(
-            model=args.model,
-            contents=current_prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                temperature=0.2,
-            ),
-        )
+        response = None
+        for net_try in range(1, NETWORK_MAX_RETRIES + 1):
+            try:
+                response = client.models.generate_content(
+                    model=args.model,
+                    contents=current_prompt,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        temperature=0.2,
+                    ),
+                )
+                break
+            except Exception as e:
+                err_name = type(e).__name__
+                if net_try < NETWORK_MAX_RETRIES:
+                    wait = NETWORK_RETRY_DELAY * net_try
+                    print(f"[网络重试 {net_try}/{NETWORK_MAX_RETRIES}] {err_name}: {e}，{wait}s 后重试...")
+                    time.sleep(wait)
+                else:
+                    raise
         plan = extract_json(response.text or "")
         validation_errors = validate_plan(plan)
         if not validation_errors:

@@ -90,10 +90,11 @@ def build_prompt(snapshot: dict) -> str:
 1. 按给定 tier/order 保持工作表造数顺序。
 2. 为每张表生成指定数量的记录。
 3. Relation 字段在本阶段一律不要输出。
-4. SingleSelect/MultipleSelect 字段必须使用 options 里的 key，不要使用 value 文案。
-5. valuesByFieldId 的 key 必须是字段 ID。
-6. 每条记录都要有一句中文 recordSummary，描述该记录的业务含义。
-7. 如果某字段不适合填值，可以不输出该字段，但请尽量保证记录语义完整。
+4. SingleSelect 字段值必须是包含一个 key 字符串的数组，例如 ["key1"]，不要使用 value 文案，不要使用裸字符串。
+5. MultipleSelect 字段值必须是包含一个或多个 key 字符串的数组，例如 ["key1", "key2"]。绝对禁止将数组序列化为字符串后再放进外层数组，即禁止 ["[\"key1\", \"key2\"]"] 这种格式。
+6. valuesByFieldId 的 key 必须是字段 ID。
+7. 每条记录都要有一句中文 recordSummary，描述该记录的业务含义。
+8. 如果某字段不适合填值，可以不输出该字段，但请尽量保证记录语义完整。
 
 应用信息：
 {json.dumps(app, ensure_ascii=False, indent=2)}
@@ -120,7 +121,12 @@ def build_prompt(snapshot: dict) -> str:
         {{
           "recordSummary": "一句中文摘要",
           "valuesByFieldId": {{
-            "字段ID": "值或数组"
+            "文本字段ID": "文本值",
+            "数字字段ID": 100,
+            "单选字段ID": ["optionKey1"],
+            "多选字段ID": ["optionKey1", "optionKey2"],
+            "日期字段ID": "2026-03-15",
+            "布尔字段ID": true
           }}
         }}
       ]
@@ -134,7 +140,8 @@ def build_prompt(snapshot: dict) -> str:
 3. valuesByFieldId 里禁止出现任何 skippedFields 对应字段。
 4. Relation / Attachment / SubTable / Collaborator / Department / OrgRole / Formula / Summary / AutoNumber 禁止出现在 valuesByFieldId。
 5. Checkbox 使用 true/false；Number 使用数字；Date 使用 yyyy-MM-dd；DateTime 使用 yyyy-MM-dd HH:mm:ss，且日期时间必须在最近 7 天内。
-6. 输出必须是合法 JSON 对象。
+6. SingleSelect/MultipleSelect 的值必须是真正的 JSON 数组（如 ["key1"]），绝对不能是包含 JSON 字符串的数组（如 ["[\"key1\"]"]），也不能是裸字符串（如 "key1"）。
+7. 输出必须是合法 JSON 对象。
 """.strip()
 
 
@@ -213,8 +220,20 @@ def validate_plan(raw: dict, snapshot: dict) -> Dict[str, Any]:
                 elif field_type == "MultipleSelect":
                     valid_keys = {item["key"] for item in field_meta.get("options", []) if item.get("key")}
                     if isinstance(value, str):
-                        value = [value]
+                        try:
+                            parsed = json.loads(value)
+                            value = parsed if isinstance(parsed, list) else [value]
+                        except (json.JSONDecodeError, ValueError):
+                            value = [value]
                         multi_select_normalized += 1
+                    elif isinstance(value, list) and len(value) == 1 and isinstance(value[0], str) and value[0].strip().startswith("["):
+                        try:
+                            parsed = json.loads(value[0])
+                            if isinstance(parsed, list):
+                                value = parsed
+                                multi_select_normalized += 1
+                        except (json.JSONDecodeError, ValueError):
+                            pass
                     if not isinstance(value, list) or any(str(item) not in valid_keys for item in value):
                         raise ValueError(f"多选字段值非法: worksheetId={worksheet_id}, fieldId={field_id}, value={value}")
                 elif field_type in {"Date", "DateTime"}:
@@ -381,26 +400,39 @@ def main() -> None:
     )
     api_key = load_gemini_api_key(Path(args.config).expanduser().resolve())
     client = genai.Client(api_key=api_key)
-    prompt = build_prompt(snapshot)
+    base_prompt = build_prompt(snapshot)
     append_log(
         log_path,
         "prompt_ready",
-        promptLength=len(prompt),
+        promptLength=len(base_prompt),
         worksheetTiers=len(snapshot.get("worksheetTiers", [])),
     )
 
-    response = generate_with_retry(client, args.model, prompt, args.gemini_retries)
-    append_log(
-        log_path,
-        "gemini_response_received",
-        responseLength=len(response.text or ""),
-    )
-    raw = extract_json_object(response.text or "")
-    try:
-        validated = validate_plan(raw, snapshot)
-    except Exception as exc:
-        append_log(log_path, "validate_failed", error=str(exc))
-        raise
+    validation_retries = 3
+    validated = None
+    last_error: Optional[str] = None
+    for val_attempt in range(1, validation_retries + 1):
+        prompt = base_prompt
+        if last_error:
+            prompt = base_prompt + f"\n\n# 上次输出验证失败（第 {val_attempt - 1} 次）\n错误信息：{last_error}\n请仔细检查并修正后重新输出。"
+        response = generate_with_retry(client, args.model, prompt, args.gemini_retries)
+        append_log(
+            log_path,
+            "gemini_response_received",
+            responseLength=len(response.text or ""),
+            valAttempt=val_attempt,
+        )
+        raw = extract_json_object(response.text or "")
+        try:
+            validated = validate_plan(raw, snapshot)
+            break
+        except Exception as exc:
+            last_error = str(exc)
+            append_log(log_path, "validate_failed", error=last_error, valAttempt=val_attempt)
+            if val_attempt >= validation_retries:
+                raise
+            print(f"[验证重试 {val_attempt}/{validation_retries}] 验证失败，追加错误后重新生成：{exc}")
+    assert validated is not None
 
     plan_output = (
         Path(args.plan_output).expanduser().resolve()

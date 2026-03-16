@@ -122,10 +122,28 @@ def normalize_calendarcids(value: Any) -> str:
 
     normalized: List[Dict[str, str]] = []
     for item in raw:
+        # 支持纯字符串元素，视为 begin 字段 ID
+        if isinstance(item, str):
+            cid = item.strip()
+            if cid:
+                normalized.append({"begin": cid, "end": ""})
+            continue
         if not isinstance(item, dict):
             continue
-        begin = str(item.get("begin") or item.get("begindate") or item.get("start") or "").strip()
-        end = str(item.get("end") or item.get("enddate") or "").strip()
+        # 兼容多种键名: begin/begindate/start/cid
+        begin = str(
+            item.get("begin")
+            or item.get("begindate")
+            or item.get("start")
+            or item.get("cid")
+            or ""
+        ).strip()
+        end = str(
+            item.get("end")
+            or item.get("enddate")
+            or item.get("endCid")
+            or ""
+        ).strip()
         color = str(item.get("color") or "").strip()
         if not begin:
             continue

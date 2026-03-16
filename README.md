@@ -1,76 +1,25 @@
-# hap_auto
+# HAP Auto
 
-HAP 应用自动化工具仓库。目标是把“需求收集 -> 创建应用 -> 建表 -> 布局 -> 视图 -> 筛选 -> 造数 -> 浏览器录制”尽量串成可复跑、可审计、可分步调试的流水线。
+## 一键运行
 
-当前仓库已经不是单一脚本，而是 3 套能力共同工作：
-- HAP 应用搭建与配置自动化
-- HAP 现有应用批量造数与关系修复
-- `record/` 浏览器操作录制与视频归档
+```bash
+python3 scripts/run_app_to_video.py --skip-recording
+```
 
-## 1. 当前阶段结论
+完整流程：需求对话 → 创建应用 → 工作表/视图/布局 → 造数 → 机器人 → 工作流。
 
-近期开发已经把主链路基本打通，当前最值得关注的是：
-- 已具备“从需求对话到录制归档”的一键链路：`scripts/run_app_to_video.py`
-- 已具备“从需求 JSON 到完整执行”的编排器：`scripts/execute_requirements.py`
-- 已具备“现有应用批量造数 + 关系修复 + unresolved 清理”的闭环：`scripts/pipeline_mock_data.py`
-- 已把 `record/` 从独立实验目录提升为主流程的一部分，支持 `task_template.txt -> task.txt -> run_agent.py`
-- 大多数关键阶段都会落盘 JSON，并维护 `*_latest.json`，方便接续和排障
+去掉 `--skip-recording` 则在最后额外录制演示视频。
 
-当前仍然要接受的边界：
-- LLM 规划默认依赖 Gemini
-- HAP 调用同时依赖组织 API 凭据和网页登录态
-- Relation 自动修复目前重点支持 `1-1` 和 `1-N` 的单选端，`1-N` 多选端不保证自动回填
-- 不是所有脚本都幂等，重复执行前要确认目标应用当前状态
+## 目录结构
 
-## 2. 近期开发进展
-
-### 2026-03-09
-- 新增一键串联脚本 `scripts/run_app_to_video.py`，打通“需求收集 -> 建应用 -> 生成 task -> 浏览器录制 -> 归档”
-- 新增 `scripts/fill_task_placeholders.py`，支持纯本地填充 `record/task_template.txt`
-- 录制产物归档目录统一到 `data/outputs/app_video_runs/<timestamp>_<appId>/`
-- 新增 `summary.md`、`tech_log.json`、`tech_log.md` 等运行摘要，便于回放和复盘
-- 主流程相关 JSON 产物可自动复制进单次录制归档目录，便于把“业务配置结果”和“操作视频”对齐
-
-### 2026-03-08
-- `record/run_agent.py` 完成结构拆分，核心能力下沉到 `record/core/`
-- 录制链路稳定支持 `wait_seconds`，解决长等待时 CDP 无新帧导致“视频跳过”的问题
-- 增加浏览器 repaint hack，保证静态等待段仍保留可见停留
-- 默认网页缩放通过原生 Chrome `Preferences` 固定到 `125%`，替代模糊的 DPR 方案
-- 录制过程中的黑屏 logo / 空白帧问题已做底层规避
-
-### 2026-03-07
-- `record/task.json` 迁移为 `record/task.txt`
-- 支持 `solo`、`no`、`#`、`//` 等更适合人工编辑的任务控制方式
-- 明道云 iframe 场景下的元素定位稳定性提升
-- `storage/`、`runs/`、`venv/` 等录制运行态目录已明确隔离
-
-## 3. 当前目标
-
-短期目标：
-- 把 README、脚本入口、产物目录、排障方式统一成一份开发说明
-- 提高主流程复跑稳定性，减少“上一步成功、下一步接不上”的人工干预
-- 继续补齐录制链路的任务模板和可复用素材
-
-中期目标：
-- 让 `execute_requirements.py` 的阶段边界更稳定，失败时更容易断点续跑
-- 让 mock data、view、filter、layout 这些阶段的输入输出约定进一步统一
-- 把“新建应用”和“已有应用维护”两条路径彻底分离清楚
-
-## 4. 仓库结构
-
-```text
+```
 hap_auto/
-├── config/                  # 本地凭据与策略
-├── data/
-│   ├── assets/icons/        # icon 素材
-│   ├── api_docs/            # 接口资料与抓取结果
-│   └── outputs/             # 所有阶段性 JSON / 运行结果
-├── record/                  # 浏览器录制子系统
-├── scripts/                 # 稳定入口层
-│   ├── hap/                 # HAP 业务实现
-│   ├── gemini/              # Gemini 规划/匹配实现
-│   └── auth/                # 登录态刷新
-└── view/                    # 抓包/接口行为样本
+├── scripts/         # 主流程脚本
+├── workflow/        # 工作流相关脚本
+├── config/
+│   └── credentials/ # 认证配置（gemini_auth.json、auth_config.py 等）
+├── data/            # 应用授权 JSON、输出产物
+└── record/          # 浏览器录制 Agent
 ```
 
 分层约定：

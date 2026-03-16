@@ -9,8 +9,12 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
+
+NETWORK_MAX_RETRIES = 3
+NETWORK_RETRY_DELAY = 5
 
 from google import genai
 from google.genai import types
@@ -285,16 +289,43 @@ def main() -> None:
     api_key = load_gemini_api_key(Path(args.config).expanduser().resolve())
     client = genai.Client(api_key=api_key)
 
-    response = client.models.generate_content(
-        model=args.model,
-        contents=build_prompt(snapshot, write_result),
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            temperature=0.2,
-        ),
-    )
-    raw = extract_json_object(response.text or "")
-    result = validate_relation_plan(raw, snapshot, write_result)
+    base_prompt = build_prompt(snapshot, write_result)
+    validation_retries = 3
+    result = None
+    last_error: Optional[str] = None
+    for val_attempt in range(1, validation_retries + 1):
+        prompt = base_prompt
+        if last_error:
+            prompt = base_prompt + f"\n\n# 上次输出验证失败（第 {val_attempt - 1} 次）\n错误信息：{last_error}\n请仔细检查并修正后重新输出。"
+        response = None
+        for net_try in range(1, NETWORK_MAX_RETRIES + 1):
+            try:
+                response = client.models.generate_content(
+                    model=args.model,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        temperature=0.2,
+                    ),
+                )
+                break
+            except Exception as e:
+                if net_try < NETWORK_MAX_RETRIES:
+                    wait = NETWORK_RETRY_DELAY * net_try
+                    print(f"[网络重试 {net_try}/{NETWORK_MAX_RETRIES}] {type(e).__name__}: {e}，{wait}s 后重试...")
+                    time.sleep(wait)
+                else:
+                    raise
+        raw = extract_json_object(response.text or "")
+        try:
+            result = validate_relation_plan(raw, snapshot, write_result)
+            break
+        except Exception as exc:
+            last_error = str(exc)
+            if val_attempt >= validation_retries:
+                raise
+            print(f"[验证重试 {val_attempt}/{validation_retries}] 验证失败，追加错误后重新生成：{exc}")
+    assert result is not None
     output_path = (
         Path(args.output).expanduser().resolve()
         if args.output

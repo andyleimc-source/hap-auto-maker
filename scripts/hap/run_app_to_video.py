@@ -4,7 +4,7 @@
 一键串联：
 1) 需求对话与应用创建
 2) task 模板占位符填充
-3) 浏览器录制
+3) 可选浏览器录制（可通过参数跳过）
 
 并将关键产物归档到单次运行目录。
 """
@@ -139,6 +139,9 @@ def collect_artifact_sources(execution_report: dict) -> Dict[str, str]:
         "tableview_filter_plan_json",
         "tableview_filter_apply_result_json",
         "mock_data_run_json",
+        "chatbot_pipeline_result_json",
+        "workflow_plan_json",
+        "workflow_execute_result_json",
     ]
     out: Dict[str, str] = {}
     for key in keys:
@@ -301,10 +304,11 @@ def build_tech_log_md(tech_log: dict) -> str:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="一键从策划应用到录制视频")
+    parser = argparse.ArgumentParser(description="一键从需求沟通到应用执行（可选录制视频）")
     parser.add_argument("--seed", type=int, default=None, help="可选，传给 task 占位符填充脚本的随机种子")
     parser.add_argument("--requirements-text", default="", help="可选，非交互模式下直接提供需求文本")
     parser.add_argument("--resume-latest", action="store_true", help="跳过需求采集，直接从最新成功的 execution report 继续")
+    parser.add_argument("--skip-recording", action="store_true", help="跳过录制步骤，仅输出应用执行结果与日志")
     args = parser.parse_args()
 
     started_at = now_iso()
@@ -428,23 +432,43 @@ def main() -> None:
             "metadata_json": str(fill_metadata_path.resolve()),
         }
 
-        recording_summary_path = run_dir / "recording_summary.json"
-        cmd3 = [
-            preferred_python(),
-            str(RUN_AGENT_SCRIPT.resolve()),
-            "--task-file",
-            str(TASK_FILE.resolve()),
-            "--run-dir",
-            str(run_dir.resolve()),
-            "--summary-json",
-            str(recording_summary_path.resolve()),
-        ]
-        result3 = run_command(cmd3, cwd=BASE_DIR / "record", interactive=False)
-        result3["name"] = "run_agent"
-        tech_log["commands"].append(result3)
-        if result3["returncode"] != 0:
-            raise RuntimeError(f"步骤3失败：录制执行失败。\n{result3.get('stderr', '') or result3.get('stdout', '')}")
-        recording_summary = load_json(recording_summary_path)
+        recording_summary_path: Optional[Path] = None
+        recording_summary: Dict[str, Any] = {}
+        if args.skip_recording:
+            tech_log["commands"].append(
+                {
+                    "name": "run_agent",
+                    "cmd": [],
+                    "cwd": str((BASE_DIR / "record").resolve()),
+                    "interactive": False,
+                    "started_at": now_iso(),
+                    "ended_at": now_iso(),
+                    "duration_seconds": 0.0,
+                    "returncode": 0,
+                    "stdout": "",
+                    "stderr": "",
+                    "skipped": True,
+                    "reason": "skip_recording",
+                }
+            )
+        else:
+            recording_summary_path = run_dir / "recording_summary.json"
+            cmd3 = [
+                preferred_python(),
+                str(RUN_AGENT_SCRIPT.resolve()),
+                "--task-file",
+                str(TASK_FILE.resolve()),
+                "--run-dir",
+                str(run_dir.resolve()),
+                "--summary-json",
+                str(recording_summary_path.resolve()),
+            ]
+            result3 = run_command(cmd3, cwd=BASE_DIR / "record", interactive=False)
+            result3["name"] = "run_agent"
+            tech_log["commands"].append(result3)
+            if result3["returncode"] != 0:
+                raise RuntimeError(f"步骤3失败：录制执行失败。\n{result3.get('stderr', '') or result3.get('stdout', '')}")
+            recording_summary = load_json(recording_summary_path)
 
         artifact_sources = collect_artifact_sources(execution_data)
         copied_artifacts: Dict[str, str] = {}
@@ -491,12 +515,13 @@ def main() -> None:
             **copied_artifacts,
         }
         tech_log["recording_metadata"] = {
+            "enabled": not args.skip_recording,
             "run_dir": str(run_dir.resolve()),
             "video_path": str(video_path.resolve()) if video_path and video_path.exists() else "",
             "gif_path": str(gif_path.resolve()) if gif_path and gif_path.exists() else "",
             "video_duration_seconds": video_duration_seconds,
             "log_path": recording_summary.get("log_path", ""),
-            "recording_summary_json": str(recording_summary_path.resolve()),
+            "recording_summary_json": str(recording_summary_path.resolve()) if recording_summary_path else "",
         }
         total_duration_seconds = round(time.time() - started_epoch, 3)
         tech_log["aggregate_stats"] = {
@@ -514,9 +539,10 @@ def main() -> None:
             "requirement_spec": copied_spec,
             "execution_run": copied_execution,
             "task_fill_metadata": str(fill_metadata_path.resolve()),
-            "recording_summary": str(recording_summary_path.resolve()),
             **copied_artifacts,
         }
+        if recording_summary_path:
+            summary_artifact_paths["recording_summary"] = str(recording_summary_path.resolve())
         summary_md = build_summary_md(
             app_id=app_id,
             app_name=app_name,

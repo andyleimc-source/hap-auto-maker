@@ -34,6 +34,11 @@ SCRIPT_PIPELINE_VIEWS = SCRIPTS_DIR / "pipeline_views.py"
 SCRIPT_PIPELINE_TABLEVIEW_FILTERS = SCRIPTS_DIR / "pipeline_tableview_filters.py"
 SCRIPT_UPDATE_NAVI = SCRIPTS_DIR / "update_app_navi_style.py"
 SCRIPT_PIPELINE_MOCK_DATA = SCRIPTS_DIR / "pipeline_mock_data.py"
+SCRIPT_PIPELINE_CHATBOTS = SCRIPTS_DIR / "pipeline_chatbots.py"
+WORKFLOW_SCRIPTS_DIR = BASE_DIR / "workflow" / "scripts"
+WORKFLOW_OUTPUT_DIR = BASE_DIR / "workflow" / "output"
+SCRIPT_PIPELINE_WORKFLOWS = WORKFLOW_SCRIPTS_DIR / "pipeline_workflows.py"
+SCRIPT_EXECUTE_WORKFLOWS = WORKFLOW_SCRIPTS_DIR / "execute_workflow_plan.py"
 VIEW_PLAN_DIR = OUTPUT_ROOT / "view_plans"
 VIEW_CREATE_RESULT_DIR = OUTPUT_ROOT / "view_create_results"
 TABLEVIEW_FILTER_PLAN_DIR = OUTPUT_ROOT / "tableview_filter_plans"
@@ -119,6 +124,21 @@ def normalize_spec(raw: dict) -> dict:
     mock_data.setdefault("trigger_workflow", False)
     spec["mock_data"] = mock_data
 
+    chatbots = spec.get("chatbots") if isinstance(spec.get("chatbots"), dict) else {}
+    chatbots.setdefault("enabled", True)
+    chatbots.setdefault("model", "gemini-2.5-flash")
+    chatbots.setdefault("auto", True)
+    chatbots.setdefault("dry_run", False)
+    spec["chatbots"] = chatbots
+
+    workflows = spec.get("workflows") if isinstance(spec.get("workflows"), dict) else {}
+    workflows.setdefault("enabled", True)
+    workflows.setdefault("model", "gemini-2.5-flash")
+    workflows.setdefault("thinking", "high")
+    workflows.setdefault("no_publish", False)
+    workflows.setdefault("skip_analysis", False)
+    spec["workflows"] = workflows
+
     execution = spec.get("execution") if isinstance(spec.get("execution"), dict) else {}
     execution.setdefault("fail_fast", True)
     execution.setdefault("dry_run", False)
@@ -137,6 +157,9 @@ def ensure_scripts_exist() -> None:
         SCRIPT_PIPELINE_TABLEVIEW_FILTERS,
         SCRIPT_UPDATE_NAVI,
         SCRIPT_PIPELINE_MOCK_DATA,
+        SCRIPT_PIPELINE_CHATBOTS,
+        SCRIPT_PIPELINE_WORKFLOWS,
+        SCRIPT_EXECUTE_WORKFLOWS,
     ]
     missing = [str(p) for p in required if not p.exists()]
     if missing:
@@ -258,7 +281,7 @@ def main() -> None:
     parser.add_argument(
         "--only-steps",
         default="",
-        help="仅执行指定步骤（逗号分隔：1,2,3 或 create_app,worksheets_plan,worksheets_create,worksheet_icon,layout,views,view_filters,navi,mock_data）",
+        help="仅执行指定步骤（逗号分隔：1,2,3 或 create_app,worksheets_plan,worksheets_create,worksheet_icon,layout,views,view_filters,navi,mock_data,chatbots,workflows_plan,workflows_execute）",
     )
     parser.add_argument("--verbose", action="store_true", help="打印子脚本完整输出")
     args = parser.parse_args()
@@ -289,6 +312,9 @@ def main() -> None:
         "tableview_filter_plan_json": None,
         "tableview_filter_apply_result_json": None,
         "mock_data_run_json": None,
+        "chatbot_pipeline_result_json": None,
+        "workflow_plan_json": None,
+        "workflow_execute_result_json": None,
     }
     steps_report: List[dict] = []
 
@@ -317,6 +343,9 @@ def main() -> None:
                 "tableview_filter_plan_json": context.get("tableview_filter_plan_json"),
                 "tableview_filter_apply_result_json": context.get("tableview_filter_apply_result_json"),
                 "mock_data_run_json": context.get("mock_data_run_json"),
+                "chatbot_pipeline_result_json": context.get("chatbot_pipeline_result_json"),
+                "workflow_plan_json": context.get("workflow_plan_json"),
+                "workflow_execute_result_json": context.get("workflow_execute_result_json"),
             },
             "context": context,
             "steps": steps_report,
@@ -617,6 +646,81 @@ def main() -> None:
             return
     else:
         steps_report.append({"step_id": 8, "step_key": "mock_data", "title": "执行造数流水线", "skipped": True, "reason": "disabled_by_spec"})
+
+    # Step 9: 创建对话机器人
+    chatbots = spec["chatbots"]
+    if chatbots.get("enabled", True):
+        cmd9 = [
+            sys.executable,
+            str(SCRIPT_PIPELINE_CHATBOTS),
+            "--app-id",
+            app_id,
+            "--model",
+            str(chatbots.get("model", "gemini-2.5-flash")),
+        ]
+        if chatbots.get("auto", True):
+            cmd9.append("--auto")
+        if chatbots.get("dry_run", False) or execution_dry_run:
+            cmd9.append("--dry-run-create")
+        ok9 = execute_step(9, "chatbots", "创建对话机器人", cmd9)
+        if ok9 and not execution_dry_run:
+            context["chatbot_pipeline_result_json"] = extract_labeled_path(
+                str(steps_report[-1]["result"].get("stdout", "")), "RESULT_JSON"
+            )
+        if fail_fast and (not ok9):
+            out = save_report()
+            print(f"\n执行失败并终止，报告: {out}")
+            return
+    else:
+        steps_report.append({"step_id": 9, "step_key": "chatbots", "title": "创建对话机器人", "skipped": True, "reason": "disabled_by_spec"})
+
+    # Step 10: 规划工作流
+    # Step 11: 执行工作流创建
+    workflows = spec["workflows"]
+    if workflows.get("enabled", True):
+        WORKFLOW_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        workflow_plan_output = (WORKFLOW_OUTPUT_DIR / f"pipeline_workflows_{app_id}_{now_ts()}.json").resolve()
+        cmd10 = [
+            sys.executable,
+            str(SCRIPT_PIPELINE_WORKFLOWS),
+            "--relation-id",
+            app_id,
+            "--model",
+            str(workflows.get("model", "gemini-2.5-flash")),
+            "--thinking",
+            str(workflows.get("thinking", "high")),
+            "--output",
+            str(workflow_plan_output),
+        ]
+        if workflows.get("skip_analysis", False):
+            cmd10.append("--skip-analysis")
+        ok10 = execute_step(10, "workflows_plan", "规划工作流（Gemini）", cmd10)
+        if ok10:
+            context["workflow_plan_json"] = str(workflow_plan_output)
+        if fail_fast and (not ok10):
+            out = save_report()
+            print(f"\n执行失败并终止，报告: {out}")
+            return
+
+        workflow_execute_output = (WORKFLOW_OUTPUT_DIR / "execute_workflow_plan_latest.json").resolve()
+        cmd11 = [
+            sys.executable,
+            str(SCRIPT_EXECUTE_WORKFLOWS),
+            "--plan-file",
+            str(workflow_plan_output),
+        ]
+        if workflows.get("no_publish", False):
+            cmd11.append("--no-publish")
+        ok11 = execute_step(11, "workflows_execute", "创建工作流", cmd11)
+        if ok11:
+            context["workflow_execute_result_json"] = str(workflow_execute_output)
+        if fail_fast and (not ok11):
+            out = save_report()
+            print(f"\n执行失败并终止，报告: {out}")
+            return
+    else:
+        steps_report.append({"step_id": 10, "step_key": "workflows_plan", "title": "规划工作流（Gemini）", "skipped": True, "reason": "disabled_by_spec"})
+        steps_report.append({"step_id": 11, "step_key": "workflows_execute", "title": "创建工作流", "skipped": True, "reason": "disabled_by_spec"})
 
     out = save_report()
     report = build_report()
