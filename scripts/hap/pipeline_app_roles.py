@@ -45,7 +45,6 @@ APP_VIDEO_RUNS_DIR = OUTPUT_ROOT / "app_video_runs"
 DEFAULT_MODEL = "gemini-2.5-flash"
 VIDEO_MODE_SKIP = "skip"
 VIDEO_MODE_RESUME_LATEST = "resume-latest"
-VIDEO_MODE_RESUME_LATEST_SKIP_RECORDING = "resume-latest-skip-recording"
 
 
 def now_ts() -> str:
@@ -231,7 +230,6 @@ def prepare_video_step_result(
         {
             "status": "pending",
             "latestExecutionRun": str(EXECUTION_RUN_LATEST.resolve()),
-            "skipRecording": mode == VIDEO_MODE_RESUME_LATEST_SKIP_RECORDING,
         }
     )
     return result
@@ -255,7 +253,7 @@ def main() -> None:
     parser.add_argument("--no-skip-existing", dest="skip_existing", action="store_false", help="角色已存在时仍尝试创建")
     parser.add_argument(
         "--video-mode",
-        choices=[VIDEO_MODE_SKIP, VIDEO_MODE_RESUME_LATEST, VIDEO_MODE_RESUME_LATEST_SKIP_RECORDING],
+        choices=[VIDEO_MODE_SKIP, VIDEO_MODE_RESUME_LATEST],
         default=VIDEO_MODE_SKIP,
         help="是否在角色写入后接入 run_app_to_video.py 做校验",
     )
@@ -430,8 +428,6 @@ def main() -> None:
         if video_request.get("status") == "pending":
             before_video_dirs = list(APP_VIDEO_RUNS_DIR.glob("*")) if APP_VIDEO_RUNS_DIR.exists() else []
             video_cmd = [sys.executable, str(APP_VIDEO_SCRIPT.resolve()), "--resume-latest"]
-            if args.video_mode == VIDEO_MODE_RESUME_LATEST_SKIP_RECORDING:
-                video_cmd.append("--skip-recording")
             video_step = run_step(
                 step_no=4,
                 step_key="app_to_video",

@@ -58,7 +58,7 @@ python3 scripts/hap/agent_collect_requirements.py
 ### 一键全流程
 
 ```bash
-python3 scripts/hap/run_app_to_video.py --skip-recording
+python3 scripts/hap/run_app_to_video.py
 ```
 
 完整流程（共 13 步）：

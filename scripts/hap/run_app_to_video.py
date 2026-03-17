@@ -1,12 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-一键串联：
-1) 需求对话与应用创建
-2) task 模板占位符填充
-3) 可选浏览器录制（可通过参数跳过）
-
-并将关键产物归档到单次运行目录。
+一键串联：需求对话 → 应用创建 → 全流程执行，并将关键产物归档到单次运行目录。
 """
 
 from __future__ import annotations
@@ -30,15 +25,10 @@ from script_locator import resolve_script
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
-APP_VIDEO_RUNS_DIR = OUTPUT_ROOT / "app_video_runs"
+APP_RUNS_DIR = OUTPUT_ROOT / "app_runs"
 REQUIREMENT_SPEC_LATEST = OUTPUT_ROOT / "requirement_specs" / "requirement_spec_latest.json"
 EXECUTION_RUN_LATEST = OUTPUT_ROOT / "execution_runs" / "execution_run_latest.json"
-TASK_TEMPLATE = BASE_DIR / "record" / "task_template.txt"
-TASK_FILE = BASE_DIR / "record" / "task.txt"
 AGENT_COLLECT_SCRIPT = resolve_script("agent_collect_requirements.py")
-FILL_TASK_SCRIPT = resolve_script("fill_task_placeholders.py")
-RUN_AGENT_SCRIPT = BASE_DIR / "record" / "run_agent.py"
-RECORD_VENV_PYTHON = BASE_DIR / "record" / "venv" / "bin" / "python3"
 
 
 def now_ts() -> str:
@@ -61,12 +51,6 @@ def write_json(path: Path, payload: dict) -> None:
 def write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
-
-
-def preferred_python() -> str:
-    if RECORD_VENV_PYTHON.exists():
-        return str(RECORD_VENV_PYTHON)
-    return sys.executable
 
 
 def assert_recent(path: Path, not_before_epoch: float, label: str) -> Path:
@@ -100,12 +84,7 @@ def run_command(
         }
 
     proc = subprocess.run(
-        cmd,
-        cwd=str(cwd),
-        check=False,
-        capture_output=True,
-        text=True,
-        input=stdin_text or None,
+        cmd, cwd=str(cwd), check=False, capture_output=True, text=True, input=stdin_text or None,
     )
     return {
         "cmd": cmd,
@@ -188,35 +167,6 @@ def get_worksheet_names(layout_plan: Optional[dict], worksheet_create_result: Op
     return names
 
 
-def ffprobe_duration(video_path: Path) -> Optional[float]:
-    if not video_path.exists():
-        return None
-    proc = subprocess.run(
-        [
-            "ffprobe",
-            "-v",
-            "error",
-            "-show_entries",
-            "format=duration",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",
-            str(video_path),
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if proc.returncode != 0:
-        return None
-    text = (proc.stdout or "").strip()
-    if not text:
-        return None
-    try:
-        return round(float(text), 3)
-    except ValueError:
-        return None
-
-
 def format_seconds(seconds: Optional[float]) -> str:
     if seconds is None:
         return "未知"
@@ -228,8 +178,6 @@ def build_summary_md(
     app_name: str,
     conversation_summary: str,
     app_entry_url: str,
-    video_path: Optional[Path],
-    gif_path: Optional[Path],
     worksheet_names: List[str],
     stats: Dict[str, Any],
     artifact_paths: Dict[str, Any],
@@ -239,10 +187,8 @@ def build_summary_md(
         "",
         "## 1. 入口",
         f"- 应用入口: {app_entry_url}",
-        f"- 视频入口: {video_path.resolve() if video_path and video_path.exists() else '未生成'}",
-        f"- GIF 入口: {gif_path.resolve() if gif_path and gif_path.exists() else '未生成'}",
         "",
-        "## 2. 应用主要功能和特色",
+        "## 2. 应用信息",
         f"- 应用名称: {app_name}",
         f"- 应用 ID: {app_id}",
         f"- 功能摘要: {conversation_summary or '无'}",
@@ -252,7 +198,6 @@ def build_summary_md(
         "",
         "## 3. 运行日志",
         f"- 总运行时长: {format_seconds(stats.get('total_duration_seconds'))}",
-        f"- 视频时长: {format_seconds(stats.get('video_duration_seconds'))}",
         f"- 工作表数量: {stats.get('worksheet_count', 0)}",
         f"- 字段数量: {stats.get('field_count', 0)}",
         f"- 视图数量: {stats.get('created_view_count', 0)} / 规划视图数量: {stats.get('planned_view_count', 0)}",
@@ -264,62 +209,16 @@ def build_summary_md(
     return "\n".join(lines) + "\n"
 
 
-def build_tech_log_md(tech_log: dict) -> str:
-    run_meta = tech_log.get("run_metadata", {})
-    app_meta = tech_log.get("app_metadata", {})
-    agg = tech_log.get("aggregate_stats", {})
-    lines = [
-        "# 技术日志摘要",
-        "",
-        "## 运行元数据",
-        f"- started_at: {run_meta.get('started_at', '')}",
-        f"- ended_at: {run_meta.get('ended_at', '')}",
-        f"- total_duration_seconds: {run_meta.get('total_duration_seconds', '')}",
-        f"- cwd: {run_meta.get('cwd', '')}",
-        f"- python: {run_meta.get('python', '')}",
-        f"- run_dir: {run_meta.get('run_dir', '')}",
-        "",
-        "## 应用元数据",
-        f"- appId: {app_meta.get('appId', '')}",
-        f"- appName: {app_meta.get('appName', '')}",
-        f"- appEntryUrl: {app_meta.get('appEntryUrl', '')}",
-        "",
-        "## 聚合统计",
-        f"- worksheet_count: {agg.get('worksheet_count', 0)}",
-        f"- field_count: {agg.get('field_count', 0)}",
-        f"- planned_view_count: {agg.get('planned_view_count', 0)}",
-        f"- created_view_count: {agg.get('created_view_count', 0)}",
-        f"- video_duration_seconds: {agg.get('video_duration_seconds', '')}",
-        f"- mock_data_summary: {agg.get('mock_data_summary', '')}",
-        "",
-        "## 步骤命令",
-    ]
-    for item in tech_log.get("commands", []):
-        lines.append(f"- {item.get('name')}: returncode={item.get('returncode')} duration={item.get('duration_seconds')}")
-        lines.append(f"  - cmd: {' '.join(item.get('cmd', []))}")
-    if tech_log.get("error_context"):
-        lines.extend(
-            [
-                "",
-                "## 错误上下文",
-                f"- error: {tech_log['error_context'].get('message', '')}",
-            ]
-        )
-    return "\n".join(lines) + "\n"
-
-
 def main() -> None:
-    parser = argparse.ArgumentParser(description="一键从需求沟通到应用执行（可选录制视频）")
-    parser.add_argument("--seed", type=int, default=None, help="可选，传给 task 占位符填充脚本的随机种子")
+    parser = argparse.ArgumentParser(description="一键从需求沟通到应用全流程执行")
     parser.add_argument("--requirements-text", default="", help="可选，非交互模式下直接提供需求文本")
     parser.add_argument("--resume-latest", action="store_true", help="跳过需求采集，直接从最新成功的 execution report 继续")
-    parser.add_argument("--skip-recording", action="store_true", help="跳过录制步骤，仅输出应用执行结果与日志")
     args = parser.parse_args()
 
     started_at = now_iso()
     started_epoch = time.time()
     run_stamp = now_ts()
-    pending_dir = (APP_VIDEO_RUNS_DIR / f"{run_stamp}_pending").resolve()
+    pending_dir = (APP_RUNS_DIR / f"{run_stamp}_pending").resolve()
     pending_dir.mkdir(parents=True, exist_ok=True)
     run_dir = pending_dir
 
@@ -334,8 +233,6 @@ def main() -> None:
         "app_metadata": {},
         "requirement_metadata": {},
         "pipeline_artifacts": {},
-        "task_replacement_metadata": {},
-        "recording_metadata": {},
         "aggregate_stats": {},
         "commands": [],
         "error_context": None,
@@ -377,11 +274,11 @@ def main() -> None:
         context = execution_data.get("context") if isinstance(execution_data.get("context"), dict) else {}
         app_id = str(context.get("app_id", "")).strip()
         if not app_id:
-            raise RuntimeError("execution_run_latest.json 缺少 context.app_id，无法继续录制。")
+            raise RuntimeError("execution_run_latest.json 缺少 context.app_id。")
         app_name = str(spec_data.get("app", {}).get("name", "")).strip() or app_id
         app_entry_url = f"https://www.mingdao.com/app/{app_id}"
 
-        final_dir = (APP_VIDEO_RUNS_DIR / f"{run_stamp}_{app_id}").resolve()
+        final_dir = (APP_RUNS_DIR / f"{run_stamp}_{app_id}").resolve()
         if run_dir != final_dir:
             if final_dir.exists():
                 raise FileExistsError(f"目标运行目录已存在: {final_dir}")
@@ -391,7 +288,6 @@ def main() -> None:
 
         copied_spec = safe_copy(spec_path, run_dir / "requirement_spec.json")
         copied_execution = safe_copy(execution_path, run_dir / "execution_run.json")
-        safe_copy(TASK_TEMPLATE, run_dir / "task_template.txt")
 
         tech_log["app_metadata"] = {
             "appId": app_id,
@@ -405,76 +301,7 @@ def main() -> None:
             "execution_mode": str(spec_data.get("app", {}).get("target_mode", "")).strip() or "create_new",
         }
 
-        fill_metadata_path = run_dir / "task_fill_metadata.json"
-        cmd2 = [
-            preferred_python(),
-            str(FILL_TASK_SCRIPT.resolve()),
-            "--app-id",
-            app_id,
-            "--app-name",
-            app_name,
-            "--template-file",
-            str(TASK_TEMPLATE.resolve()),
-            "--task-file",
-            str(TASK_FILE.resolve()),
-            "--metadata-json",
-            str(fill_metadata_path.resolve()),
-        ]
-        if args.seed is not None:
-            cmd2.extend(["--seed", str(args.seed)])
-        result2 = run_command(cmd2, cwd=BASE_DIR, interactive=False)
-        result2["name"] = "fill_task_placeholders"
-        tech_log["commands"].append(result2)
-        if result2["returncode"] != 0:
-            raise RuntimeError(f"步骤2失败：task 占位符填充失败。\n{result2.get('stderr', '') or result2.get('stdout', '')}")
-        fill_metadata = load_json(fill_metadata_path)
-        safe_copy(TASK_FILE, run_dir / "task.txt")
-        tech_log["task_replacement_metadata"] = {
-            "template_file": fill_metadata.get("template_file"),
-            "task_file": str((run_dir / "task.txt").resolve()),
-            "replacement_map": fill_metadata.get("replacement_map", {}),
-            "remaining_placeholder_count": fill_metadata.get("stats", {}).get("remaining_placeholder_count", 0),
-            "metadata_json": str(fill_metadata_path.resolve()),
-        }
-
-        recording_summary_path: Optional[Path] = None
-        recording_summary: Dict[str, Any] = {}
-        if args.skip_recording:
-            tech_log["commands"].append(
-                {
-                    "name": "run_agent",
-                    "cmd": [],
-                    "cwd": str((BASE_DIR / "record").resolve()),
-                    "interactive": False,
-                    "started_at": now_iso(),
-                    "ended_at": now_iso(),
-                    "duration_seconds": 0.0,
-                    "returncode": 0,
-                    "stdout": "",
-                    "stderr": "",
-                    "skipped": True,
-                    "reason": "skip_recording",
-                }
-            )
-        else:
-            recording_summary_path = run_dir / "recording_summary.json"
-            cmd3 = [
-                preferred_python(),
-                str(RUN_AGENT_SCRIPT.resolve()),
-                "--task-file",
-                str(TASK_FILE.resolve()),
-                "--run-dir",
-                str(run_dir.resolve()),
-                "--summary-json",
-                str(recording_summary_path.resolve()),
-            ]
-            result3 = run_command(cmd3, cwd=BASE_DIR / "record", interactive=False)
-            result3["name"] = "run_agent"
-            tech_log["commands"].append(result3)
-            if result3["returncode"] != 0:
-                raise RuntimeError(f"步骤3失败：录制执行失败。\n{result3.get('stderr', '') or result3.get('stdout', '')}")
-            recording_summary = load_json(recording_summary_path)
-
+        # Archive pipeline artifacts
         artifact_sources = collect_artifact_sources(execution_data)
         copied_artifacts: Dict[str, str] = {}
         for key, value in artifact_sources.items():
@@ -509,32 +336,17 @@ def main() -> None:
         else:
             mock_data_summary = "未执行"
 
-        video_files = [Path(p) for p in recording_summary.get("video_files", [])]
-        video_path = video_files[0] if video_files else None
-        gif_path = Path(recording_summary["gif_path"]) if recording_summary.get("gif_path") else None
-        video_duration_seconds = ffprobe_duration(video_path) if video_path else None
-
+        total_duration_seconds = round(time.time() - started_epoch, 3)
         tech_log["pipeline_artifacts"] = {
             "requirement_spec_json": copied_spec,
             "execution_run_json": copied_execution,
             **copied_artifacts,
         }
-        tech_log["recording_metadata"] = {
-            "enabled": not args.skip_recording,
-            "run_dir": str(run_dir.resolve()),
-            "video_path": str(video_path.resolve()) if video_path and video_path.exists() else "",
-            "gif_path": str(gif_path.resolve()) if gif_path and gif_path.exists() else "",
-            "video_duration_seconds": video_duration_seconds,
-            "log_path": recording_summary.get("log_path", ""),
-            "recording_summary_json": str(recording_summary_path.resolve()) if recording_summary_path else "",
-        }
-        total_duration_seconds = round(time.time() - started_epoch, 3)
         tech_log["aggregate_stats"] = {
             "worksheet_count": worksheet_count,
             "field_count": field_count,
             "planned_view_count": planned_view_count,
             "created_view_count": created_view_count,
-            "video_duration_seconds": video_duration_seconds,
             "total_duration_seconds": total_duration_seconds,
             "mock_data_enabled": mock_data_enabled,
             "mock_data_summary": mock_data_summary,
@@ -543,18 +355,13 @@ def main() -> None:
         summary_artifact_paths: Dict[str, Any] = {
             "requirement_spec": copied_spec,
             "execution_run": copied_execution,
-            "task_fill_metadata": str(fill_metadata_path.resolve()),
             **copied_artifacts,
         }
-        if recording_summary_path:
-            summary_artifact_paths["recording_summary"] = str(recording_summary_path.resolve())
         summary_md = build_summary_md(
             app_id=app_id,
             app_name=app_name,
             conversation_summary=tech_log["requirement_metadata"]["conversation_summary"],
             app_entry_url=app_entry_url,
-            video_path=video_path,
-            gif_path=gif_path,
             worksheet_names=worksheet_names,
             stats={
                 **tech_log["aggregate_stats"],
@@ -579,11 +386,10 @@ def main() -> None:
             tech_log["app_metadata"].setdefault("appEntryUrl", app_entry_url)
 
         write_json(run_dir / "tech_log.json", tech_log)
-        write_text(run_dir / "tech_log.md", build_tech_log_md(tech_log))
         if summary_md:
             print(f"\n运行完成，产物目录: {run_dir}")
-            print(f"- 摘要: {run_dir / 'summary.md'}")
-            print(f"- 技术日志: {run_dir / 'tech_log.json'}")
+            print(f"  摘要: {run_dir / 'summary.md'}")
+            print(f"  技术日志: {run_dir / 'tech_log.json'}")
         elif tech_log.get("error_context"):
             print(f"\n运行失败，排障日志已写入: {run_dir / 'tech_log.json'}")
 
