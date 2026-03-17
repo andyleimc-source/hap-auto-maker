@@ -60,6 +60,10 @@ def step_org_auth(force=False):
     print("   快捷地址: https://www.mingdao.com/admin/integrationothers/<你的组织ID>")
     app_key = ask("   app_key")
     secret_key = ask("   secret_key")
+    print("\n   获取 project_id: 组织管理 → 组织 → 组织信息 → 编号（ID）")
+    project_id = ask("   project_id")
+    print("\n   获取 owner_id: 点击群聊中个人头像，地址栏中 https://www.mingdao.com/user_xxx 的 xxx 部分")
+    owner_id = ask("   owner_id")
     # 读取 example 模板获取完整结构
     example = CRED_DIR / "organization_auth.example.json"
     if example.exists():
@@ -68,6 +72,8 @@ def step_org_auth(force=False):
         data = {}
     data["app_key"] = app_key or "YOUR_HAP_APP_KEY"
     data["secret_key"] = secret_key or "YOUR_HAP_SECRET_KEY"
+    data["project_id"] = project_id or "YOUR_HAP_PROJECT_ID"
+    data["owner_id"] = owner_id or "YOUR_HAP_OWNER_ID"
     dst.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"   ✔ 已写入 {dst.name}")
 

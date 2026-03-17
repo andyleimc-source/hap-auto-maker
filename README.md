@@ -34,7 +34,7 @@ python3 setup.py
 
 ## 密钥获取说明
 
-运行 `setup.py` 时需要填写以下 3 项：
+运行 `setup.py` 时需要填写以下 5 项：
 
 ### 1. Gemini API Key
 
@@ -50,9 +50,19 @@ python3 setup.py
 
 快捷地址：`https://www.mingdao.com/admin/integrationothers/<你的组织ID>`
 
-> 组织 ID 可在明道云后台 URL 中找到，例如 `https://www.mingdao.com/admin/home/abc123` 中的 `abc123`。
+### 3. 组织 ID（project_id）
 
-### 3. 明道云登录账号
+用于指定在哪个组织下创建应用。
+
+获取路径：**组织管理 → 组织 → 组织信息 → 编号（ID）**
+
+### 4. 拥有者 ID（owner_id）
+
+用于指定应用的拥有者。
+
+获取方式：在明道云中点击群聊中个人的头像，浏览器地址栏会显示 `https://www.mingdao.com/user_xxx`，其中 `xxx` 即为 owner_id。
+
+### 5. 明道云登录账号
 
 用于自动登录获取网页端 Cookie / Authorization（部分接口需要）。
 
@@ -126,6 +136,7 @@ python3 scripts/refresh_auth.py --headless # 无头模式
 |------|----------|
 | Gemini 调用失败 | 检查 `config/credentials/gemini_auth.json` 中的 API Key 是否有效 |
 | 页面接口 401/403 | 运行 `python3 scripts/refresh_auth.py` 刷新登录态 |
+| OpenAPI "签名不合法" | 检查 `organization_auth.json` 中的 `app_key`、`secret_key`、`project_id`、`owner_id` 是否都已正确填写（不能是占位符），运行 `python3 setup.py --force` 重新配置 |
 | OpenAPI 调用失败 | 检查 `config/credentials/organization_auth.json` 中的密钥 |
 | 选择不到应用 | 先运行创建应用流程，生成 `data/outputs/app_authorizations/` 下的授权文件 |
 | 造数后还有空关联 | 查看 `data/outputs/mock_relation_repair_plans/` 下的修复计划 |
