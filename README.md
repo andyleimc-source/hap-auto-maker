@@ -47,10 +47,10 @@ python3 -m pip install requests google-genai playwright prompt-toolkit
 python3 -m playwright install chromium
 ```
 
-`record/` 子系统额外依赖见 [record/requirements.txt](/Users/andy/Desktop/hap_auto/record/requirements.txt)：
+`record/` 子系统额外依赖见 [record/requirements.txt](record/requirements.txt)：
 
 ```bash
-cd /Users/andy/Desktop/hap_auto/record
+cd record
 python3 -m venv venv
 venv/bin/pip install -r requirements.txt
 venv/bin/playwright install chromium
@@ -66,22 +66,34 @@ venv/bin/playwright install chromium
 同事首次克隆后可按以下步骤配置：
 
 ```bash
-cd /Users/andy/Desktop/hap_auto
-cp config/credentials/gemini_auth.example.json config/credentials/gemini_auth.json
+# 1. 克隆仓库
+git clone -b codex/create-app-only https://github.com/<your-org>/hap_auto.git
+cd hap_auto
+
+# 2. 安装依赖
+python3 -m pip install requests google-genai playwright prompt-toolkit
+python3 -m playwright install chromium
+
+# 3. 复制配置模板并填写自己的密钥
+cp config/credentials/gemini_auth.example.json   config/credentials/gemini_auth.json
 cp config/credentials/organization_auth.example.json config/credentials/organization_auth.json
-cp config/credentials/auth_config.example.py config/credentials/auth_config.py
-cp config/credentials/login_credentials.example.py config/credentials/login_credentials.py
+cp config/credentials/auth_config.example.py     config/credentials/auth_config.py
+cp config/credentials/login_credentials.example.py  config/credentials/login_credentials.py
+
+# 4. 录制子系统额外配置（可选）
+cp record/.env.example record/.env
+cp record/storage/mingdao_storage_state.example.json record/storage/mingdao_storage_state.json
 ```
 
-然后把上面 4 个目标文件中的占位值替换成自己的真实配置。
+然后把上面目标文件中的占位值替换成自己的真实配置。各文件作用见下方"必备本地配置"。
 
 ## 6. 必备本地配置
 
 运行前至少确认以下文件存在且可用：
-- [config/credentials/gemini_auth.json](/Users/andy/Desktop/hap_auto/config/credentials/gemini_auth.json)
-- [config/credentials/organization_auth.json](/Users/andy/Desktop/hap_auto/config/credentials/organization_auth.json)
-- [config/credentials/auth_config.py](/Users/andy/Desktop/hap_auto/config/credentials/auth_config.py)
-- [config/credentials/login_credentials.py](/Users/andy/Desktop/hap_auto/config/credentials/login_credentials.py)
+- [config/credentials/gemini_auth.json](config/credentials/gemini_auth.json)
+- [config/credentials/organization_auth.json](config/credentials/organization_auth.json)
+- [config/credentials/auth_config.py](config/credentials/auth_config.py)
+- [config/credentials/login_credentials.py](config/credentials/login_credentials.py)
 
 作用说明：
 - `gemini_auth.json`：Gemini 规划、匹配、需求收集
@@ -98,16 +110,16 @@ cp config/credentials/login_credentials.example.py config/credentials/login_cred
 网页登录态失效时，优先执行：
 
 ```bash
-python3 /Users/andy/Desktop/hap_auto/scripts/refresh_auth.py
+python3 scripts/refresh_auth.py
 ```
 
 无头模式：
 
 ```bash
-python3 /Users/andy/Desktop/hap_auto/scripts/refresh_auth.py --headless
+python3 scripts/refresh_auth.py --headless
 ```
 
-该脚本会自动回写 [config/credentials/auth_config.py](/Users/andy/Desktop/hap_auto/config/credentials/auth_config.py)。
+该脚本会自动回写 [config/credentials/auth_config.py](config/credentials/auth_config.py)。
 
 ## 8. 快速开始
 
@@ -120,7 +132,7 @@ cd /Users/andy/Desktop/hap_auto
 ### 8.1 新应用：从需求对话开始
 
 ```bash
-python3 /Users/andy/Desktop/hap_auto/scripts/agent_collect_requirements.py
+python3 scripts/agent_collect_requirements.py
 ```
 
 说明：
@@ -131,21 +143,21 @@ python3 /Users/andy/Desktop/hap_auto/scripts/agent_collect_requirements.py
 ### 8.2 新应用：直接执行已有需求 JSON
 
 ```bash
-python3 /Users/andy/Desktop/hap_auto/scripts/execute_requirements.py \
-  --spec-json /Users/andy/Desktop/hap_auto/data/outputs/requirement_specs/requirement_spec_latest.json
+python3 scripts/execute_requirements.py \
+  --spec-json data/outputs/requirement_specs/requirement_spec_latest.json
 ```
 
 ### 8.3 已有应用：一键造数
 
 ```bash
-python3 /Users/andy/Desktop/hap_auto/scripts/pipeline_mock_data.py
+python3 scripts/pipeline_mock_data.py
 ```
 
 ### 8.4 已有应用：清空记录
 
 ```bash
-python3 /Users/andy/Desktop/hap_auto/scripts/clear_app_records.py --dry-run
-python3 /Users/andy/Desktop/hap_auto/scripts/clear_app_records.py
+python3 scripts/clear_app_records.py --dry-run
+python3 scripts/clear_app_records.py
 ```
 
 ## 9. 功能与主流程
@@ -153,8 +165,8 @@ python3 /Users/andy/Desktop/hap_auto/scripts/clear_app_records.py
 ### 9.1 需求驱动总编排
 
 入口：
-- [scripts/agent_collect_requirements.py](/Users/andy/Desktop/hap_auto/scripts/agent_collect_requirements.py)
-- [scripts/execute_requirements.py](/Users/andy/Desktop/hap_auto/scripts/execute_requirements.py)
+- [scripts/agent_collect_requirements.py](scripts/agent_collect_requirements.py)
+- [scripts/execute_requirements.py](scripts/execute_requirements.py)
 
 主流程：
 1. 创建应用
@@ -170,7 +182,7 @@ python3 /Users/andy/Desktop/hap_auto/scripts/clear_app_records.py
 ### 9.2 造数与关系修复
 
 入口：
-- [scripts/pipeline_mock_data.py](/Users/andy/Desktop/hap_auto/scripts/pipeline_mock_data.py)
+- [scripts/pipeline_mock_data.py](scripts/pipeline_mock_data.py)
 
 流程：
 1. 选择已授权应用
@@ -189,7 +201,7 @@ python3 /Users/andy/Desktop/hap_auto/scripts/clear_app_records.py
 ### 9.3 录制子系统（可选）
 
 入口：
-- [record/run_agent.py](/Users/andy/Desktop/hap_auto/record/run_agent.py)
+- [record/run_agent.py](record/run_agent.py)
 
 核心能力：
 - 自然语言任务解析
@@ -286,23 +298,23 @@ python3 /Users/andy/Desktop/hap_auto/scripts/clear_app_records.py
 
 ### 13.1 Gemini 调用失败
 
-- 先检查 [config/credentials/gemini_auth.json](/Users/andy/Desktop/hap_auto/config/credentials/gemini_auth.json)
+- 先检查 [config/credentials/gemini_auth.json](config/credentials/gemini_auth.json)
 - 再检查模型名是否可用，当前脚本里常见默认值是 `gemini-2.5-pro` 或 `gemini-2.5-flash`
   - 可以使用以下命令查询并确认当前 API Key 下所有可用的模型：
     ```bash
-    python3 /Users/andy/Desktop/hap_auto/scripts/gemini/list_gemini_models.py
+    python3 scripts/gemini/list_gemini_models.py
     ```
     *(执行后将输出 JSON 到终端，并在 `data/outputs/gemini_models/` 生成结果文件)*
-- `record/` 录制链路还要额外检查 [record/.env](/Users/andy/Desktop/hap_auto/record/.env)
+- `record/` 录制链路还要额外检查 [record/.env](record/.env)
 
 ### 13.2 页面接口 401 / 403
 
-- 基本就是 [config/credentials/auth_config.py](/Users/andy/Desktop/hap_auto/config/credentials/auth_config.py) 过期
+- 基本就是 [config/credentials/auth_config.py](config/credentials/auth_config.py) 过期
 - 直接重新跑 `scripts/refresh_auth.py`
 
 ### 13.3 OpenAPI 调用失败
 
-- 检查 [config/credentials/organization_auth.json](/Users/andy/Desktop/hap_auto/config/credentials/organization_auth.json)
+- 检查 [config/credentials/organization_auth.json](config/credentials/organization_auth.json)
 - 确认 `base_url` 与当前环境一致
 
 ### 13.4 选择不到应用
@@ -359,7 +371,7 @@ python3 /Users/andy/Desktop/hap_auto/scripts/clear_app_records.py
 
 ## 16. 补充文档
 
-- [record/README.md](/Users/andy/Desktop/hap_auto/record/README.md)
-- [record/HAP_Automation_Best_Practices.md](/Users/andy/Desktop/hap_auto/record/HAP_Automation_Best_Practices.md)
+- [record/README.md](record/README.md)
+- [record/HAP_Automation_Best_Practices.md](record/HAP_Automation_Best_Practices.md)
 
 如果只看一份文档，优先看本 README；如果只调录制，再看 `record/README.md`。
