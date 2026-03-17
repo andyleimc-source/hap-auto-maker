@@ -6,7 +6,8 @@ config/credentials/auth_config.py
 config/credentials/login_credentials.py
 config/credentials/gemini_auth.json
 config/credentials/organization_auth.json
-record/.env
+# record 文件夹整体忽略
+record/
 
 # 环境变量文件
 .env
@@ -20,10 +21,6 @@ record/.env
 *.pfx
 
 cache/
-
-# 浏览器存储状态（含 session cookie）
-record/storage/mingdao_storage_state.json
-record/storage/mingdao_storage_state.json.bak
 
 # Claude Code 本地设置
 .claude/settings.local.json
