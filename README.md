@@ -10,11 +10,14 @@ python3 scripts/run_app_to_video.py --skip-recording
 
 去掉 `--skip-recording` 则在最后额外录制演示视频。
 
+# 交互式批量删除（列出所有已记录应用，选择后删除）
+python3 scripts/hap/delete_app.py --delete-all
+
 ## 目录结构
 
 ```
 hap_auto/
-├── scripts/         # 主流程脚本
+├── scripts/         # 顶层仅保留少数公开入口；主要实现位于 scripts/hap、scripts/gemini、scripts/auth
 ├── workflow/        # 工作流相关脚本
 ├── config/
 │   └── credentials/ # 认证配置（gemini_auth.json、auth_config.py 等）

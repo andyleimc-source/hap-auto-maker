@@ -14,8 +14,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+CURRENT_DIR = Path(__file__).resolve().parent
+if str(CURRENT_DIR) not in sys.path:
+    sys.path.insert(0, str(CURRENT_DIR))
+
+from script_locator import resolve_script
+
 BASE_DIR = Path(__file__).resolve().parents[2]
-SCRIPTS_DIR = BASE_DIR / "scripts"
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 EXECUTION_RUN_DIR = OUTPUT_ROOT / "execution_runs"
 APP_AUTH_DIR = OUTPUT_ROOT / "app_authorizations"
@@ -25,16 +30,17 @@ CONFIG_GEMINI = BASE_DIR / "config" / "credentials" / "gemini_auth.json"
 CONFIG_ORG = BASE_DIR / "config" / "credentials" / "organization_auth.json"
 CONFIG_WEB_AUTH = BASE_DIR / "config" / "credentials" / "auth_config.py"
 
-SCRIPT_PIPELINE_CREATE_APP = SCRIPTS_DIR / "pipeline_create_app.py"
-SCRIPT_PLAN_WORKSHEETS = SCRIPTS_DIR / "plan_app_worksheets_gemini.py"
-SCRIPT_CREATE_WORKSHEETS = SCRIPTS_DIR / "create_worksheets_from_plan.py"
-SCRIPT_PIPELINE_ICON = SCRIPTS_DIR / "pipeline_icon.py"
-SCRIPT_PIPELINE_LAYOUT = SCRIPTS_DIR / "pipeline_worksheet_layout.py"
-SCRIPT_PIPELINE_VIEWS = SCRIPTS_DIR / "pipeline_views.py"
-SCRIPT_PIPELINE_TABLEVIEW_FILTERS = SCRIPTS_DIR / "pipeline_tableview_filters.py"
-SCRIPT_UPDATE_NAVI = SCRIPTS_DIR / "update_app_navi_style.py"
-SCRIPT_PIPELINE_MOCK_DATA = SCRIPTS_DIR / "pipeline_mock_data.py"
-SCRIPT_PIPELINE_CHATBOTS = SCRIPTS_DIR / "pipeline_chatbots.py"
+SCRIPT_PIPELINE_CREATE_APP = resolve_script("pipeline_create_app.py")
+SCRIPT_PLAN_WORKSHEETS = resolve_script("plan_app_worksheets_gemini.py")
+SCRIPT_CREATE_WORKSHEETS = resolve_script("create_worksheets_from_plan.py")
+SCRIPT_PIPELINE_APP_ROLES = resolve_script("pipeline_app_roles.py")
+SCRIPT_PIPELINE_ICON = resolve_script("pipeline_icon.py")
+SCRIPT_PIPELINE_LAYOUT = resolve_script("pipeline_worksheet_layout.py")
+SCRIPT_PIPELINE_VIEWS = resolve_script("pipeline_views.py")
+SCRIPT_PIPELINE_TABLEVIEW_FILTERS = resolve_script("pipeline_tableview_filters.py")
+SCRIPT_UPDATE_NAVI = resolve_script("update_app_navi_style.py")
+SCRIPT_PIPELINE_MOCK_DATA = resolve_script("pipeline_mock_data.py")
+SCRIPT_PIPELINE_CHATBOTS = resolve_script("pipeline_chatbots.py")
 WORKFLOW_SCRIPTS_DIR = BASE_DIR / "workflow" / "scripts"
 WORKFLOW_OUTPUT_DIR = BASE_DIR / "workflow" / "output"
 SCRIPT_PIPELINE_WORKFLOWS = WORKFLOW_SCRIPTS_DIR / "pipeline_workflows.py"
@@ -112,6 +118,13 @@ def normalize_spec(raw: dict) -> dict:
     views.setdefault("model", ws.get("model", "gemini-2.5-pro"))
     spec["views"] = views
 
+    roles = spec.get("roles") if isinstance(spec.get("roles"), dict) else {}
+    roles.setdefault("enabled", True)
+    roles.setdefault("model", "gemini-2.5-flash")
+    roles.setdefault("skip_existing", True)
+    roles.setdefault("video_mode", "skip")
+    spec["roles"] = roles
+
     view_filters = spec.get("view_filters") if isinstance(spec.get("view_filters"), dict) else {}
     view_filters.setdefault("enabled", True)
     view_filters.setdefault("model", ws.get("model", "gemini-2.5-pro"))
@@ -151,6 +164,7 @@ def ensure_scripts_exist() -> None:
         SCRIPT_PIPELINE_CREATE_APP,
         SCRIPT_PLAN_WORKSHEETS,
         SCRIPT_CREATE_WORKSHEETS,
+        SCRIPT_PIPELINE_APP_ROLES,
         SCRIPT_PIPELINE_ICON,
         SCRIPT_PIPELINE_LAYOUT,
         SCRIPT_PIPELINE_VIEWS,
@@ -212,6 +226,14 @@ def extract_labeled_path(text: str, label: str) -> Optional[str]:
     if not m:
         return None
     return m.group(1).strip()
+
+
+def extract_marker_path(text: str, marker: str) -> Optional[str]:
+    for line in reversed((text or "").splitlines()):
+        item = line.strip()
+        if item.startswith(marker):
+            return item.split(":", 1)[1].strip()
+    return None
 
 
 def run_cmd(cmd: List[str], dry_run: bool, verbose: bool) -> Dict[str, object]:
@@ -281,7 +303,7 @@ def main() -> None:
     parser.add_argument(
         "--only-steps",
         default="",
-        help="仅执行指定步骤（逗号分隔：1,2,3 或 create_app,worksheets_plan,worksheets_create,worksheet_icon,layout,views,view_filters,navi,mock_data,chatbots,workflows_plan,workflows_execute）",
+        help="仅执行指定步骤（逗号分隔：1,2,3 或 create_app,worksheets_plan,worksheets_create,roles,worksheet_icon,layout,views,view_filters,navi,mock_data,chatbots,workflows_plan,workflows_execute）",
     )
     parser.add_argument("--verbose", action="store_true", help="打印子脚本完整输出")
     args = parser.parse_args()
@@ -305,6 +327,9 @@ def main() -> None:
         "app_auth_json": None,
         "worksheet_plan_json": None,
         "worksheet_create_result_json": None,
+        "role_pipeline_report_json": None,
+        "role_plan_json": None,
+        "role_create_result_json": None,
         "worksheet_layout_plan_json": None,
         "worksheet_layout_apply_result_json": None,
         "view_plan_json": None,
@@ -336,6 +361,9 @@ def main() -> None:
                 "app_auth_json": context.get("app_auth_json"),
                 "worksheet_plan_json": context.get("worksheet_plan_json"),
                 "worksheet_create_result_json": context.get("worksheet_create_result_json"),
+                "role_pipeline_report_json": context.get("role_pipeline_report_json"),
+                "role_plan_json": context.get("role_plan_json"),
+                "role_create_result_json": context.get("role_create_result_json"),
                 "worksheet_layout_plan_json": context.get("worksheet_layout_plan_json"),
                 "worksheet_layout_apply_result_json": context.get("worksheet_layout_apply_result_json"),
                 "view_plan_json": context.get("view_plan_json"),
@@ -394,6 +422,7 @@ def main() -> None:
 
     app = spec["app"]
     ws = spec["worksheets"]
+    roles = spec["roles"]
     views = spec["views"]
     view_filters = spec["view_filters"]
     mock_data = spec["mock_data"]
@@ -494,9 +523,42 @@ def main() -> None:
         print(f"\n执行失败并终止，报告: {out}")
         return
 
-    # Step 3: 工作表 icon
-    if ws["icon_update"].get("enabled", True):
+    # Step 3: 规划并创建应用角色
+    if roles.get("enabled", True):
         cmd3 = [
+            sys.executable,
+            str(SCRIPT_PIPELINE_APP_ROLES),
+            "--app-id",
+            app_id,
+            "--model",
+            str(roles.get("model", "gemini-2.5-flash")),
+            "--video-mode",
+            str(roles.get("video_mode", "skip")),
+        ]
+        if not bool(roles.get("skip_existing", True)):
+            cmd3.append("--no-skip-existing")
+        ok3 = execute_step(3, "roles", "规划并创建应用角色", cmd3)
+        if ok3 and not execution_dry_run:
+            role_report = extract_marker_path(str(steps_report[-1]["result"].get("stdout", "")), "RESULT_JSON")
+            if role_report:
+                context["role_pipeline_report_json"] = role_report
+                try:
+                    role_data = load_json(Path(role_report))
+                    artifacts = role_data.get("artifacts", {}) if isinstance(role_data.get("artifacts"), dict) else {}
+                    context["role_plan_json"] = artifacts.get("planJson")
+                    context["role_create_result_json"] = artifacts.get("createResultJson")
+                except Exception:
+                    pass
+        if fail_fast and (not ok3):
+            out = save_report()
+            print(f"\n执行失败并终止，报告: {out}")
+            return
+    else:
+        steps_report.append({"step_id": 3, "step_key": "roles", "title": "规划并创建应用角色", "skipped": True, "reason": "disabled_by_spec"})
+
+    # Step 4: 工作表 icon
+    if ws["icon_update"].get("enabled", True):
+        cmd4 = [
             sys.executable,
             str(SCRIPT_PIPELINE_ICON),
             "--app-auth-json",
@@ -507,18 +569,18 @@ def main() -> None:
             str(ws.get("model", "gemini-2.5-pro")),
         ]
         if ws["icon_update"].get("refresh_auth", False):
-            cmd3.append("--refresh-auth")
-        ok3 = execute_step(3, "worksheet_icon", "更新工作表icon", cmd3)
-        if fail_fast and (not ok3):
+            cmd4.append("--refresh-auth")
+        ok4 = execute_step(4, "worksheet_icon", "更新工作表icon", cmd4)
+        if fail_fast and (not ok4):
             out = save_report()
             print(f"\n执行失败并终止，报告: {out}")
             return
     else:
-        steps_report.append({"step_id": 3, "step_key": "worksheet_icon", "title": "更新工作表icon", "skipped": True, "reason": "disabled_by_spec"})
+        steps_report.append({"step_id": 4, "step_key": "worksheet_icon", "title": "更新工作表icon", "skipped": True, "reason": "disabled_by_spec"})
 
-    # Step 4: 字段布局
+    # Step 5: 字段布局
     if ws["layout"].get("enabled", True):
-        cmd4 = [
+        cmd5 = [
             sys.executable,
             str(SCRIPT_PIPELINE_LAYOUT),
             "--app-id",
@@ -528,26 +590,26 @@ def main() -> None:
         ]
         layout_req = str(ws["layout"].get("requirements", "")).strip()
         if layout_req:
-            cmd4.extend(["--requirements", layout_req])
+            cmd5.extend(["--requirements", layout_req])
         if ws["layout"].get("refresh_auth", False):
-            cmd4.append("--refresh-auth")
-        ok4 = execute_step(4, "layout", "规划并应用字段布局", cmd4)
-        if ok4 and not execution_dry_run:
+            cmd5.append("--refresh-auth")
+        ok5 = execute_step(5, "layout", "规划并应用字段布局", cmd5)
+        if ok5 and not execution_dry_run:
             layout_stdout = str(steps_report[-1]["result"].get("stdout", ""))
             context["worksheet_layout_plan_json"] = extract_labeled_path(layout_stdout, "输出文件")
             context["worksheet_layout_apply_result_json"] = extract_labeled_path(layout_stdout, "结果文件")
-        if fail_fast and (not ok4):
+        if fail_fast and (not ok5):
             out = save_report()
             print(f"\n执行失败并终止，报告: {out}")
             return
     else:
-        steps_report.append({"step_id": 4, "step_key": "layout", "title": "规划并应用字段布局", "skipped": True, "reason": "disabled_by_spec"})
+        steps_report.append({"step_id": 5, "step_key": "layout", "title": "规划并应用字段布局", "skipped": True, "reason": "disabled_by_spec"})
 
-    # Step 5: 规划并创建视图
+    # Step 6: 规划并创建视图
     if views.get("enabled", True):
         view_plan_output = (VIEW_PLAN_DIR / f"view_plan_{app_id}_{now_ts()}.json").resolve()
         view_create_output = (VIEW_CREATE_RESULT_DIR / f"view_create_result_{app_id}_{now_ts()}.json").resolve()
-        cmd5 = [
+        cmd6 = [
             sys.executable,
             str(SCRIPT_PIPELINE_VIEWS),
             "--model",
@@ -559,24 +621,24 @@ def main() -> None:
             "--create-output",
             str(view_create_output),
         ]
-        ok5 = execute_step(5, "views", "规划并创建视图", cmd5)
-        if ok5:
+        ok6 = execute_step(6, "views", "规划并创建视图", cmd6)
+        if ok6:
             context["view_plan_json"] = str(view_plan_output)
             context["view_create_result_json"] = str(view_create_output)
-        if fail_fast and (not ok5):
+        if fail_fast and (not ok6):
             out = save_report()
             print(f"\n执行失败并终止，报告: {out}")
             return
     else:
-        steps_report.append({"step_id": 5, "step_key": "views", "title": "规划并创建视图", "skipped": True, "reason": "disabled_by_spec"})
+        steps_report.append({"step_id": 6, "step_key": "views", "title": "规划并创建视图", "skipped": True, "reason": "disabled_by_spec"})
 
-    # Step 6: 规划并应用视图筛选
+    # Step 7: 规划并应用视图筛选
     if view_filters.get("enabled", True):
         filter_plan_output = (TABLEVIEW_FILTER_PLAN_DIR / f"tableview_filter_plan_{app_id}_{now_ts()}.json").resolve()
         filter_apply_output = (
             TABLEVIEW_FILTER_APPLY_RESULT_DIR / f"tableview_filter_apply_result_{app_id}_{now_ts()}.json"
         ).resolve()
-        cmd6 = [
+        cmd7 = [
             sys.executable,
             str(SCRIPT_PIPELINE_TABLEVIEW_FILTERS),
             "--model",
@@ -591,21 +653,21 @@ def main() -> None:
             str(filter_apply_output),
         ]
         if execution_dry_run:
-            cmd6.append("--dry-run")
-        ok6 = execute_step(6, "view_filters", "规划并应用视图筛选", cmd6)
-        if ok6:
+            cmd7.append("--dry-run")
+        ok7 = execute_step(7, "view_filters", "规划并应用视图筛选", cmd7)
+        if ok7:
             context["tableview_filter_plan_json"] = str(filter_plan_output)
             context["tableview_filter_apply_result_json"] = str(filter_apply_output)
-        if fail_fast and (not ok6):
+        if fail_fast and (not ok7):
             out = save_report()
             print(f"\n执行失败并终止，报告: {out}")
             return
     else:
-        steps_report.append({"step_id": 6, "step_key": "view_filters", "title": "规划并应用视图筛选", "skipped": True, "reason": "disabled_by_spec"})
+        steps_report.append({"step_id": 7, "step_key": "view_filters", "title": "规划并应用视图筛选", "skipped": True, "reason": "disabled_by_spec"})
 
-    # Step 7: 应用导航风格
+    # Step 8: 应用导航风格
     if app["navi_style"].get("enabled", True):
-        cmd5 = [
+        cmd8 = [
             sys.executable,
             str(SCRIPT_UPDATE_NAVI),
             "--app-id",
@@ -614,18 +676,18 @@ def main() -> None:
             str(int(app["navi_style"].get("pcNaviStyle", 1))),
         ]
         if app["navi_style"].get("refresh_auth", False):
-            cmd5.append("--refresh-auth")
-        ok7 = execute_step(7, "navi", "设置应用导航风格", cmd5)
-        if fail_fast and (not ok7):
+            cmd8.append("--refresh-auth")
+        ok8 = execute_step(8, "navi", "设置应用导航风格", cmd8)
+        if fail_fast and (not ok8):
             out = save_report()
             print(f"\n执行失败并终止，报告: {out}")
             return
     else:
-        steps_report.append({"step_id": 7, "step_key": "navi", "title": "设置应用导航风格", "skipped": True, "reason": "disabled_by_spec"})
+        steps_report.append({"step_id": 8, "step_key": "navi", "title": "设置应用导航风格", "skipped": True, "reason": "disabled_by_spec"})
 
-    # Step 8: 造数流水线
+    # Step 9: 造数流水线
     if mock_data.get("enabled", True):
-        cmd8 = [
+        cmd9 = [
             sys.executable,
             str(SCRIPT_PIPELINE_MOCK_DATA),
             "--app-id",
@@ -634,23 +696,23 @@ def main() -> None:
             str(mock_data.get("model", ws.get("model", "gemini-2.5-pro"))),
         ]
         if execution_dry_run or mock_data.get("dry_run", False):
-            cmd8.append("--dry-run")
+            cmd9.append("--dry-run")
         if mock_data.get("trigger_workflow", False):
-            cmd8.append("--trigger-workflow")
-        ok8 = execute_step(8, "mock_data", "执行造数流水线", cmd8)
-        if ok8 and not execution_dry_run:
+            cmd9.append("--trigger-workflow")
+        ok9 = execute_step(9, "mock_data", "执行造数流水线", cmd9)
+        if ok9 and not execution_dry_run:
             context["mock_data_run_json"] = extract_report_path(str(steps_report[-1]["result"].get("stdout", "")))
-        if fail_fast and (not ok8):
+        if fail_fast and (not ok9):
             out = save_report()
             print(f"\n执行失败并终止，报告: {out}")
             return
     else:
-        steps_report.append({"step_id": 8, "step_key": "mock_data", "title": "执行造数流水线", "skipped": True, "reason": "disabled_by_spec"})
+        steps_report.append({"step_id": 9, "step_key": "mock_data", "title": "执行造数流水线", "skipped": True, "reason": "disabled_by_spec"})
 
-    # Step 9: 创建对话机器人
+    # Step 10: 创建对话机器人
     chatbots = spec["chatbots"]
     if chatbots.get("enabled", True):
-        cmd9 = [
+        cmd10 = [
             sys.executable,
             str(SCRIPT_PIPELINE_CHATBOTS),
             "--app-id",
@@ -659,28 +721,28 @@ def main() -> None:
             str(chatbots.get("model", "gemini-2.5-flash")),
         ]
         if chatbots.get("auto", True):
-            cmd9.append("--auto")
+            cmd10.append("--auto")
         if chatbots.get("dry_run", False) or execution_dry_run:
-            cmd9.append("--dry-run-create")
-        ok9 = execute_step(9, "chatbots", "创建对话机器人", cmd9)
-        if ok9 and not execution_dry_run:
+            cmd10.append("--dry-run-create")
+        ok10 = execute_step(10, "chatbots", "创建对话机器人", cmd10)
+        if ok10 and not execution_dry_run:
             context["chatbot_pipeline_result_json"] = extract_labeled_path(
                 str(steps_report[-1]["result"].get("stdout", "")), "RESULT_JSON"
             )
-        if fail_fast and (not ok9):
+        if fail_fast and (not ok10):
             out = save_report()
             print(f"\n执行失败并终止，报告: {out}")
             return
     else:
-        steps_report.append({"step_id": 9, "step_key": "chatbots", "title": "创建对话机器人", "skipped": True, "reason": "disabled_by_spec"})
+        steps_report.append({"step_id": 10, "step_key": "chatbots", "title": "创建对话机器人", "skipped": True, "reason": "disabled_by_spec"})
 
-    # Step 10: 规划工作流
-    # Step 11: 执行工作流创建
+    # Step 11: 规划工作流
+    # Step 12: 执行工作流创建
     workflows = spec["workflows"]
     if workflows.get("enabled", True):
         WORKFLOW_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         workflow_plan_output = (WORKFLOW_OUTPUT_DIR / f"pipeline_workflows_{app_id}_{now_ts()}.json").resolve()
-        cmd10 = [
+        cmd11 = [
             sys.executable,
             str(SCRIPT_PIPELINE_WORKFLOWS),
             "--relation-id",
@@ -693,34 +755,34 @@ def main() -> None:
             str(workflow_plan_output),
         ]
         if workflows.get("skip_analysis", False):
-            cmd10.append("--skip-analysis")
-        ok10 = execute_step(10, "workflows_plan", "规划工作流（Gemini）", cmd10)
-        if ok10:
+            cmd11.append("--skip-analysis")
+        ok11 = execute_step(11, "workflows_plan", "规划工作流（Gemini）", cmd11)
+        if ok11:
             context["workflow_plan_json"] = str(workflow_plan_output)
-        if fail_fast and (not ok10):
+        if fail_fast and (not ok11):
             out = save_report()
             print(f"\n执行失败并终止，报告: {out}")
             return
 
         workflow_execute_output = (WORKFLOW_OUTPUT_DIR / "execute_workflow_plan_latest.json").resolve()
-        cmd11 = [
+        cmd12 = [
             sys.executable,
             str(SCRIPT_EXECUTE_WORKFLOWS),
             "--plan-file",
             str(workflow_plan_output),
         ]
         if workflows.get("no_publish", False):
-            cmd11.append("--no-publish")
-        ok11 = execute_step(11, "workflows_execute", "创建工作流", cmd11)
-        if ok11:
+            cmd12.append("--no-publish")
+        ok12 = execute_step(12, "workflows_execute", "创建工作流", cmd12)
+        if ok12:
             context["workflow_execute_result_json"] = str(workflow_execute_output)
-        if fail_fast and (not ok11):
+        if fail_fast and (not ok12):
             out = save_report()
             print(f"\n执行失败并终止，报告: {out}")
             return
     else:
-        steps_report.append({"step_id": 10, "step_key": "workflows_plan", "title": "规划工作流（Gemini）", "skipped": True, "reason": "disabled_by_spec"})
-        steps_report.append({"step_id": 11, "step_key": "workflows_execute", "title": "创建工作流", "skipped": True, "reason": "disabled_by_spec"})
+        steps_report.append({"step_id": 11, "step_key": "workflows_plan", "title": "规划工作流（Gemini）", "skipped": True, "reason": "disabled_by_spec"})
+        steps_report.append({"step_id": 12, "step_key": "workflows_execute", "title": "创建工作流", "skipped": True, "reason": "disabled_by_spec"})
 
     out = save_report()
     report = build_report()

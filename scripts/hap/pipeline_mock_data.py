@@ -38,15 +38,14 @@ from mock_data_common import (
     now_ts,
     write_json,
 )
+from script_locator import resolve_script
 
-BASE_DIR = Path(__file__).resolve().parents[2]
-SCRIPTS_DIR = BASE_DIR / "scripts"
-SCRIPT_EXPORT_SCHEMA = SCRIPTS_DIR / "export_app_mock_schema.py"
-SCRIPT_PLAN_DATA = SCRIPTS_DIR / "plan_mock_data_gemini.py"
-SCRIPT_WRITE_DATA = SCRIPTS_DIR / "write_mock_data_from_plan.py"
-SCRIPT_ANALYZE_REL = SCRIPTS_DIR / "analyze_relation_consistency.py"
-SCRIPT_APPLY_REL = SCRIPTS_DIR / "apply_relation_repair_plan.py"
-SCRIPT_DELETE_UNRESOLVED = SCRIPTS_DIR / "delete_unresolved_records.py"
+SCRIPT_EXPORT_SCHEMA = resolve_script("export_app_mock_schema.py")
+SCRIPT_PLAN_DATA = resolve_script("plan_mock_data_gemini.py")
+SCRIPT_WRITE_DATA = resolve_script("write_mock_data_from_plan.py")
+SCRIPT_ANALYZE_REL = resolve_script("analyze_relation_consistency.py")
+SCRIPT_APPLY_REL = resolve_script("apply_relation_repair_plan.py")
+SCRIPT_DELETE_UNRESOLVED = resolve_script("delete_unresolved_records.py")
 
 
 def run_step(cmd: List[str], title: str, log_path: Path) -> Dict[str, object]:

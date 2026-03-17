@@ -29,11 +29,11 @@ from mock_data_common import (
     now_ts,
     write_json,
 )
+from script_locator import resolve_script
 
 BASE_DIR = Path(__file__).resolve().parents[2]
-SCRIPTS_DIR = BASE_DIR / "scripts"
-SCRIPT_PLAN = SCRIPTS_DIR / "plan_role_recommendations_gemini.py"
-SCRIPT_CREATE = SCRIPTS_DIR / "create_roles_from_recommendation.py"
+SCRIPT_PLAN = resolve_script("plan_role_recommendations_gemini.py")
+SCRIPT_CREATE = resolve_script("create_roles_from_recommendation.py")
 ROLE_RUN_DIR = OUTPUT_ROOT / "role_runs"
 DEFAULT_MODEL = "gemini-2.5-flash"
 

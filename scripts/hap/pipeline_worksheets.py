@@ -16,6 +16,11 @@ from pathlib import Path
 from typing import Optional
 
 import requests
+CURRENT_DIR = Path(__file__).resolve().parent
+if str(CURRENT_DIR) not in sys.path:
+    sys.path.insert(0, str(CURRENT_DIR))
+
+from script_locator import resolve_script
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
@@ -23,9 +28,9 @@ APP_AUTH_DIR = OUTPUT_ROOT / "app_authorizations"
 WORKSHEET_PLAN_DIR = OUTPUT_ROOT / "worksheet_plans"
 WORKSHEET_CREATE_RESULT_DIR = OUTPUT_ROOT / "worksheet_create_results"
 
-PLAN_SCRIPT = BASE_DIR / "scripts" / "gemini" / "plan_app_worksheets_gemini.py"
-CREATE_SCRIPT = BASE_DIR / "scripts" / "hap" / "create_worksheets_from_plan.py"
-PIPELINE_ICON_SCRIPT = BASE_DIR / "scripts" / "hap" / "pipeline_icon.py"
+PLAN_SCRIPT = resolve_script("plan_app_worksheets_gemini.py")
+CREATE_SCRIPT = resolve_script("create_worksheets_from_plan.py")
+PIPELINE_ICON_SCRIPT = resolve_script("pipeline_icon.py")
 
 APP_INFO_URL = "https://api.mingdao.com/v3/app"
 
