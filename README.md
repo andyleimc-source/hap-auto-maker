@@ -1,64 +1,8 @@
 # HAP Auto
 
-## 一键运行
+基于 Gemini + 明道云 OpenAPI 的自动化应用搭建工具。通过自然语言描述需求，自动完成从建应用、建表、配视图、造数据到生成机器人的全流程。
 
-```bash
-python3 scripts/run_app_to_video.py --skip-recording
-```
-
-完整流程：需求对话 → 创建应用 → 工作表/视图/布局 → 造数 → 机器人 → 工作流。
-
-去掉 `--skip-recording` 则在最后额外录制演示视频。
-
-# 交互式批量删除（列出所有已记录应用，选择后删除）
-python3 scripts/hap/delete_app.py --delete-all
-
-## 目录结构
-
-```
-hap_auto/
-├── scripts/         # 顶层仅保留少数公开入口；主要实现位于 scripts/hap、scripts/gemini、scripts/auth
-├── workflow/        # 工作流相关脚本
-├── config/
-│   └── credentials/ # 认证配置（gemini_auth.json、auth_config.py 等）
-├── data/            # 应用授权 JSON、输出产物
-└── record/          # 浏览器录制 Agent
-```
-
-分层约定：
-- 日常执行优先用 `scripts/*.py`
-- 调试实现细节再看 `scripts/hap/*.py`、`scripts/gemini/*.py`
-- 录制相关逻辑集中在 `record/`
-- 所有中间产物默认写到 `data/outputs/`
-
-## 5. 环境与依赖
-
-建议：
-- Python 3.11+
-- macOS 本地运行
-- 可用的 Gemini API Key
-- 可用的 HAP 组织级凭据
-- 可用的明道云网页登录账号
-
-主仓库常用依赖：
-
-```bash
-python3 -m pip install requests google-genai playwright prompt-toolkit
-python3 -m playwright install chromium
-```
-
-`record/` 子系统额外依赖见 [record/requirements.txt](record/requirements.txt)：
-
-```bash
-cd record
-python3 -m venv venv
-venv/bin/pip install -r requirements.txt
-venv/bin/playwright install chromium
-```
-
-### 5.1 GitHub 协作模式（密钥不入库）
-
-本仓库采用”代码入库、密钥本地配置”的方式。同事首次克隆后只需运行一个命令：
+## 快速开始
 
 ```bash
 git clone -b codex/create-app-only https://github.com/<your-org>/hap_auto.git
@@ -66,299 +10,139 @@ cd hap_auto
 python3 setup.py
 ```
 
-`setup.py` 会自动完成：
-1. 安装 Python 依赖 + Playwright Chromium
-2. 交互式填写 Gemini API Key
-3. 交互式填写 HAP 组织级密钥（app_key / secret_key）
-4. 交互式填写明道云登录账号 → 自动登录获取 Cookie / Authorization
+`setup.py` 会交互式引导你完成全部配置（安装依赖、填写密钥、自动登录），完成后即可使用。
 
-全部密钥文件已在 `.gitignore` 中忽略，不会被提交。
+## 前置条件
 
-## 6. 必备本地配置
+- Python 3.11+
+- macOS / Linux
+- 一个明道云账号（有组织管理员权限）
+- 一个 Google Gemini API Key
 
-运行前至少确认以下文件存在且可用：
-- [config/credentials/gemini_auth.json](config/credentials/gemini_auth.json)
-- [config/credentials/organization_auth.json](config/credentials/organization_auth.json)
-- [config/credentials/auth_config.py](config/credentials/auth_config.py)
-- [config/credentials/login_credentials.py](config/credentials/login_credentials.py)
+## 密钥获取说明
 
-作用说明：
-- `gemini_auth.json`：Gemini 规划、匹配、需求收集
-- `organization_auth.json`：HAP OpenAPI 调用
-- `auth_config.py`：网页接口 Cookie / Authorization
-- `login_credentials.py`：自动登录刷新网页认证
+运行 `setup.py` 时需要填写以下 3 项：
 
-注意：
-- 这些都是本地敏感文件，不应提交
-- `auth_config.py` 中的 `COOKIE`、`AUTHORIZATION` 会过期
+### 1. Gemini API Key
 
-## 7. 认证刷新
+用于 AI 规划（工作表设计、造数、视图匹配等）。
 
-网页登录态失效时，优先执行：
+获取地址：https://aistudio.google.com/apikey
+
+### 2. HAP 组织级密钥（app_key / secret_key）
+
+用于调用明道云 OpenAPI 创建应用、工作表等。
+
+获取路径：**组织管理 → 集成 → 其他 → 开放接口 → 查看密钥**
+
+快捷地址：`https://www.mingdao.com/admin/integrationothers/<你的组织ID>`
+
+> 组织 ID 可在明道云后台 URL 中找到，例如 `https://www.mingdao.com/admin/home/abc123` 中的 `abc123`。
+
+### 3. 明道云登录账号
+
+用于自动登录获取网页端 Cookie / Authorization（部分接口需要）。
+
+`setup.py` 会自动调用 Playwright 无头浏览器登录，登录成功后自动写入 `auth_config.py`，无需手动抓包。
+
+## 使用方式
+
+### 对话式创建应用（推荐）
 
 ```bash
+python3 scripts/hap/agent_collect_requirements.py
+```
+
+在终端与 Gemini 多轮对话，描述你想要的应用，输入 `/done` 后自动生成需求规格并开始搭建。
+
+### 一键全流程
+
+```bash
+python3 scripts/hap/run_app_to_video.py --skip-recording
+```
+
+完整流程（共 13 步）：
+
+| Step | 步骤 | 说明 |
+|------|------|------|
+| 1 | create_app | 创建应用 + 授权 + 应用图标 |
+| 2 | worksheets | 规划并创建工作表 |
+| 3 | roles | 规划并创建应用角色 |
+| 4 | worksheet_icon | 匹配并更新工作表图标 |
+| 5 | layout | 规划并应用字段布局 |
+| 6 | views | 规划并创建视图 |
+| 7 | view_filters | 规划并应用视图筛选 |
+| 8 | delete_default_views | 删除默认「全部」视图 |
+| 9 | navi | 设置应用导航风格 |
+| 10 | mock_data | 执行造数流水线 |
+| 11 | chatbots | 创建对话机器人 |
+| 12 | workflows_plan | 规划工作流（Gemini） |
+| 13 | workflows_execute | 创建工作流 |
+
+单独执行某步骤：
+
+```bash
+python3 scripts/hap/execute_requirements.py \
+  --spec-json data/outputs/requirement_specs/requirement_spec_latest.json \
+  --only-steps mock_data
+```
+
+### 其他常用命令
+
+```bash
+# 已有应用：一键造数
+python3 scripts/hap/pipeline_mock_data.py
+
+# 已有应用：清空记录（先 dry-run 确认）
+python3 scripts/hap/clear_app_records.py --dry-run
+python3 scripts/hap/clear_app_records.py
+
+# 交互式批量删除应用
+python3 scripts/hap/delete_app.py --delete-all
+
+# 认证过期时重新登录
 python3 scripts/refresh_auth.py
 ```
 
-无头模式：
+## 目录结构
 
-```bash
-python3 scripts/refresh_auth.py --headless
+```
+hap_auto/
+├── setup.py             # 一键初始化脚本
+├── scripts/
+│   ├── hap/             # 核心实现（应用创建、工作表、视图、造数等）
+│   ├── gemini/          # Gemini AI 规划脚本
+│   └── auth/            # 认证相关
+├── config/
+│   └── credentials/     # 本地密钥文件（.gitignore 已忽略，不会提交）
+├── data/
+│   └── outputs/         # 所有运行产物（规划 JSON、执行结果等）
+└── workflow/            # 工作流相关脚本
 ```
 
-该脚本会自动回写 [config/credentials/auth_config.py](config/credentials/auth_config.py)。
+## 认证刷新
 
-## 8. 快速开始
-
-先进入项目目录：
+网页登录态会过期（通常 Cookie 有效期几天到几周不等）。遇到 `401 / 403` 错误时，运行：
 
 ```bash
-cd /Users/andy/Desktop/hap_auto
+python3 scripts/refresh_auth.py            # 有头模式（可看到浏览器）
+python3 scripts/refresh_auth.py --headless # 无头模式
 ```
 
-### 8.1 新应用：从需求对话开始
+会自动重新登录并更新 `config/credentials/auth_config.py`。
 
-```bash
-python3 scripts/agent_collect_requirements.py
-```
+## 排障
 
-说明：
-- 终端与 Gemini 多轮对话
-- 输入 `/done` 后生成 requirement spec
-- 默认自动接着执行 `execute_requirements.py`
+| 问题 | 解决方案 |
+|------|----------|
+| Gemini 调用失败 | 检查 `config/credentials/gemini_auth.json` 中的 API Key 是否有效 |
+| 页面接口 401/403 | 运行 `python3 scripts/refresh_auth.py` 刷新登录态 |
+| OpenAPI 调用失败 | 检查 `config/credentials/organization_auth.json` 中的密钥 |
+| 选择不到应用 | 先运行创建应用流程，生成 `data/outputs/app_authorizations/` 下的授权文件 |
+| 造数后还有空关联 | 查看 `data/outputs/mock_relation_repair_plans/` 下的修复计划 |
 
-### 8.2 新应用：直接执行已有需求 JSON
+## 已知限制
 
-```bash
-python3 scripts/execute_requirements.py \
-  --spec-json data/outputs/requirement_specs/requirement_spec_latest.json
-```
-
-### 8.3 已有应用：一键造数
-
-```bash
-python3 scripts/pipeline_mock_data.py
-```
-
-### 8.4 已有应用：清空记录
-
-```bash
-python3 scripts/clear_app_records.py --dry-run
-python3 scripts/clear_app_records.py
-```
-
-## 9. 功能与主流程
-
-### 9.1 需求驱动总编排
-
-入口：
-- [scripts/agent_collect_requirements.py](scripts/agent_collect_requirements.py)
-- [scripts/execute_requirements.py](scripts/execute_requirements.py)
-
-主流程：
-1. 创建应用
-2. 获取应用授权
-3. 规划工作表并建表
-4. 匹配并更新应用 / 工作表图标
-5. 规划并应用工作表布局
-6. 规划并创建视图
-7. 规划并应用表格视图筛选
-8. 更新应用导航风格
-9. 对应用执行 mock data 流程
-
-### 9.2 造数与关系修复
-
-入口：
-- [scripts/pipeline_mock_data.py](scripts/pipeline_mock_data.py)
-
-流程：
-1. 选择已授权应用
-2. 导出结构快照
-3. Gemini 生成造数 plan / bundle
-4. 写入记录
-5. 分析 Relation 一致性
-6. 应用修复计划
-7. 如仍 unresolved，则删除源记录，避免留下脏数据
-
-当前支持情况：
-- 支持 `1-1`
-- 支持 `1-N` 的单选端字段
-- 不保证自动回填 `1-N` 的多选端字段
-
-### 9.3 录制子系统（可选）
-
-入口：
-- [record/run_agent.py](record/run_agent.py)
-
-核心能力：
-- 自然语言任务解析
-- `wait_seconds` 可见等待
-- repaint hack，避免静止阶段丢帧
-- 原生 Chrome 缩放注入
-- 登录态复用
-- 运行日志、视频、GIF 自动落盘
-
-## 10. 关键脚本清单
-
-### 10.1 推荐直接使用的入口脚本
-
-- `scripts/agent_collect_requirements.py`：对话式收集需求，默认自动执行
-- `scripts/execute_requirements.py`：执行需求 JSON
-- `scripts/run_app_to_video.py`：从策划直接到录制归档
-- `scripts/pipeline_create_app.py`：创建应用并处理应用 icon
-- `scripts/pipeline_worksheets.py`：工作表规划、建表、工作表 icon
-- `scripts/pipeline_worksheet_layout.py`：布局规划与应用
-- `scripts/pipeline_views.py`：视图规划与创建
-- `scripts/pipeline_tableview_filters.py`：筛选规划与应用
-- `scripts/pipeline_mock_data.py`：造数总流程
-- `scripts/clear_app_records.py`：清空应用记录
-- `scripts/fill_task_placeholders.py`：生成 `record/task.txt`
-- `scripts/refresh_auth.py`：刷新网页登录态
-- `scripts/gemini/list_gemini_models.py`：查询并导出当前 API Key 可用的 Gemini 模型列表
-
-### 10.2 造数排障常用脚本
-
-- `scripts/analyze_relation_consistency.py`
-- `scripts/apply_relation_repair_plan.py`
-- `scripts/delete_unresolved_records.py`
-- `scripts/export_app_mock_schema.py`
-- `scripts/plan_mock_data_gemini.py`
-- `scripts/write_mock_data_from_plan.py`
-
-### 10.3 删除类脚本
-
-- `scripts/delete_app.py`
-- `scripts/clear_app_records.py`
-
-删除类脚本建议默认先 `--dry-run`。
-
-## 11. 产物目录说明
-
-最常用的输出目录：
-
-- `data/outputs/requirement_specs/`：需求规格
-- `data/outputs/execution_runs/`：需求执行报告
-- `data/outputs/app_authorizations/`：应用授权信息
-- `data/outputs/worksheet_plans/`：工作表规划
-- `data/outputs/worksheet_create_results/`：建表结果
-- `data/outputs/worksheet_layout_plans/`：布局规划
-- `data/outputs/worksheet_layout_apply_results/`：布局应用结果
-- `data/outputs/view_plans/`：视图规划
-- `data/outputs/view_create_results/`：视图创建结果
-- `data/outputs/tableview_filter_plans/`：筛选规划
-- `data/outputs/tableview_filter_apply_results/`：筛选应用结果
-- `data/outputs/mock_data_schema_snapshots/`：造数前结构快照
-- `data/outputs/mock_data_plans/`：造数规划
-- `data/outputs/mock_data_write_results/`：写入结果
-- `data/outputs/mock_relation_repair_plans/`：关系修复计划
-- `data/outputs/mock_relation_repair_apply_results/`：关系修复执行结果
-- `data/outputs/mock_unresolved_delete_results/`：删除 unresolved 结果
-- `data/outputs/app_video_runs/`：一键录制归档
-
-产物约定：
-- 多数目录会维护一份 `*_latest.json`
-- 选择应用类脚本通常依赖 `app_authorize_<appId>.json`
-- 排障时先看对应 JSON 和日志，不要只盯终端输出
-
-## 12. 开发中的必要说明
-
-### 12.1 推荐工作方式
-
-- 先跑入口脚本，不要一上来改实现层
-- 先看 `data/outputs/` 的最新产物，再决定是否重跑
-- 涉及写真实应用时，优先使用 `--dry-run`
-- 规划和执行尽量分开看，不要把 LLM 输出直接当成可靠执行输入
-
-### 12.2 关于 `scripts/` 与 `scripts/hap/`
-
-- `scripts/*.py` 多数只是稳定转发入口
-- 真正逻辑通常在 `scripts/hap/` 或 `scripts/gemini/`
-- 日常执行不要直接依赖 `scripts/hap/` 的内部文件路径，避免后续重构成本高
-
-### 12.3 关于 `record/`
-
-- `record/` 现在不是附属 demo，而是主流程的一部分
-- `record/task.txt` 是运行态文件，`record/task_template.txt` 才是模板
-- `record/storage/`、`record/runs/`、`record/venv/` 都属于本地运行态，不要作为稳定输入依赖
-
-## 13. 避坑与排障
-
-### 13.1 Gemini 调用失败
-
-- 先检查 [config/credentials/gemini_auth.json](config/credentials/gemini_auth.json)
-- 再检查模型名是否可用，当前脚本里常见默认值是 `gemini-2.5-pro` 或 `gemini-2.5-flash`
-  - 可以使用以下命令查询并确认当前 API Key 下所有可用的模型：
-    ```bash
-    python3 scripts/gemini/list_gemini_models.py
-    ```
-    *(执行后将输出 JSON 到终端，并在 `data/outputs/gemini_models/` 生成结果文件)*
-- `record/` 录制链路还要额外检查 [record/.env](record/.env)
-
-### 13.2 页面接口 401 / 403
-
-- 基本就是 [config/credentials/auth_config.py](config/credentials/auth_config.py) 过期
-- 直接重新跑 `scripts/refresh_auth.py`
-
-### 13.3 OpenAPI 调用失败
-
-- 检查 [config/credentials/organization_auth.json](config/credentials/organization_auth.json)
-- 确认 `base_url` 与当前环境一致
-
-### 13.4 选择不到应用
-
-- 一般是 `data/outputs/app_authorizations/` 没有对应 `app_authorize_<appId>.json`
-- 先跑创建应用流程，或单独补授权文件
-
-### 13.5 造数后还有空关联
-
-- 先看 `mock_relation_repair_plan` 和 `mock_relation_repair_apply_result`
-- 若 unresolved 仍存在，先确认是不是当前未覆盖的关系类型
-
-### 13.6 录制里“等待几秒”但视频看起来没停留
-
-- 不要直接删 `record/run_agent.py` 里的等待与 repaint 相关逻辑
-- `browser-use` + CDP 录制在静止页面下可能不自然产帧，这部分已经做了补帧处理
-
-### 13.7 录制里点击不稳定
-
-- 明道云弹层和侧栏常有淡出动画，下一步太快会点在遮罩层上
-- 指令里要明确“等待侧栏完全消失”或“等待 1-2 秒”
-
-### 13.8 网页缩放不要乱改
-
-- 当前稳定方案是原生 `Preferences` 注入
-- 不要改回 `force-device-scale-factor`、CSS `zoom`、快捷键模拟缩放
-
-## 14. 已知限制
-
+- 关联字段造数：支持 `1-1` 和 `1-N` 单选端，不保证自动回填 `1-N` 多选端
 - 不是所有脚本都支持断点续跑
-- 不是所有阶段都提供统一 CLI 参数风格
-- 录制链路对本地环境依赖比较重，尤其是 `record/venv`、浏览器、登录态
-- 一些目录下已有大量历史产物，默认“取最新”时要注意是否误用了旧结果
-
-## 15. 建议的日常使用顺序
-
-### 新应用
-
-1. `scripts/agent_collect_requirements.py`
-2. `scripts/execute_requirements.py`
-3. 需要演示视频时再跑 `scripts/run_app_to_video.py`
-
-### 已有应用维护
-
-1. `scripts/pipeline_mock_data.py`
-2. 必要时 `scripts/analyze_relation_consistency.py`
-3. 必要时 `scripts/apply_relation_repair_plan.py`
-4. 需要清场时 `scripts/clear_app_records.py`
-
-### 只处理录制
-
-1. `scripts/fill_task_placeholders.py`
-2. `record/run_agent.py`
-
-## 16. 补充文档
-
-- [record/README.md](record/README.md)
-- [record/HAP_Automation_Best_Practices.md](record/HAP_Automation_Best_Practices.md)
-
-如果只看一份文档，优先看本 README；如果只调录制，再看 `record/README.md`。
+- 部分历史产物可能残留在 `data/outputs/`，注意区分最新结果

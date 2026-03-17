@@ -56,7 +56,8 @@ def step_org_auth():
         print(f"\n✅ {dst.name} 已存在，跳过")
         return
     print("\n🏢 [3/4] 配置 HAP 组织级密钥")
-    print("   在明道云「组织管理 → 集成 → API」中获取")
+    print("   获取路径: 组织管理 → 集成 → 其他 → 开放接口 → 查看密钥")
+    print("   快捷地址: https://www.mingdao.com/admin/integrationothers/<你的组织ID>")
     app_key = ask("   app_key")
     secret_key = ask("   secret_key")
     # 读取 example 模板获取完整结构
