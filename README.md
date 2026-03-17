@@ -4,9 +4,17 @@
 
 ## 快速开始
 
+### 0. 安装 Git (如已安装请跳过)
+
+- **macOS**: 打开终端执行 `xcode-select --install`，或下载 [Git for macOS](https://git-scm.com/download/mac)
+- **Windows**: 下载并安装 [Git for Windows](https://gitforwindows.org/)
+- **Linux(Ubuntu/Debian)**: 执行 `sudo apt install git`
+
+### 1. 下载并初始化项目
+
 ```bash
-git clone -b codex/create-app-only https://github.com/<your-org>/hap_auto.git
-cd hap_auto
+git clone https://github.com/andyleimc-source/hap_auto_release.git
+cd hap_auto_release
 python3 setup.py
 ```
 
