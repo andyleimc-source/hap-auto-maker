@@ -8,11 +8,13 @@
 """
 
 import argparse
+import itertools
 import json
 import os
 import subprocess
 import sys
 import textwrap
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -35,6 +37,48 @@ try:
     from prompt_toolkit import prompt as pt_prompt
 except Exception:
     pt_prompt = None
+
+class Spinner:
+    """终端转圈动画，用于等待 Gemini 响应时防止用户二次输入"""
+    _FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
+
+    def __init__(self, message: str = "思考中"):
+        self._message = message
+        self._stop_event = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+
+    def start(self) -> "Spinner":
+        if not (sys.stdout.isatty()):
+            return self
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._spin, daemon=True)
+        self._thread.start()
+        return self
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        if self._thread:
+            self._thread.join()
+            self._thread = None
+        # 清除转圈行
+        if sys.stdout.isatty():
+            sys.stdout.write("\r\033[K")
+            sys.stdout.flush()
+
+    def _spin(self) -> None:
+        for frame in itertools.cycle(self._FRAMES):
+            if self._stop_event.is_set():
+                break
+            sys.stdout.write(f"\r{frame} {self._message}...")
+            sys.stdout.flush()
+            self._stop_event.wait(0.1)
+
+    def __enter__(self) -> "Spinner":
+        return self.start()
+
+    def __exit__(self, *_) -> None:
+        self.stop()
+
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
@@ -489,12 +533,16 @@ def main() -> None:
                     return
                 continue
             prompt = build_spec_prompt(transcript)
-            resp, _ = generate_with_fallback(
-                client=client,
-                model=actual_model,
-                contents=prompt,
-                config=make_config(response_mime_type="application/json", temperature=args.temperature, seed=args.seed),
-            )
+            spinner = Spinner("正在生成需求 JSON").start()
+            try:
+                resp, _ = generate_with_fallback(
+                    client=client,
+                    model=actual_model,
+                    contents=prompt,
+                    config=make_config(response_mime_type="application/json", temperature=args.temperature, seed=args.seed),
+                )
+            finally:
+                spinner.stop()
             spec = normalize_spec(extract_json(resp.text or ""))
             out = save_spec(spec, output=output_path)
             print(f"需求 JSON 已保存: {out}")
@@ -517,14 +565,18 @@ def main() -> None:
         transcript.append({"role": "user", "text": cmd})
         turns += 1
         prompt = build_chat_prompt(transcript, latest_user_input=cmd)
-        resp, chat, actual_model = send_chat_with_fallback(
-            client=client,
-            chat=chat,
-            current_model=actual_model,
-            prompt=prompt,
-            temperature=args.temperature,
-            seed=args.seed,
-        )
+        spinner = Spinner("思考中").start()
+        try:
+            resp, chat, actual_model = send_chat_with_fallback(
+                client=client,
+                chat=chat,
+                current_model=actual_model,
+                prompt=prompt,
+                temperature=args.temperature,
+                seed=args.seed,
+            )
+        finally:
+            spinner.stop()
         reply = (resp.text or "").strip() or "请继续补充你的需求，我会整理成可执行 JSON。"
         transcript.append({"role": "assistant", "text": reply})
         print()

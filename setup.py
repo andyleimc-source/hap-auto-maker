@@ -223,11 +223,161 @@ def step_login_and_auth(force=False):
         print("   ⚠️  未填写账号密码，跳过自动认证。稍后手动运行: python3 scripts/refresh_auth.py")
 
 
+def _read_all_config() -> dict:
+    """读取所有配置文件，返回统一的 dict"""
+    import re as _re
+    result = {}
+
+    # Gemini
+    gemini = _load_json_safe(CRED_DIR / "gemini_auth.json")
+    result["gemini_api_key"] = gemini.get("api_key", "")
+
+    # 组织密钥
+    org = _load_json_safe(CRED_DIR / "organization_auth.json")
+    for k in ("app_key", "secret_key", "project_id", "owner_id", "group_ids"):
+        result[k] = org.get(k, "")
+
+    # 登录凭据
+    login_dst = CRED_DIR / "login_credentials.py"
+    if login_dst.exists():
+        try:
+            text = login_dst.read_text(encoding="utf-8")
+            m = _re.search(r'LOGIN_ACCOUNT\s*=\s*"(.+?)"', text)
+            result["account"] = m.group(1) if m else ""
+            m = _re.search(r'LOGIN_PASSWORD\s*=\s*"(.+?)"', text)
+            result["password"] = m.group(1) if m else ""
+        except Exception:
+            result["account"] = ""
+            result["password"] = ""
+    else:
+        result["account"] = ""
+        result["password"] = ""
+
+    return result
+
+
+def show_config():
+    """显示所有已有配置，让用户选择要修改的项"""
+    cfg = _read_all_config()
+
+    # 配置项定义：(key, 显示名, 是否敏感)
+    items = [
+        ("account",        "登录账号",         False),
+        ("password",       "登录密码",         True),
+        ("gemini_api_key", "Gemini API Key",  True),
+        ("app_key",        "app_key",         True),
+        ("secret_key",     "secret_key",      True),
+        ("project_id",     "project_id",      False),
+        ("owner_id",       "owner_id",        False),
+        ("group_ids",      "group_ids",       False),
+    ]
+
+    print("\n📋 当前所有配置：")
+    print("-" * 50)
+    for idx, (key, name, sensitive) in enumerate(items, 1):
+        val = cfg.get(key, "")
+        display = _display_val(val, sensitive)
+        print(f"  {idx}. {name:18s} = {display}")
+    print("-" * 50)
+    print("\n输入要修改的编号（多个用逗号分隔，如 1,3,5），直接回车跳过：")
+    choice = input("修改项: ").strip()
+    if not choice:
+        print("未修改任何配置。")
+        return
+
+    # 解析选择
+    indices = set()
+    for part in choice.replace("，", ",").split(","):
+        part = part.strip()
+        if part.isdigit():
+            indices.add(int(part))
+
+    if not indices:
+        print("未识别到有效编号，未修改任何配置。")
+        return
+
+    changed_gemini = False
+    changed_org = False
+    changed_login = False
+
+    for idx, (key, name, sensitive) in enumerate(items, 1):
+        if idx not in indices:
+            continue
+        old_val = cfg.get(key, "")
+        default = old_val if old_val and old_val not in _PLACEHOLDERS else ""
+        if sensitive and default:
+            new_val = ask(f"  {name} [{_mask(default)}]") or default
+        else:
+            new_val = ask(f"  {name}", default=default)
+        cfg[key] = new_val
+
+        if key == "gemini_api_key":
+            changed_gemini = True
+        elif key in ("account", "password"):
+            changed_login = True
+        else:
+            changed_org = True
+
+    # 写回修改过的文件
+    if changed_gemini:
+        dst = CRED_DIR / "gemini_auth.json"
+        val = cfg["gemini_api_key"] or "YOUR_GEMINI_API_KEY"
+        dst.write_text(json.dumps({"api_key": val}, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        print(f"  ✔ 已更新 gemini_auth.json")
+
+    if changed_org:
+        dst = CRED_DIR / "organization_auth.json"
+        data = {
+            "app_key": cfg.get("app_key") or "YOUR_HAP_APP_KEY",
+            "secret_key": cfg.get("secret_key") or "YOUR_HAP_SECRET_KEY",
+            "project_id": cfg.get("project_id") or "YOUR_HAP_PROJECT_ID",
+            "owner_id": cfg.get("owner_id") or "YOUR_HAP_OWNER_ID",
+            "group_ids": cfg.get("group_ids") or "",
+        }
+        dst.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        print(f"  ✔ 已更新 organization_auth.json")
+
+    if changed_login:
+        login_dst = CRED_DIR / "login_credentials.py"
+        account = cfg.get("account") or "your-account@example.com"
+        password = cfg.get("password") or "your-password"
+        login_dst.write_text(
+            '# -*- coding: utf-8 -*-\n'
+            '"""\n本地登录账号配置（自动生成，请勿提交到 Git）。\n"""\n\n'
+            f'LOGIN_ACCOUNT = "{account}"\n'
+            f'LOGIN_PASSWORD = "{password}"\n'
+            f'LOGIN_URL = "https://www.mingdao.com/login"\n',
+            encoding="utf-8",
+        )
+        print(f"  ✔ 已更新 login_credentials.py")
+
+        # 自动刷新认证
+        if account not in _PLACEHOLDERS and password not in _PLACEHOLDERS:
+            print("\n🔄 自动登录并获取认证信息...")
+            try:
+                subprocess.check_call(
+                    [sys.executable, str(BASE_DIR / "scripts" / "refresh_auth.py"), "--headless"],
+                    cwd=str(BASE_DIR),
+                )
+            except subprocess.CalledProcessError:
+                print("   ⚠️  自动登录失败，请稍后手动运行: python3 scripts/refresh_auth.py")
+
+    print("\n✅ 配置修改完成！")
+
+
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="HAP Auto 一键初始化脚本")
     parser.add_argument("--force", action="store_true", help="强制重新初始化（保留已有值，回车跳过，输入新值覆盖）")
+    parser.add_argument("--show", action="store_true", help="查看并修改已有配置（选择性修改，无需全部重新输入）")
     args = parser.parse_args()
+
+    if args.show:
+        print("=" * 60)
+        print("  HAP Auto — 查看 / 修改配置")
+        print("=" * 60)
+        show_config()
+        return
 
     print("=" * 60)
     print("  HAP Auto — 一键初始化")
