@@ -58,34 +58,21 @@ venv/bin/playwright install chromium
 
 ### 5.1 GitHub 协作模式（密钥不入库）
 
-本仓库采用“代码入库、密钥本地配置”的方式：
-- 可以把仓库公开/共享到 GitHub
-- 同事只需克隆代码并在本地填写自己的密钥文件
-- 真实密钥文件已在 `.gitignore` 中忽略，不应提交
-
-同事首次克隆后可按以下步骤配置：
+本仓库采用”代码入库、密钥本地配置”的方式。同事首次克隆后只需运行一个命令：
 
 ```bash
-# 1. 克隆仓库
 git clone -b codex/create-app-only https://github.com/<your-org>/hap_auto.git
 cd hap_auto
-
-# 2. 安装依赖
-python3 -m pip install requests google-genai playwright prompt-toolkit
-python3 -m playwright install chromium
-
-# 3. 复制配置模板并填写自己的密钥
-cp config/credentials/gemini_auth.example.json   config/credentials/gemini_auth.json
-cp config/credentials/organization_auth.example.json config/credentials/organization_auth.json
-cp config/credentials/auth_config.example.py     config/credentials/auth_config.py
-cp config/credentials/login_credentials.example.py  config/credentials/login_credentials.py
-
-# 4. 录制子系统额外配置（可选）
-cp record/.env.example record/.env
-cp record/storage/mingdao_storage_state.example.json record/storage/mingdao_storage_state.json
+python3 setup.py
 ```
 
-然后把上面目标文件中的占位值替换成自己的真实配置。各文件作用见下方"必备本地配置"。
+`setup.py` 会自动完成：
+1. 安装 Python 依赖 + Playwright Chromium
+2. 交互式填写 Gemini API Key
+3. 交互式填写 HAP 组织级密钥（app_key / secret_key）
+4. 交互式填写明道云登录账号 → 自动登录获取 Cookie / Authorization
+
+全部密钥文件已在 `.gitignore` 中忽略，不会被提交。
 
 ## 6. 必备本地配置
 
