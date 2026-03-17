@@ -213,6 +213,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="一键从需求沟通到应用全流程执行")
     parser.add_argument("--requirements-text", default="", help="可选，非交互模式下直接提供需求文本")
     parser.add_argument("--resume-latest", action="store_true", help="跳过需求采集，直接从最新成功的 execution report 继续")
+    parser.add_argument("--skip-recording", action="store_true", default=False, help="跳过 Playwright 录屏（由 run_app_pipeline.py 默认传入）")
     args = parser.parse_args()
 
     started_at = now_iso()
