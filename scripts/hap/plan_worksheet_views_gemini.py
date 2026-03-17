@@ -20,6 +20,8 @@ from typing import Any, Dict, List, Optional
 import requests
 from google import genai
 from google.genai import types
+from script_locator import resolve_script
+from gemini_utils import load_gemini_config
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
@@ -27,7 +29,14 @@ APP_AUTH_DIR = OUTPUT_ROOT / "app_authorizations"
 VIEW_PLAN_DIR = OUTPUT_ROOT / "view_plans"
 GEMINI_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "gemini_auth.json"
 AUTH_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "auth_config.py"
-DEFAULT_MODEL = "gemini-2.5-pro"
+# 加载全局配置
+try:
+    GEN_API_KEY, GEN_MODEL = load_gemini_config()
+except Exception:
+    GEN_API_KEY = ""
+    GEN_MODEL = "gemini-2.5-pro"
+
+DEFAULT_MODEL = GEN_MODEL
 
 APP_INFO_URL = "https://api.mingdao.com/v3/app"
 GET_CONTROLS_URL = "https://www.mingdao.com/api/Worksheet/GetWorksheetControls"
@@ -86,6 +95,8 @@ def sanitize_name(name: str) -> str:
 
 
 def load_gemini_api_key(config_path: Path) -> str:
+    if GEN_API_KEY:
+        return GEN_API_KEY
     data = load_json(config_path)
     api_key = str(data.get("api_key", "")).strip()
     if not api_key:

@@ -19,6 +19,7 @@ if str(CURRENT_DIR) not in sys.path:
     sys.path.insert(0, str(CURRENT_DIR))
 
 from script_locator import resolve_script
+from gemini_utils import load_gemini_config
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
@@ -57,6 +58,14 @@ def now_ts() -> str:
 
 def now_iso() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
+
+# 加载全局配置
+try:
+    _, GEN_MODEL = load_gemini_config()
+except Exception:
+    GEN_MODEL = "gemini-2.5-pro"
+
+DEFAULT_MODEL = GEN_MODEL
 
 
 def load_json(path: Path) -> dict:
@@ -110,7 +119,7 @@ def normalize_spec(raw: dict) -> dict:
     ws.setdefault("enabled", True)
     ws.setdefault("business_context", "通用企业管理场景")
     ws.setdefault("requirements", "")
-    ws.setdefault("model", "gemini-2.5-pro")
+    ws.setdefault("model", DEFAULT_MODEL)
     icon_update = ws.get("icon_update") if isinstance(ws.get("icon_update"), dict) else {}
     icon_update.setdefault("enabled", True)
     icon_update.setdefault("refresh_auth", False)
@@ -124,7 +133,7 @@ def normalize_spec(raw: dict) -> dict:
 
     views = spec.get("views") if isinstance(spec.get("views"), dict) else {}
     views.setdefault("enabled", True)
-    views.setdefault("model", ws.get("model", "gemini-2.5-pro"))
+    views.setdefault("model", ws.get("model", DEFAULT_MODEL))
     spec["views"] = views
 
     roles = spec.get("roles") if isinstance(spec.get("roles"), dict) else {}
@@ -136,12 +145,12 @@ def normalize_spec(raw: dict) -> dict:
 
     view_filters = spec.get("view_filters") if isinstance(spec.get("view_filters"), dict) else {}
     view_filters.setdefault("enabled", True)
-    view_filters.setdefault("model", ws.get("model", "gemini-2.5-pro"))
+    view_filters.setdefault("model", ws.get("model", DEFAULT_MODEL))
     spec["view_filters"] = view_filters
 
     mock_data = spec.get("mock_data") if isinstance(spec.get("mock_data"), dict) else {}
     mock_data.setdefault("enabled", True)
-    mock_data.setdefault("model", ws.get("model", "gemini-2.5-pro"))
+    mock_data.setdefault("model", ws.get("model", DEFAULT_MODEL))
     mock_data.setdefault("dry_run", False)
     mock_data.setdefault("trigger_workflow", False)
     spec["mock_data"] = mock_data
@@ -446,7 +455,7 @@ def main() -> None:
             "--group-ids",
             str(app.get("group_ids", _load_org_group_ids())),
             "--gemini-model",
-            str(ws.get("model", "gemini-2.5-pro")),
+            str(ws.get("model", DEFAULT_MODEL)),
         ]
         if str(app.get("icon_mode", "gemini_match")) != "gemini_match":
             cmd1.append("--skip-smart-icon")
@@ -502,7 +511,7 @@ def main() -> None:
             "--requirements",
             str(ws.get("requirements", "")),
             "--model",
-            str(ws.get("model", "gemini-2.5-pro")),
+            str(ws.get("model", DEFAULT_MODEL)),
             "--output",
             str(plan_output),
         ]
@@ -575,7 +584,7 @@ def main() -> None:
             "--app-id",
             app_id,
             "--model",
-            str(ws.get("model", "gemini-2.5-pro")),
+            str(ws.get("model", DEFAULT_MODEL)),
         ]
         if ws["icon_update"].get("refresh_auth", False):
             cmd4.append("--refresh-auth")
@@ -622,7 +631,7 @@ def main() -> None:
             sys.executable,
             str(SCRIPT_PIPELINE_VIEWS),
             "--model",
-            str(views.get("model", ws.get("model", "gemini-2.5-pro"))),
+            str(views.get("model", ws.get("model", DEFAULT_MODEL))),
             "--app-ids",
             app_id,
             "--plan-output",
@@ -651,7 +660,7 @@ def main() -> None:
             sys.executable,
             str(SCRIPT_PIPELINE_TABLEVIEW_FILTERS),
             "--model",
-            str(view_filters.get("model", views.get("model", ws.get("model", "gemini-2.5-pro")))),
+            str(view_filters.get("model", views.get("model", ws.get("model", DEFAULT_MODEL)))) ,
             "--app-ids",
             app_id,
             "--view-create-result",
@@ -702,7 +711,7 @@ def main() -> None:
             "--app-id",
             app_id,
             "--model",
-            str(mock_data.get("model", ws.get("model", "gemini-2.5-pro"))),
+            str(mock_data.get("model", ws.get("model", DEFAULT_MODEL))),
         ]
         if execution_dry_run or mock_data.get("dry_run", False):
             cmd9.append("--dry-run")

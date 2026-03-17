@@ -18,6 +18,8 @@ from typing import Any, Dict, List, Optional
 
 from google import genai
 from google.genai import types
+from script_locator import resolve_script
+from gemini_utils import load_gemini_config
 
 CURRENT_DIR = Path(__file__).resolve().parent
 if str(CURRENT_DIR) not in sys.path:
@@ -38,6 +40,12 @@ from mock_data_common import (
     resolve_json_input,
     write_json_with_latest,
 )
+# 加载全局配置
+try:
+    GEN_API_KEY, GEN_MODEL = load_gemini_config()
+except Exception:
+    GEN_API_KEY = ""
+    GEN_MODEL = "gemini-2.5-pro"
 
 
 def generate_with_retry(client: genai.Client, model: str, prompt: str, retries: int) -> Any:
@@ -380,7 +388,7 @@ def validate_plan(raw: dict, snapshot: dict) -> Dict[str, Any]:
 def main() -> None:
     parser = argparse.ArgumentParser(description="根据结构快照调用 Gemini 规划造数")
     parser.add_argument("--schema-json", required=True, help="结构快照 JSON 路径")
-    parser.add_argument("--model", default=DEFAULT_GEMINI_MODEL, help="Gemini 模型名")
+    parser.add_argument("--model", default=GEN_MODEL if GEN_MODEL else DEFAULT_GEMINI_MODEL, help="Gemini 模型名")
     parser.add_argument("--config", default=str(GEMINI_CONFIG_PATH), help="Gemini 配置 JSON 路径")
     parser.add_argument("--gemini-retries", type=int, default=4, help="Gemini 调用失败时的最大重试次数")
     parser.add_argument("--plan-output", default="", help="mock_data_plan 输出路径")
@@ -398,7 +406,10 @@ def main() -> None:
         worksheetCount=len(snapshot.get("worksheets", [])),
         model=args.model,
     )
-    api_key = load_gemini_api_key(Path(args.config).expanduser().resolve())
+    if GEN_API_KEY:
+        api_key = GEN_API_KEY
+    else:
+        api_key = load_gemini_api_key(Path(args.config).expanduser().resolve())
     client = genai.Client(api_key=api_key)
     base_prompt = build_prompt(snapshot)
     append_log(

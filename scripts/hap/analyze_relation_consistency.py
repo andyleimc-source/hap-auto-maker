@@ -15,6 +15,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from google import genai
 from google.genai import types
+from script_locator import resolve_script
+from gemini_utils import load_gemini_config
 
 CURRENT_DIR = Path(__file__).resolve().parent
 if str(CURRENT_DIR) not in sys.path:
@@ -39,6 +41,13 @@ from mock_data_common import (
     resolve_json_input,
     write_json_with_latest,
 )
+
+# 加载全局配置
+try:
+    GEN_API_KEY, GEN_MODEL = load_gemini_config()
+except Exception:
+    GEN_API_KEY = ""
+    GEN_MODEL = "gemini-2.5-pro"
 
 
 def generate_with_retry(client: genai.Client, model: str, prompt: str, retries: int) -> Any:
@@ -493,7 +502,7 @@ def main() -> None:
     parser.add_argument("--app-id", default="", help="可选，指定 appId")
     parser.add_argument("--app-index", type=int, default=0, help="可选，指定应用序号")
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="API 基础地址")
-    parser.add_argument("--model", default=DEFAULT_GEMINI_MODEL, help="Gemini 模型名")
+    parser.add_argument("--model", default=GEN_MODEL if GEN_MODEL else DEFAULT_GEMINI_MODEL, help="Gemini 模型名")
     parser.add_argument("--config", default=str(GEMINI_CONFIG_PATH), help="Gemini 配置 JSON 路径")
     parser.add_argument("--gemini-retries", type=int, default=4, help="Gemini 调用失败时的最大重试次数")
     parser.add_argument("--output", default="", help="修复计划输出路径")
@@ -563,7 +572,10 @@ def main() -> None:
             },
         }
     else:
-        api_key = load_gemini_api_key(Path(args.config).expanduser().resolve())
+        if GEN_API_KEY:
+            api_key = GEN_API_KEY
+        else:
+            api_key = load_gemini_api_key(Path(args.config).expanduser().resolve())
         client = genai.Client(api_key=api_key)
         prompt = build_prompt(states, write_result)
         append_log(log_path, "prompt_ready", promptLength=len(prompt), pendingCount=pending_count)

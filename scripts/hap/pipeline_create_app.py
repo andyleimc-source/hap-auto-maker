@@ -21,6 +21,7 @@ if str(CURRENT_DIR) not in sys.path:
     sys.path.insert(0, str(CURRENT_DIR))
 
 from script_locator import resolve_script
+from gemini_utils import load_gemini_config
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 CREATE_APP_SCRIPT = resolve_script("create_app.py")
@@ -104,6 +105,15 @@ def ensure_scripts() -> None:
             raise FileNotFoundError(f"缺少脚本: {p}")
 
 
+# 加载全局配置
+try:
+    _, GEN_MODEL = load_gemini_config()
+except Exception:
+    GEN_MODEL = "gemini-2.5-pro"
+
+DEFAULT_MODEL = GEN_MODEL
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="创建应用并自动匹配/更新应用 icon")
     parser.add_argument("--name", required=True, help="应用名称")
@@ -113,7 +123,7 @@ def main() -> None:
     parser.add_argument("--base-url", default="", help="API 基础地址（默认沿用子脚本默认值）")
     parser.add_argument("--project-id", default="", help="HAP 组织Id")
     parser.add_argument("--owner-id", default="", help="应用拥有者 HAP 账号Id")
-    parser.add_argument("--gemini-model", default="gemini-2.5-pro", help="Gemini 模型名")
+    parser.add_argument("--gemini-model", default=DEFAULT_MODEL, help="Gemini 模型名")
     parser.add_argument("--skip-smart-icon", action="store_true", help="跳过步骤3-5，不执行智能 icon 匹配/更新")
     parser.add_argument("--dry-run-icon-update", action="store_true", help="智能 icon 的更新步骤仅预览，不实际更新")
     args = parser.parse_args()

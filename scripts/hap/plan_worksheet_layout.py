@@ -20,6 +20,8 @@ NETWORK_RETRY_DELAY = 5
 import requests
 from google import genai
 from google.genai import types
+from script_locator import resolve_script
+from gemini_utils import load_gemini_config
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
@@ -28,9 +30,16 @@ LAYOUT_PLAN_DIR = OUTPUT_ROOT / "worksheet_layout_plans"
 GEMINI_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "gemini_auth.json"
 AUTH_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "auth_config.py"
 
+# 加载全局配置
+try:
+    GEN_API_KEY, GEN_MODEL = load_gemini_config()
+except Exception:
+    GEN_API_KEY = ""
+    GEN_MODEL = "gemini-2.5-pro"
+
 APP_INFO_URL = "https://api.mingdao.com/v3/app"
 GET_CONTROLS_URL = "https://www.mingdao.com/api/Worksheet/GetWorksheetControls"
-DEFAULT_MODEL = "gemini-2.5-pro"
+DEFAULT_MODEL = GEN_MODEL
 VALID_SIZES = (12, 6, 4, 3)
 
 
@@ -46,6 +55,8 @@ def load_json(path: Path) -> dict:
 
 
 def load_api_key() -> str:
+    if GEN_API_KEY:
+        return GEN_API_KEY
     data = load_json(GEMINI_CONFIG_PATH)
     api_key = str(data.get("api_key", "")).strip()
     if not api_key:

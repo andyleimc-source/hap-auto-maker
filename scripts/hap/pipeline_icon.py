@@ -17,6 +17,7 @@ if str(CURRENT_DIR) not in sys.path:
     sys.path.insert(0, str(CURRENT_DIR))
 
 from script_locator import resolve_script
+from gemini_utils import load_gemini_config
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
@@ -26,6 +27,15 @@ ICON_MATCH_DIR = OUTPUT_ROOT / "worksheet_icon_match_plans"
 LIST_SCRIPT = resolve_script("list_app_worksheets.py")
 MATCH_SCRIPT = resolve_script("match_worksheet_icons_gemini.py")
 UPDATE_SCRIPT = resolve_script("update_worksheet_icons.py")
+
+
+# 加载全局配置
+try:
+    _, GEN_MODEL = load_gemini_config()
+except Exception:
+    GEN_MODEL = "gemini-2.5-pro"
+
+DEFAULT_MODEL = GEN_MODEL
 
 
 def run_step(cmd: list[str], title: str) -> None:
@@ -40,7 +50,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="一键执行工作表 icon 匹配与批量更新")
     parser.add_argument("--app-auth-json", default="", help="应用授权 JSON 文件名或路径")
     parser.add_argument("--app-id", default="", help="可选，授权文件有多个 app 时可指定")
-    parser.add_argument("--model", default="gemini-2.5-pro", help="Gemini 模型名")
+    parser.add_argument("--model", default=DEFAULT_MODEL, help="Gemini 模型名")
     parser.add_argument(
         "--inventory-json",
         default=str((WORKSHEET_INVENTORY_DIR / "worksheet_inventory_latest.json").resolve()),

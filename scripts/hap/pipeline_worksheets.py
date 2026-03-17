@@ -21,6 +21,7 @@ if str(CURRENT_DIR) not in sys.path:
     sys.path.insert(0, str(CURRENT_DIR))
 
 from script_locator import resolve_script
+from gemini_utils import load_gemini_config
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
@@ -157,12 +158,21 @@ def read_latest_create_result() -> Optional[Path]:
     return latest_file(WORKSHEET_CREATE_RESULT_DIR, "worksheet_create_result_*.json")
 
 
+# 加载全局配置
+try:
+    _, GEN_MODEL = load_gemini_config()
+except Exception:
+    GEN_MODEL = "gemini-2.5-pro"
+
+DEFAULT_MODEL = GEN_MODEL
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="交互式执行：规划工作表 + 创建工作表 + 修改工作表 icon")
     parser.add_argument("--app-index", type=int, default=0, help="可选，直接指定应用序号（免交互）")
     parser.add_argument("--business-context", default="", help="业务背景（不传则交互输入）")
     parser.add_argument("--requirements", default="", help="额外要求（不传则交互输入）")
-    parser.add_argument("--model", default="gemini-2.5-pro", help="Gemini 模型名")
+    parser.add_argument("--model", default=DEFAULT_MODEL, help="Gemini 模型名")
     parser.add_argument("--dry-run-create", action="store_true", help="建表步骤仅预览")
     parser.add_argument("--dry-run-icon", action="store_true", help="改 icon 步骤仅预览")
     parser.add_argument("--refresh-auth", action="store_true", help="改 icon 前刷新网页登录认证")

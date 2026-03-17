@@ -22,6 +22,8 @@ from typing import Dict, List, Optional, Tuple
 from google import genai
 from google.genai import types
 
+from gemini_utils import load_gemini_config
+
 CURRENT_DIR = Path(__file__).resolve().parent
 if str(CURRENT_DIR) not in sys.path:
     sys.path.insert(0, str(CURRENT_DIR))
@@ -83,10 +85,15 @@ class Spinner:
 BASE_DIR = Path(__file__).resolve().parents[2]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 SPEC_DIR = OUTPUT_ROOT / "requirement_specs"
-GEMINI_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "gemini_auth.json"
+# 加载全局配置
+try:
+    GEN_API_KEY, GEN_MODEL = load_gemini_config()
+except Exception:
+    GEN_API_KEY, GEN_MODEL = "", "gemini-2.5-pro"
+
 # 用户指定优先模型；若不可用则自动回退到已验证可用模型
-DEFAULT_MODEL = "gemini-2.5-pro"
-FALLBACK_MODELS = ("gemini-2.5-pro",)
+DEFAULT_MODEL = GEN_MODEL
+FALLBACK_MODELS = (GEN_MODEL, "gemini-2.0-flash", "gemini-1.5-pro")
 EXECUTE_REQUIREMENTS_SCRIPT = resolve_script("execute_requirements.py")
 ORG_AUTH_PATH = BASE_DIR / "config" / "credentials" / "organization_auth.json"
 
@@ -115,6 +122,9 @@ def load_json(path: Path) -> dict:
 
 
 def load_api_key(config_path: Path) -> str:
+    # 优先使用已加载的全局 Key
+    if GEN_API_KEY:
+        return GEN_API_KEY
     data = load_json(config_path)
     api_key = str(data.get("api_key", "")).strip()
     if not api_key:
@@ -425,7 +435,7 @@ def normalize_spec(raw: dict) -> dict:
     ws.setdefault("enabled", True)
     ws.setdefault("business_context", "通用企业管理场景")
     ws.setdefault("requirements", "")
-    ws.setdefault("model", "gemini-2.5-pro")
+    ws.setdefault("model", DEFAULT_MODEL)
     icon_update = ws.get("icon_update") if isinstance(ws.get("icon_update"), dict) else {}
     icon_update.setdefault("enabled", True)
     icon_update.setdefault("refresh_auth", False)
@@ -436,15 +446,15 @@ def normalize_spec(raw: dict) -> dict:
     layout.setdefault("refresh_auth", False)
     ws["layout"] = layout
     spec["worksheets"] = ws
-
+    
     views = spec.get("views") if isinstance(spec.get("views"), dict) else {}
     views.setdefault("enabled", True)
-    views.setdefault("model", ws.get("model", "gemini-2.5-pro"))
+    views.setdefault("model", ws.get("model", DEFAULT_MODEL))
     spec["views"] = views
-
+    
     view_filters = spec.get("view_filters") if isinstance(spec.get("view_filters"), dict) else {}
     view_filters.setdefault("enabled", True)
-    view_filters.setdefault("model", ws.get("model", "gemini-2.5-pro"))
+    view_filters.setdefault("model", ws.get("model", DEFAULT_MODEL))
     spec["view_filters"] = view_filters
 
     mock_data = spec.get("mock_data") if isinstance(spec.get("mock_data"), dict) else {}
@@ -558,8 +568,6 @@ def main() -> None:
                 if proc.returncode != 0:
                     raise SystemExit(proc.returncode)
             return
-        continue
-
         transcript.append({"role": "user", "text": cmd})
         turns += 1
         prompt = build_chat_prompt(transcript, latest_user_input=cmd)

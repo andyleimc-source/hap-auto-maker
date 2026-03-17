@@ -32,6 +32,7 @@ from chatbot_common import (
     write_json_with_latest,
 )
 from script_locator import resolve_script
+from gemini_utils import load_gemini_config
 
 SCRIPT_SCHEMA = resolve_script("select_chatbot_app_schema.py")
 SCRIPT_PLAN = resolve_script("plan_chatbots_gemini.py")
@@ -73,13 +74,22 @@ def run_step_interactive(cmd: List[str], title: str, log_path: Path) -> None:
     append_log(log_path, "step_finished", title=title, cmd=cmd, returncode=proc.returncode)
 
 
+# 加载全局配置
+try:
+    _, GEN_MODEL = load_gemini_config()
+except Exception:
+    GEN_MODEL = "gemini-2.5-pro"
+
+DEFAULT_MODEL = GEN_MODEL
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="一键执行对话机器人生成流水线")
     parser.add_argument("--app-id", default="", help="可选，指定 appId")
     parser.add_argument("--app-index", type=int, default=0, help="可选，指定应用序号")
     parser.add_argument("--section-id", default="", help="可选，指定分组 appSectionId")
     parser.add_argument("--section-index", type=int, default=0, help="可选，指定分组序号")
-    parser.add_argument("--model", default="gemini-2.5-flash", help="Gemini 模型名")
+    parser.add_argument("--model", default=DEFAULT_MODEL, help="Gemini 模型名")
     parser.add_argument("--config", default="", help="Gemini 配置 JSON 路径")
     parser.add_argument("--upload-permission", default="11", help="上传权限，默认 11")
     parser.add_argument("--dry-run-create", action="store_true", help="创建阶段仅 dry-run")

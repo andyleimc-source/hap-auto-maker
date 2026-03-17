@@ -17,6 +17,7 @@ if str(CURRENT_DIR) not in sys.path:
     sys.path.insert(0, str(CURRENT_DIR))
 
 from script_locator import resolve_script
+from gemini_utils import load_gemini_config
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
@@ -24,6 +25,15 @@ LAYOUT_PLAN_DIR = OUTPUT_ROOT / "worksheet_layout_plans"
 
 PLAN_SCRIPT = resolve_script("plan_worksheet_layout.py")
 APPLY_SCRIPT = resolve_script("apply_worksheet_layout.py")
+
+
+# 加载全局配置
+try:
+    _, GEN_MODEL = load_gemini_config()
+except Exception:
+    GEN_MODEL = "gemini-2.5-pro"
+
+DEFAULT_MODEL = GEN_MODEL
 
 
 def run_step(cmd: list[str], title: str) -> None:
@@ -39,7 +49,7 @@ def main() -> None:
     parser.add_argument("--app-index", type=int, default=0, help="可选，应用序号（免交互）")
     parser.add_argument("--app-id", default="", help="可选，应用 ID（传入后跳过应用选择交互）")
     parser.add_argument("--requirements", default="", help="额外布局要求")
-    parser.add_argument("--model", default="gemini-2.5-pro", help="Gemini 模型名")
+    parser.add_argument("--model", default=DEFAULT_MODEL, help="Gemini 模型名")
     parser.add_argument("--refresh-auth", action="store_true", help="应用布局前先刷新网页登录认证")
     parser.add_argument("--headless", action="store_true", help="配合 --refresh-auth 无头刷新")
     parser.add_argument("--dry-run", action="store_true", help="仅预览应用布局，不实际保存")

@@ -34,6 +34,7 @@ from mock_data_common import (
     sanitize_name,
     write_json,
 )
+from gemini_utils import load_gemini_config
 
 PLAN_SCRIPT = CURRENT_DIR / "plan_role_recommendations_gemini.py"
 CREATE_SCRIPT = CURRENT_DIR / "create_roles_from_recommendation.py"
@@ -42,7 +43,13 @@ APP_ROLE_RUN_DIR = OUTPUT_ROOT / "app_role_runs"
 APP_ROLE_RUN_LATEST = APP_ROLE_RUN_DIR / "app_role_run_latest.json"
 EXECUTION_RUN_LATEST = OUTPUT_ROOT / "execution_runs" / "execution_run_latest.json"
 APP_VIDEO_RUNS_DIR = OUTPUT_ROOT / "app_video_runs"
-DEFAULT_MODEL = "gemini-2.5-flash"
+# 加载全局配置
+try:
+    _, GEN_MODEL = load_gemini_config()
+except Exception:
+    GEN_MODEL = "gemini-2.5-pro"
+
+DEFAULT_MODEL = GEN_MODEL
 VIDEO_MODE_SKIP = "skip"
 VIDEO_MODE_RESUME_LATEST = "resume-latest"
 

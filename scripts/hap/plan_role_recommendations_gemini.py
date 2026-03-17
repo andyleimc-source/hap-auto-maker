@@ -14,6 +14,8 @@ from typing import Any, Dict, List
 
 from google import genai
 from google.genai import types
+from script_locator import resolve_script
+from gemini_utils import load_gemini_config
 
 CURRENT_DIR = Path(__file__).resolve().parent
 if str(CURRENT_DIR) not in sys.path:
@@ -37,7 +39,15 @@ from mock_data_common import (
 
 ROLE_PLAN_DIR = OUTPUT_ROOT / "role_plans"
 ROLE_PLAN_LATEST = ROLE_PLAN_DIR / "role_plan_latest.json"
-DEFAULT_MODEL = "gemini-2.5-flash"
+
+# 加载全局配置
+try:
+    GEN_API_KEY, GEN_MODEL = load_gemini_config()
+except Exception:
+    GEN_API_KEY = ""
+    GEN_MODEL = "gemini-2.5-flash"
+
+DEFAULT_MODEL = GEN_MODEL
 
 
 def bool_or_default(value: Any, default: bool) -> bool:
@@ -257,7 +267,10 @@ def main() -> None:
         )
 
     config_path = Path(args.config).expanduser().resolve() if args.config else None
-    api_key = load_gemini_api_key(config_path) if config_path else load_gemini_api_key()
+    if GEN_API_KEY:
+        api_key = GEN_API_KEY
+    else:
+        api_key = load_gemini_api_key(config_path) if config_path else load_gemini_api_key()
     client = genai.Client(api_key=api_key)
     prompt = build_prompt(str(app_meta.get("name", "")).strip() or app["appName"], selected_worksheet_names)
     if args.prompt_output:

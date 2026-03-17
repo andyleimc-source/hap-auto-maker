@@ -14,6 +14,8 @@ from typing import Any, Dict, List
 
 from google import genai
 from google.genai import types
+from script_locator import resolve_script
+from gemini_utils import load_gemini_config
 
 CURRENT_DIR = Path(__file__).resolve().parent
 if str(CURRENT_DIR) not in sys.path:
@@ -33,7 +35,14 @@ from chatbot_common import (
     write_json_with_latest,
 )
 
-DEFAULT_MODEL = "gemini-2.5-flash"
+# 加载全局配置
+try:
+    GEN_API_KEY, GEN_MODEL = load_gemini_config()
+except Exception:
+    GEN_API_KEY = ""
+    GEN_MODEL = "gemini-2.5-flash"
+
+DEFAULT_MODEL = GEN_MODEL
 DEFAULT_CHATBOT_COUNT = 2
 
 
@@ -187,7 +196,10 @@ def main() -> None:
     append_log(log_path, "start", schemaJson=str(schema_path), appId=app_id, appName=app_name, model=args.model)
 
     config_path = Path(args.config).expanduser().resolve() if args.config else None
-    api_key = load_gemini_api_key(config_path) if config_path else load_gemini_api_key()
+    if GEN_API_KEY:
+        api_key = GEN_API_KEY
+    else:
+        api_key = load_gemini_api_key(config_path) if config_path else load_gemini_api_key()
     client = genai.Client(api_key=api_key)
 
     feedback_history: List[dict] = []

@@ -18,6 +18,8 @@ NETWORK_RETRY_DELAY = 5
 
 from google import genai
 from google.genai import types
+from script_locator import resolve_script
+from gemini_utils import load_gemini_config
 
 CURRENT_DIR = Path(__file__).resolve().parent
 if str(CURRENT_DIR) not in sys.path:
@@ -37,6 +39,12 @@ from mock_data_common import (
     write_json_with_latest,
 )
 
+# 加载全局配置
+try:
+    GEN_API_KEY, GEN_MODEL = load_gemini_config()
+except Exception:
+    GEN_API_KEY = ""
+    GEN_MODEL = "gemini-2.5-pro"
 
 def build_candidate_fields(snapshot: dict) -> List[dict]:
     pair_type_map: Dict[tuple, str] = {}
@@ -277,7 +285,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="调用 Gemini 规划 mock 关系回填")
     parser.add_argument("--schema-json", required=True, help="结构快照 JSON 路径")
     parser.add_argument("--write-result-json", required=True, help="造数写入结果 JSON 路径")
-    parser.add_argument("--model", default=DEFAULT_GEMINI_MODEL, help="Gemini 模型名")
+    parser.add_argument("--model", default=GEN_MODEL if GEN_MODEL else DEFAULT_GEMINI_MODEL, help="Gemini 模型名")
     parser.add_argument("--config", default=str(GEMINI_CONFIG_PATH), help="Gemini 配置 JSON 路径")
     parser.add_argument("--output", default="", help="关系规划输出路径")
     args = parser.parse_args()
@@ -286,7 +294,10 @@ def main() -> None:
     write_result_path = resolve_json_input(str(args.write_result_json), [MOCK_WRITE_RESULT_DIR])
     snapshot = load_json(schema_path)
     write_result = load_json(write_result_path)
-    api_key = load_gemini_api_key(Path(args.config).expanduser().resolve())
+    if GEN_API_KEY:
+        api_key = GEN_API_KEY
+    else:
+        api_key = load_gemini_api_key(Path(args.config).expanduser().resolve())
     client = genai.Client(api_key=api_key)
 
     base_prompt = build_prompt(snapshot, write_result)

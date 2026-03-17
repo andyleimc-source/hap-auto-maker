@@ -16,6 +16,7 @@ if str(CURRENT_DIR) not in sys.path:
     sys.path.insert(0, str(CURRENT_DIR))
 
 from script_locator import resolve_script
+from gemini_utils import load_gemini_config
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 PLAN_SCRIPT = resolve_script("plan_tableview_filters_gemini.py")
@@ -23,7 +24,13 @@ APPLY_SCRIPT = resolve_script("apply_tableview_filters_from_plan.py")
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 PLAN_DIR = OUTPUT_ROOT / "tableview_filter_plans"
 APPLY_RESULT_DIR = OUTPUT_ROOT / "tableview_filter_apply_results"
-DEFAULT_MODEL = "gemini-2.5-pro"
+# 加载全局配置
+try:
+    _, GEN_MODEL = load_gemini_config()
+except Exception:
+    GEN_MODEL = "gemini-2.5-pro"
+
+DEFAULT_MODEL = GEN_MODEL
 DEFAULT_GEMINI_CONFIG = BASE_DIR / "config" / "credentials" / "gemini_auth.json"
 DEFAULT_AUTH_CONFIG = BASE_DIR / "config" / "credentials" / "auth_config.py"
 

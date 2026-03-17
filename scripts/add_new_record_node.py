@@ -10,9 +10,9 @@ Reference HAR:
 
 Typical usage:
     python3 scripts/add_new_record_node.py \\
-        --process-id  '69b4b92f9c92de5d02cd921f' \\
-        --prev-node-id '69b4b9309c92de5d02cd9220' \\
-        --worksheet-id '69aead6f952cd046bb57e3f2' \\
+        --process-id  'YOUR_PROCESS_ID' \\
+        --prev-node-id 'YOUR_PREV_NODE_ID' \\
+        --worksheet-id 'YOUR_WORKSHEET_ID' \\
         --fields '[{"fieldId":"xxx","type":2,"enumDefault":0,"fieldValue":"hello"}]' \\
         --publish
 

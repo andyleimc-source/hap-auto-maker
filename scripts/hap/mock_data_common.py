@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
+from gemini_utils import load_gemini_config
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
@@ -44,7 +45,13 @@ ROW_CREATE_URL = "/v3/app/worksheets/{worksheet_id}/rows"
 ROW_BATCH_CREATE_URL = "/v3/app/worksheets/{worksheet_id}/rows/batch"
 ROW_BATCH_DELETE_URL = "/v3/app/worksheets/{worksheet_id}/rows/batch"
 ROW_UPDATE_URL = "/v3/app/worksheets/{worksheet_id}/rows/{row_id}"
-DEFAULT_GEMINI_MODEL = "gemini-2.5-pro"
+# 加载全局配置
+try:
+    GEN_API_KEY, GEN_MODEL = load_gemini_config()
+except Exception:
+    GEN_API_KEY, GEN_MODEL = "", "gemini-2.5-pro"
+
+DEFAULT_GEMINI_MODEL = GEN_MODEL
 
 SUPPORTED_WRITABLE_FIELD_TYPES = {
     "Text",
@@ -191,6 +198,8 @@ def append_log(log_path: Path, event: str, **payload: Any) -> None:
 
 
 def load_gemini_api_key(config_path: Path = GEMINI_CONFIG_PATH) -> str:
+    if GEN_API_KEY:
+        return GEN_API_KEY
     data = load_json(config_path)
     api_key = str(data.get("api_key", "")).strip()
     if not api_key:

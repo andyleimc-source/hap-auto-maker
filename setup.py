@@ -25,6 +25,7 @@ _PLACEHOLDERS = {
     "YOUR_HAP_PROJECT_ID",
     "YOUR_HAP_OWNER_ID",
     "YOUR_GEMINI_API_KEY",
+    "YOUR_GEMINI_MODEL",
     "your-account@example.com",
     "your-password",
     "OPTIONAL_PRECOMPUTED_SIGN",
@@ -79,25 +80,31 @@ def step_gemini(force=False):
     dst = CRED_DIR / "gemini_auth.json"
     existing = _load_json_safe(dst)
     old_key = existing.get("api_key", "")
+    old_model = existing.get("model", "gemini-2.5-pro")
 
     if dst.exists() and not force:
         print(f"\n✅ {dst.name} 已存在，跳过（需重新配置请加上 --force）")
         return
 
-    print("\n🔑 [2/4] 配置 Gemini API Key")
+    print("\n🔑 [2/4] 配置 Gemini API & Model")
     print("   获取地址: https://aistudio.google.com/apikey")
 
     if old_key and old_key not in _PLACEHOLDERS:
-        print(f"   当前值: {_mask(old_key)}")
-        print("   （直接回车保留当前值，输入新值则覆盖）")
-        key = ask("   Gemini API Key", default=old_key)
+        key = ask(f"   Gemini API Key [{_mask(old_key)}]") or old_key
     else:
         key = ask("   请输入你的 Gemini API Key")
 
+    if old_model and old_model not in _PLACEHOLDERS:
+        model = ask(f"   默认模型 [当前: {old_model}, 回车保留]", default=old_model)
+    else:
+        model = ask("   请输入默认模型 (建议 gemini-2.5-pro)", default="gemini-2.5-pro")
+
     if not key:
-        print("   ⚠️  未填写，稍后可手动编辑 config/credentials/gemini_auth.json")
+        print("   ⚠️  API Key 未填写，稍后可手动编辑 config/credentials/gemini_auth.json")
         key = "YOUR_GEMINI_API_KEY"
-    dst.write_text(json.dumps({"api_key": key}, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    
+    config_data = {"api_key": key, "model": model}
+    dst.write_text(json.dumps(config_data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"   ✔ 已写入 {dst.name}")
 
 
@@ -231,6 +238,7 @@ def _read_all_config() -> dict:
     # Gemini
     gemini = _load_json_safe(CRED_DIR / "gemini_auth.json")
     result["gemini_api_key"] = gemini.get("api_key", "")
+    result["gemini_model"] = gemini.get("model", "gemini-2.5-pro")
 
     # 组织密钥
     org = _load_json_safe(CRED_DIR / "organization_auth.json")
@@ -265,6 +273,7 @@ def show_config():
         ("account",        "登录账号",         False),
         ("password",       "登录密码",         True),
         ("gemini_api_key", "Gemini API Key",  True),
+        ("gemini_model",   "Gemini 模型",     False),
         ("app_key",        "app_key",         True),
         ("secret_key",     "secret_key",      True),
         ("project_id",     "project_id",      False),
@@ -311,7 +320,7 @@ def show_config():
             new_val = ask(f"  {name}", default=default)
         cfg[key] = new_val
 
-        if key == "gemini_api_key":
+        if key in ("gemini_api_key", "gemini_model"):
             changed_gemini = True
         elif key in ("account", "password"):
             changed_login = True
@@ -321,8 +330,11 @@ def show_config():
     # 写回修改过的文件
     if changed_gemini:
         dst = CRED_DIR / "gemini_auth.json"
-        val = cfg["gemini_api_key"] or "YOUR_GEMINI_API_KEY"
-        dst.write_text(json.dumps({"api_key": val}, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        data = {
+            "api_key": cfg.get("gemini_api_key") or "YOUR_GEMINI_API_KEY",
+            "model": cfg.get("gemini_model") or "gemini-2.5-pro",
+        }
+        dst.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         print(f"  ✔ 已更新 gemini_auth.json")
 
     if changed_org:

@@ -30,12 +30,19 @@ from mock_data_common import (
     write_json,
 )
 from script_locator import resolve_script
+from gemini_utils import load_gemini_config
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 SCRIPT_PLAN = resolve_script("plan_role_recommendations_gemini.py")
 SCRIPT_CREATE = resolve_script("create_roles_from_recommendation.py")
 ROLE_RUN_DIR = OUTPUT_ROOT / "role_runs"
-DEFAULT_MODEL = "gemini-2.5-flash"
+# 加载全局配置
+try:
+    _, GEN_MODEL = load_gemini_config()
+except Exception:
+    GEN_MODEL = "gemini-2.5-pro"
+
+DEFAULT_MODEL = GEN_MODEL if GEN_MODEL else "gemini-2.5-pro"
 
 
 def run_step(cmd: List[str], title: str, log_path: Path) -> Dict[str, object]:
