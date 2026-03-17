@@ -504,7 +504,7 @@ def main() -> None:
     parser.add_argument("--continue-on-error", action="store_true", help="「开始运行」自动执行时，执行器遇错继续")
     args = parser.parse_args()
 
-    api_key = load_api_key(GEMINI_CONFIG_PATH)
+    api_key = GEN_API_KEY
     client = genai.Client(api_key=api_key)
     output_path = Path(args.output).expanduser().resolve() if args.output else None
     chat, actual_model = create_chat_with_fallback(client, args.model, args.temperature, args.seed)
