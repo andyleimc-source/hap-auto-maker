@@ -185,6 +185,7 @@ def normalize_spec(raw: dict) -> dict:
 
     delete_default_views = spec.get("delete_default_views") if isinstance(spec.get("delete_default_views"), dict) else {}
     delete_default_views.setdefault("enabled", True)
+    delete_default_views.setdefault("refresh_auth", True)
     spec["delete_default_views"] = delete_default_views
 
     pages = spec.get("pages") if isinstance(spec.get("pages"), dict) else {}
@@ -801,6 +802,8 @@ def main() -> None:
             "--app-auth-json", str(app_auth_json),
             "--auth-config", str(CONFIG_WEB_AUTH),
         ]
+        if delete_default_views_cfg.get("refresh_auth", True):
+            cmd13.extend(["--refresh-auth", "--headless"])
         if execution_dry_run:
             cmd13.append("--dry-run")
         return execute_step(13, "delete_default_views", "删除[全部]默认视图", cmd13, uses_gemini=False)
