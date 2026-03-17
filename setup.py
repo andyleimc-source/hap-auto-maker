@@ -21,6 +21,8 @@ CRED_DIR = BASE_DIR / "config" / "credentials"
 def ask(prompt: str, default: str = "") -> str:
     hint = f" [{default}]" if default else ""
     val = input(f"{prompt}{hint}: ").strip()
+    # 清理 copy-paste 常见的多余字符：引号、零宽空格等
+    val = val.strip("\"'""''").strip("\u200b\u200c\u200d\ufeff").strip()
     return val or default
 
 
@@ -64,6 +66,9 @@ def step_org_auth(force=False):
     project_id = ask("   project_id")
     print("\n   获取 owner_id: 点击群聊中个人头像，地址栏中 https://www.mingdao.com/user_xxx 的 xxx 部分")
     owner_id = ask("   owner_id")
+    print("\n   获取 group_ids: 在明道云中创建或找到一个应用分组，点击该分组后地址栏中 groupId=xxx 的 xxx 部分")
+    print("   （可选，留空则创建应用时不指定分组）")
+    group_ids = ask("   group_ids")
     # 读取 example 模板获取完整结构
     example = CRED_DIR / "organization_auth.example.json"
     if example.exists():
@@ -74,6 +79,8 @@ def step_org_auth(force=False):
     data["secret_key"] = secret_key or "YOUR_HAP_SECRET_KEY"
     data["project_id"] = project_id or "YOUR_HAP_PROJECT_ID"
     data["owner_id"] = owner_id or "YOUR_HAP_OWNER_ID"
+    data["group_ids"] = group_ids or ""
+    data.pop("sign", None)  # 移除旧模板中无用的 sign 字段
     dst.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"   ✔ 已写入 {dst.name}")
 

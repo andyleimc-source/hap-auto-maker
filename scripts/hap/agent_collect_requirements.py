@@ -44,6 +44,16 @@ GEMINI_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "gemini_auth.json"
 DEFAULT_MODEL = "gemini-2.5-pro"
 FALLBACK_MODELS = ("gemini-2.5-pro",)
 EXECUTE_REQUIREMENTS_SCRIPT = resolve_script("execute_requirements.py")
+ORG_AUTH_PATH = BASE_DIR / "config" / "credentials" / "organization_auth.json"
+
+
+def _load_org_group_ids() -> str:
+    """从 organization_auth.json 读取 group_ids，缺失则返回空串"""
+    try:
+        data = load_json(ORG_AUTH_PATH)
+        return str(data.get("group_ids", "")).strip()
+    except Exception:
+        return ""
 
 
 def now_iso() -> str:
@@ -284,7 +294,7 @@ def build_spec_prompt(transcript: List[Dict[str, str]]) -> str:
   "app": {{
     "target_mode": "create_new",
     "name": "应用名称",
-    "group_ids": "69a794589860d96373beeb4d",
+    "group_ids": "{_load_org_group_ids()}",
     "icon_mode": "gemini_match",
     "color_mode": "random",
     "navi_style": {{
@@ -349,7 +359,7 @@ def normalize_spec(raw: dict) -> dict:
     app = spec.get("app") if isinstance(spec.get("app"), dict) else {}
     app.setdefault("target_mode", "create_new")
     app.setdefault("name", "CRM自动化应用")
-    app.setdefault("group_ids", "69a794589860d96373beeb4d")
+    app.setdefault("group_ids", _load_org_group_ids())
     app.setdefault("icon_mode", "gemini_match")
     app.setdefault("color_mode", "random")
     # 默认主题色策略：未明确时强制 random

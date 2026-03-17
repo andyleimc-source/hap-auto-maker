@@ -22,7 +22,7 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 CONFIG_PATH = BASE_DIR / "config" / "credentials" / "organization_auth.json"
 DEFAULT_BASE_URL = "https://api.mingdao.com"
 ENDPOINT = "/v1/open/app/create"
-DEFAULT_GROUP_IDS = "69a794589860d96373beeb4d"
+DEFAULT_GROUP_IDS = ""  # 从 organization_auth.json 读取，不再硬编码
 ICON_JSON_PATH = BASE_DIR / "data" / "assets" / "icons" / "icon.json"
 COLOR_POLICY_PATH = BASE_DIR / "config" / "policies" / "theme_color_policy.json"
 DEFAULT_COLOR_POOL = [
@@ -216,7 +216,7 @@ def main() -> None:
     parser.add_argument("--color", default="", help="主题颜色，如 #00bcd4")
     parser.add_argument(
         "--group-ids",
-        default=DEFAULT_GROUP_IDS,
+        default=default_group_ids or DEFAULT_GROUP_IDS,
         help="应用分组Id列表，逗号分隔",
     )
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="API 基础地址")
@@ -226,6 +226,7 @@ def main() -> None:
     secret_key = auth["secret_key"]
     default_project_id = auth.get("project_id", "")
     default_owner_id = auth.get("owner_id", "")
+    default_group_ids = auth.get("group_ids", "")
 
     parser.add_argument("--project-id", default=default_project_id, help="HAP 组织Id")
     parser.add_argument("--owner-id", default=default_owner_id, help="应用拥有者 HAP 账号Id")
@@ -277,6 +278,20 @@ def main() -> None:
         raise
 
     print(json.dumps(data, ensure_ascii=False, indent=2))
+
+    if not data.get("success") and data.get("error_code") == 10102:
+        masked_key = app_key[:4] + "****" + app_key[-4:] if len(app_key) >= 8 else "****"
+        masked_secret = secret_key[:4] + "****" if len(secret_key) >= 4 else "****"
+        print(
+            f"\n[诊断] 签名不合法，请检查 organization_auth.json 中的凭据：\n"
+            f"  app_key    = {masked_key} (长度 {len(app_key)})\n"
+            f"  secret_key = {masked_secret} (长度 {len(secret_key)})\n"
+            f"  project_id = {args.project_id}\n"
+            f"  owner_id   = {args.owner_id}\n"
+            f"  group_ids  = {args.group_ids}\n"
+            f"  提示: 运行 python3 setup.py --force 重新配置",
+            file=sys.stderr,
+        )
 
 
 if __name__ == "__main__":

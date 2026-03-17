@@ -28,7 +28,7 @@ GET_AUTH_SCRIPT = resolve_script("get_app_authorize.py")
 LIST_APPS_SCRIPT = resolve_script("list_apps_for_icon.py")
 MATCH_APPS_ICON_SCRIPT = resolve_script("match_app_icons_gemini.py")
 UPDATE_APPS_ICON_SCRIPT = resolve_script("update_app_icons.py")
-DEFAULT_GROUP_IDS = "69a794589860d96373beeb4d"
+DEFAULT_GROUP_IDS = ""  # 从 organization_auth.json 读取，不再硬编码
 
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 APP_AUTH_DIR = OUTPUT_ROOT / "app_authorizations"

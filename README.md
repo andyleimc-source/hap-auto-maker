@@ -34,7 +34,7 @@ python3 setup.py
 
 ## 密钥获取说明
 
-运行 `setup.py` 时需要填写以下 5 项：
+运行 `setup.py` 时需要填写以下 6 项：
 
 ### 1. Gemini API Key
 
@@ -62,11 +62,34 @@ python3 setup.py
 
 获取方式：在明道云中点击群聊中个人的头像，浏览器地址栏会显示 `https://www.mingdao.com/user_xxx`，其中 `xxx` 即为 owner_id。
 
-### 5. 明道云登录账号
+### 5. 应用分组 ID（group_ids）（可选）
+
+用于指定新创建的应用放入哪个分组。
+
+获取方式：在明道云中点击某个应用分组，浏览器地址栏会显示 `groupId=xxx`，其中 `xxx` 即为 group_ids。留空则创建应用时不指定分组。
+
+### 6. 明道云登录账号
 
 用于自动登录获取网页端 Cookie / Authorization（部分接口需要）。
 
 `setup.py` 会自动调用 Playwright 无头浏览器登录，登录成功后自动写入 `auth_config.py`，无需手动抓包。
+
+## 更新到最新版本
+
+如果你之前已经克隆过项目，进入项目目录后拉取最新代码即可：
+
+```bash
+cd hap_auto_release
+git pull
+```
+
+如果有新增配置项，建议重新运行初始化（已有配置会被覆盖）：
+
+```bash
+python3 setup.py --force
+```
+
+> 💡 **提示**：忘了项目在哪？运行 `find ~ -name "hap_auto_release" -type d` 找一下。
 
 ## 使用方式
 

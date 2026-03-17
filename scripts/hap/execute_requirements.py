@@ -70,6 +70,15 @@ def write_json(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _load_org_group_ids() -> str:
+    """从 organization_auth.json 读取 group_ids"""
+    try:
+        data = load_json(CONFIG_ORG)
+        return str(data.get("group_ids", "")).strip()
+    except Exception:
+        return ""
+
+
 def normalize_spec(raw: dict) -> dict:
     spec = dict(raw) if isinstance(raw, dict) else {}
     spec["schema_version"] = "workflow_requirement_v1"
@@ -83,7 +92,7 @@ def normalize_spec(raw: dict) -> dict:
     app = spec.get("app") if isinstance(spec.get("app"), dict) else {}
     app.setdefault("target_mode", "create_new")
     app.setdefault("name", "CRM自动化应用")
-    app.setdefault("group_ids", "69a794589860d96373beeb4d")
+    app.setdefault("group_ids", _load_org_group_ids())
     app.setdefault("icon_mode", "gemini_match")
     app.setdefault("color_mode", "random")
     navi = app.get("navi_style") if isinstance(app.get("navi_style"), dict) else {}
@@ -435,7 +444,7 @@ def main() -> None:
             "--name",
             str(app.get("name", "CRM自动化应用")),
             "--group-ids",
-            str(app.get("group_ids", "69a794589860d96373beeb4d")),
+            str(app.get("group_ids", _load_org_group_ids())),
             "--gemini-model",
             str(ws.get("model", "gemini-2.5-pro")),
         ]
