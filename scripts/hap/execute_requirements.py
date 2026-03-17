@@ -7,8 +7,9 @@
 并行策略：
   - Wave 2: Step 2a + Step 3 + Step 8 并行（2a/3 受 Gemini 信号量约束）
   - Wave 3: Step 2b（依赖 2a）
-  - Wave 4: Step 4/5/6/9/10/11 全部提交，Semaphore(3) 限制同时 Gemini 调用数
+  - Wave 4: Step 4/5/6/9/10/11/13 全部提交，Semaphore(3) 限制同时 Gemini 调用数；13 不用 Gemini
   - Wave 5: Step 7（依赖 6）、Step 12（依赖 11），无 Gemini 限制
+  - Wave 6: Step 14 统计图表 Pages（串行，依赖 Wave 4/5 完成，用 Gemini）
 """
 
 import argparse
@@ -54,6 +55,8 @@ WORKFLOW_SCRIPTS_DIR = BASE_DIR / "workflow" / "scripts"
 WORKFLOW_OUTPUT_DIR = BASE_DIR / "workflow" / "output"
 SCRIPT_PIPELINE_WORKFLOWS = WORKFLOW_SCRIPTS_DIR / "pipeline_workflows.py"
 SCRIPT_EXECUTE_WORKFLOWS = WORKFLOW_SCRIPTS_DIR / "execute_workflow_plan.py"
+SCRIPT_DELETE_DEFAULT_VIEWS = resolve_script("delete_default_views.py")
+SCRIPT_PIPELINE_PAGES = resolve_script("pipeline_pages.py")
 VIEW_PLAN_DIR = OUTPUT_ROOT / "view_plans"
 VIEW_CREATE_RESULT_DIR = OUTPUT_ROOT / "view_create_results"
 TABLEVIEW_FILTER_PLAN_DIR = OUTPUT_ROOT / "tableview_filter_plans"
@@ -180,6 +183,15 @@ def normalize_spec(raw: dict) -> dict:
     workflows.setdefault("skip_analysis", False)
     spec["workflows"] = workflows
 
+    delete_default_views = spec.get("delete_default_views") if isinstance(spec.get("delete_default_views"), dict) else {}
+    delete_default_views.setdefault("enabled", True)
+    spec["delete_default_views"] = delete_default_views
+
+    pages = spec.get("pages") if isinstance(spec.get("pages"), dict) else {}
+    pages.setdefault("enabled", True)
+    pages.setdefault("model", ws.get("model", DEFAULT_MODEL))
+    spec["pages"] = pages
+
     execution = spec.get("execution") if isinstance(spec.get("execution"), dict) else {}
     execution.setdefault("fail_fast", True)
     execution.setdefault("dry_run", False)
@@ -202,6 +214,8 @@ def ensure_scripts_exist() -> None:
         SCRIPT_PIPELINE_CHATBOTS,
         SCRIPT_PIPELINE_WORKFLOWS,
         SCRIPT_EXECUTE_WORKFLOWS,
+        SCRIPT_DELETE_DEFAULT_VIEWS,
+        SCRIPT_PIPELINE_PAGES,
     ]
     missing = [str(p) for p in required if not p.exists()]
     if missing:
@@ -331,7 +345,7 @@ def main() -> None:
     parser.add_argument(
         "--only-steps",
         default="",
-        help="仅执行指定步骤（逗号分隔：1,2,3 或 create_app,worksheets_plan,worksheets_create,roles,worksheet_icon,layout,views,view_filters,navi,mock_data,chatbots,workflows_plan,workflows_execute）",
+        help="仅执行指定步骤（逗号分隔：1,2,3 或 create_app,worksheets_plan,worksheets_create,roles,worksheet_icon,layout,views,view_filters,navi,mock_data,chatbots,workflows_plan,workflows_execute,delete_default_views,pages）",
     )
     parser.add_argument("--verbose", action="store_true", help="打印子脚本完整输出")
     parser.add_argument(
@@ -486,6 +500,8 @@ def main() -> None:
     mock_data = spec["mock_data"]
     chatbots = spec["chatbots"]
     workflows = spec["workflows"]
+    delete_default_views_cfg = spec["delete_default_views"]
+    pages_cfg = spec["pages"]
 
     # ──────────────────────────────────────────────
     # Wave 1: Step 1 创建应用（串行，后续步骤依赖 app_id）
@@ -776,19 +792,36 @@ def main() -> None:
             context["workflow_plan_json"] = str(workflow_plan_output)
         return ok11
 
-    with ThreadPoolExecutor(max_workers=6) as pool:
+    def run_step_13() -> bool:
+        if not delete_default_views_cfg.get("enabled", True):
+            with steps_lock:
+                steps_report.append({"step_id": 13, "step_key": "delete_default_views", "title": "删除[全部]默认视图", "skipped": True, "reason": "disabled_by_spec"})
+            return True
+        cmd13 = [
+            sys.executable, str(SCRIPT_DELETE_DEFAULT_VIEWS),
+            "--app-id", app_id,
+            "--app-auth-json", str(app_auth_json),
+            "--auth-config", str(CONFIG_WEB_AUTH),
+        ]
+        if execution_dry_run:
+            cmd13.append("--dry-run")
+        return execute_step(13, "delete_default_views", "删除[全部]默认视图", cmd13, uses_gemini=False)
+
+    with ThreadPoolExecutor(max_workers=7) as pool:
         f4  = pool.submit(run_step_4)
         f5  = pool.submit(run_step_5)
         f6  = pool.submit(run_step_6)
         f9  = pool.submit(run_step_9)
         f10 = pool.submit(run_step_10)
         f11 = pool.submit(run_step_11)
+        f13 = pool.submit(run_step_13)
         ok4  = f4.result()
         ok5  = f5.result()
         ok6  = f6.result()
         ok9  = f9.result()
         ok10 = f10.result()
         ok11 = f11.result()
+        f13.result()
 
     if fail_fast and has_failure():
         out = save_report()
@@ -858,6 +891,30 @@ def main() -> None:
         f12 = pool.submit(run_step_12)
         f7.result()
         f12.result()
+
+    # ──────────────────────────────────────────────
+    # Wave 6: Step 14 统计图表 Pages（依赖 Wave 4/5 完成）
+    # ──────────────────────────────────────────────
+    print("\n" + "=" * 50)
+    print("== Wave 6: 统计图表 Pages ==")
+    print("=" * 50)
+
+    def run_step_14() -> bool:
+        if not pages_cfg.get("enabled", True):
+            with steps_lock:
+                steps_report.append({"step_id": 14, "step_key": "pages", "title": "规划并创建统计图表页", "skipped": True, "reason": "disabled_by_spec"})
+            return True
+        cmd14 = [
+            sys.executable, str(SCRIPT_PIPELINE_PAGES),
+            "--app-id", app_id,
+            "--model", str(pages_cfg.get("model", DEFAULT_MODEL)),
+            "--auth-config", str(CONFIG_WEB_AUTH),
+        ]
+        if execution_dry_run:
+            cmd14.append("--dry-run")
+        return execute_step(14, "pages", "规划并创建统计图表页", cmd14, uses_gemini=True)
+
+    run_step_14()
 
     out = save_report()
     report = build_report()
