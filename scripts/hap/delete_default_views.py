@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-删除某应用下所有工作表中名称为"全部"的默认视图。
+删除某应用下所有工作表中名称为"全部"或"视图"的默认视图。
 
 流程：
 1) 通过 HAP v3 API 获取应用所有工作表 ID
@@ -13,10 +13,17 @@
 import argparse
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 from typing import Optional
+
+_PROXY_VARS = {"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy",
+               "ALL_PROXY", "all_proxy", "SOCKS_PROXY", "socks_proxy"}
+
+def _clean_env() -> dict:
+    return {k: v for k, v in os.environ.items() if k not in _PROXY_VARS}
 
 import requests
 
@@ -37,7 +44,7 @@ APP_INFO_URL = f"{HAP_BASE}/v3/app"
 WORKSHEET_INFO_URL = f"{HAP_BASE}/v3/app/worksheets/{{worksheet_id}}"
 DELETE_VIEW_URL = "https://www.mingdao.com/api/Worksheet/DeleteWorksheetView"
 
-TARGET_VIEW_NAME = "全部"
+TARGET_VIEW_NAMES = {"全部", "视图"}
 
 
 # ---------- HAP auth ----------
@@ -89,7 +96,7 @@ def refresh_web_auth(headless: bool) -> None:
     cmd = [sys.executable, str(REFRESH_AUTH_SCRIPT)]
     if headless:
         cmd.append("--headless")
-    proc = subprocess.run(cmd, check=False)
+    proc = subprocess.run(cmd, check=False, env=_clean_env())
     if proc.returncode != 0:
         raise RuntimeError(f"refresh_auth 执行失败，退出码: {proc.returncode}")
 
@@ -123,7 +130,7 @@ def browser_headers(auth: dict) -> dict:
 # ---------- HAP v3: 获取工作表列表 ----------
 
 def fetch_worksheets(app_key: str, sign: str) -> list[dict]:
-    resp = requests.get(APP_INFO_URL, headers=hap_headers(app_key, sign), timeout=30)
+    resp = requests.get(APP_INFO_URL, headers=hap_headers(app_key, sign), timeout=30, proxies={})
     data = resp.json()
     if not data.get("success"):
         raise RuntimeError(f"获取应用信息失败: {data}")
@@ -150,7 +157,7 @@ def fetch_worksheets(app_key: str, sign: str) -> list[dict]:
 def fetch_views(worksheet_id: str, app_key: str, sign: str) -> list[dict]:
     """返回视图列表，每项包含 id、name、type。"""
     url = WORKSHEET_INFO_URL.format(worksheet_id=worksheet_id)
-    resp = requests.get(url, headers=hap_headers(app_key, sign), timeout=30)
+    resp = requests.get(url, headers=hap_headers(app_key, sign), timeout=30, proxies={})
     data = resp.json()
     if not data.get("success"):
         return []
@@ -167,7 +174,7 @@ def delete_view(app_id: str, worksheet_id: str, view_id: str, hdrs: dict) -> boo
         "worksheetId": worksheet_id,
         "status": 9,
     }
-    resp = requests.post(DELETE_VIEW_URL, headers=hdrs, json=payload, timeout=30)
+    resp = requests.post(DELETE_VIEW_URL, headers=hdrs, json=payload, timeout=30, proxies={})
     if resp.status_code == 401:
         raise RuntimeError("认证失败（401），请更新 auth_config.py 中的 AUTHORIZATION/COOKIE")
     data = resp.json()
@@ -177,7 +184,7 @@ def delete_view(app_id: str, worksheet_id: str, view_id: str, hdrs: dict) -> boo
 # ---------- 主流程 ----------
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="删除应用所有工作表中名称为「全部」的默认视图")
+    parser = argparse.ArgumentParser(description="删除应用所有工作表中名称为「全部」或「视图」的默认视图")
     parser.add_argument("--app-id", required=True, help="应用 ID")
     parser.add_argument("--app-auth-json", default="", help="HAP 授权 JSON 文件名或路径（默认取最新）")
     parser.add_argument("--auth-config", default=str(AUTH_CONFIG_PATH), help="auth_config.py 路径")
@@ -214,7 +221,7 @@ def main() -> None:
         ws_name = ws["worksheetName"]
 
         views = fetch_views(worksheet_id=ws_id, app_key=app_key, sign=sign)
-        target_views = [v for v in views if str(v.get("name", "")).strip() == TARGET_VIEW_NAME]
+        target_views = [v for v in views if str(v.get("name", "")).strip() in TARGET_VIEW_NAMES]
 
         if not target_views:
             continue
@@ -222,17 +229,19 @@ def main() -> None:
         for view in target_views:
             # v3 API 返回的视图字段是 "id"，非 "viewId"
             view_id = str(view.get("id", "")).strip()
+            view_name = str(view.get("name", "")).strip()
             total_found += 1
             if args.dry_run:
-                print(f"[预览] 工作表《{ws_name}》({ws_id}) → 视图「{TARGET_VIEW_NAME}」({view_id}) 待删除")
+                print(f"[预览] 工作表《{ws_name}》({ws_id}) → 视图「{view_name}」({view_id}) 待删除")
             else:
                 ok = delete_view(app_id=app_id, worksheet_id=ws_id, view_id=view_id, hdrs=del_headers)
                 status = "成功" if ok else "失败"
-                print(f"[{status}] 工作表《{ws_name}》({ws_id}) → 视图「{TARGET_VIEW_NAME}」({view_id})")
+                print(f"[{status}] 工作表《{ws_name}》({ws_id}) → 视图「{view_name}」({view_id})")
                 if ok:
                     total_deleted += 1
 
-    print(f"\n{'[预览] ' if args.dry_run else ''}共发现 {total_found} 个「{TARGET_VIEW_NAME}」视图"
+    target_names_str = "、".join(f"「{n}」" for n in sorted(TARGET_VIEW_NAMES))
+    print(f"\n{'[预览] ' if args.dry_run else ''}共发现 {total_found} 个默认视图（{target_names_str}）"
           + (f"，已删除 {total_deleted} 个" if not args.dry_run else ""))
 
 

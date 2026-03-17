@@ -333,7 +333,8 @@ def main() -> None:
             try:
                 wf_result = load_json(Path(artifact_sources["workflow_execute_result_json"]))
                 workflow_count = (
-                    len(wf_result.get("workflows", []))
+                    int(wf_result.get("total_workflows", 0) or 0)
+                    or len(wf_result.get("workflows", []))
                     or len(wf_result.get("results", []))
                     or int(wf_result.get("total", 0) or 0)
                 )
