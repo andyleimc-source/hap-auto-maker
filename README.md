@@ -8,7 +8,7 @@
 
 ```bash
 # 保存所有改动并推送到 GitHub
-git add -A && git commit -m "说明改了什么" && git push origin main
+git add -A && git commit -m "20260318" && git push origin main
 
 # 拉取最新代码
 git pull origin main

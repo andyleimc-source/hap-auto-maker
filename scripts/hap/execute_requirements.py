@@ -672,7 +672,7 @@ def main() -> None:
     # Wave 4: Step 4/5/6/9/10/11 并行
     #   全部使用 Gemini，受 GEMINI_SEMAPHORE 约束
     # ──────────────────────────────────────────────
-    print(f"\n── Wave 4: icon / 布局 / 视图 / 造数 / 机器人 / 工作流规划 / 删除默认视图 / 规划图表页（并行） ─── 总计 {time.time()-pipeline_start:.0f}s", flush=True)
+    print(f"\n── Wave 4: icon / 布局 / 视图 / 造数 / 机器人 / 工作流规划 / 规划图表页（并行） ─── 总计 {time.time()-pipeline_start:.0f}s", flush=True)
 
     view_plan_output = (VIEW_PLAN_DIR / f"view_plan_{app_id}_{now_ts()}.json").resolve()
     view_create_output = (VIEW_CREATE_RESULT_DIR / f"view_create_result_{app_id}_{now_ts()}.json").resolve()
@@ -840,14 +840,13 @@ def main() -> None:
                 print(err[-600:], flush=True)
         return ok_14a
 
-    with ThreadPoolExecutor(max_workers=8) as pool:
+    with ThreadPoolExecutor(max_workers=7) as pool:
         f4   = pool.submit(run_step_4)
         f5   = pool.submit(run_step_5)
         f6   = pool.submit(run_step_6)
         f9   = pool.submit(run_step_9)
         f10  = pool.submit(run_step_10)
         f11  = pool.submit(run_step_11)
-        f13  = pool.submit(run_step_13)
         f14a = pool.submit(run_step_14a)
         ok4  = f4.result()
         ok5  = f5.result()
@@ -855,7 +854,6 @@ def main() -> None:
         ok9  = f9.result()
         ok10 = f10.result()
         ok11 = f11.result()
-        f13.result()
         f14a.result()
 
     if fail_fast and has_failure():
@@ -951,6 +949,12 @@ def main() -> None:
         return execute_step(14, "pages", title, cmd14, uses_gemini=not ok_14a)
 
     run_step_14()
+
+    # ──────────────────────────────────────────────
+    # Wave 7: 删除默认视图（最后一步，确保所有视图已创建完毕）
+    # ──────────────────────────────────────────────
+    print(f"\n── Wave 7: 删除[全部]默认视图 ─── 总计 {time.time()-pipeline_start:.0f}s", flush=True)
+    run_step_13()
 
     out = save_report()
     report = build_report()
