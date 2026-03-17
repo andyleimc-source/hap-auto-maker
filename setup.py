@@ -33,11 +33,11 @@ def step_install_deps():
     subprocess.check_call([sys.executable, "-m", "playwright", "install", "chromium"])
 
 
-def step_gemini():
+def step_gemini(force=False):
     """配置 Gemini API Key"""
     dst = CRED_DIR / "gemini_auth.json"
-    if dst.exists():
-        print(f"\n✅ {dst.name} 已存在，跳过")
+    if dst.exists() and not force:
+        print(f"\n✅ {dst.name} 已存在，跳过（需重新配置请加上 --force）")
         return
     print("\n🔑 [2/4] 配置 Gemini API Key")
     print("   获取地址: https://aistudio.google.com/apikey")
@@ -49,11 +49,11 @@ def step_gemini():
     print(f"   ✔ 已写入 {dst.name}")
 
 
-def step_org_auth():
+def step_org_auth(force=False):
     """配置 HAP 组织级密钥"""
     dst = CRED_DIR / "organization_auth.json"
-    if dst.exists():
-        print(f"\n✅ {dst.name} 已存在，跳过")
+    if dst.exists() and not force:
+        print(f"\n✅ {dst.name} 已存在，跳过（需重新配置请加上 --force）")
         return
     print("\n🏢 [3/4] 配置 HAP 组织级密钥")
     print("   获取路径: 组织管理 → 集成 → 其他 → 开放接口 → 查看密钥")
@@ -72,13 +72,13 @@ def step_org_auth():
     print(f"   ✔ 已写入 {dst.name}")
 
 
-def step_login_and_auth():
+def step_login_and_auth(force=False):
     """配置登录凭据 → 自动刷新 auth_config.py"""
     login_dst = CRED_DIR / "login_credentials.py"
     auth_dst = CRED_DIR / "auth_config.py"
 
-    if login_dst.exists() and auth_dst.exists():
-        print(f"\n✅ login_credentials.py & auth_config.py 已存在，跳过")
+    if login_dst.exists() and auth_dst.exists() and not force:
+        print(f"\n✅ login_credentials.py & auth_config.py 已存在，跳过（需重新配置请加上 --force）")
         return
 
     print("\n🔐 [4/4] 配置明道云登录账号")
@@ -117,14 +117,19 @@ def step_login_and_auth():
 
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="HAP Auto 一键初始化脚本")
+    parser.add_argument("--force", action="store_true", help="强制重新初始化，覆盖已有配置")
+    args = parser.parse_args()
+
     print("=" * 60)
     print("  HAP Auto — 一键初始化")
     print("=" * 60)
 
     step_install_deps()
-    step_gemini()
-    step_org_auth()
-    step_login_and_auth()
+    step_gemini(force=args.force)
+    step_org_auth(force=args.force)
+    step_login_and_auth(force=args.force)
 
     print("\n" + "=" * 60)
     print("🎉 初始化完成！现在可以运行：")
