@@ -22,10 +22,17 @@ python3 setup.py
 
 ## 前置条件
 
-- Python 3.11+
-- macOS / Linux
+- Python 3.11 或 3.12（**请勿使用低于 3.11 的版本**）
+- macOS / Linux / Windows
 - 一个明道云账号（有组织管理员权限）
 - 一个 Google Gemini API Key
+
+### 🚀 安装 Python（如版本符合请跳过）
+如果你没有安装 Python 或版本低于 3.11，请通过以下官方链接直接下载安装包：
+- **macOS**: [Python 3.12 官方图形安装包下载](https://www.python.org/ftp/python/3.12.9/python-3.12.9-macos11.pkg)
+- **Windows**: [Python 3.12 官方安装包下载](https://www.python.org/ftp/python/3.12.9/python-3.12.9-amd64.exe)
+  > ⚠️ **Windows 注意事项**：安装时务必勾选底部的 **"Add python.exe to PATH"**！
+- 安装完成后，请**完全关闭并重新打开终端**，以使新环境生效。
 
 ## 密钥获取说明
 
