@@ -3,8 +3,8 @@
 """
 终端需求对话 Agent（Gemini）：
 1) 多轮对话收集需求
-2) 输入 /done 冻结需求并生成标准 JSON（workflow_requirement_v1）
-3) 支持 /save 手动保存当前版本、/show 查看摘要、/exit 退出
+2) 输入"开始运行"触发需求冻结、生成 JSON 并自动执行
+3) 支持 /show 查看摘要、/exit 退出
 """
 
 import argparse
@@ -488,10 +488,10 @@ def main() -> None:
     parser.add_argument("--max-turns", type=int, default=0, help="最大对话轮数（0 表示不限制）")
     parser.add_argument("--temperature", type=float, default=0.2, help="Gemini 温度")
     parser.add_argument("--seed", type=int, default=None, help="可选随机种子")
-    parser.add_argument("--no-auto-execute", action="store_true", help="/done 后不自动执行 execute_requirements.py")
-    parser.add_argument("--execute-dry-run", action="store_true", help="/done 自动执行时，以 dry-run 模式运行")
-    parser.add_argument("--execute-verbose", action="store_true", help="/done 自动执行时打印执行器详细输出")
-    parser.add_argument("--continue-on-error", action="store_true", help="/done 自动执行时，执行器遇错继续")
+    parser.add_argument("--no-auto-execute", action="store_true", help="「开始运行」后不自动执行 execute_requirements.py")
+    parser.add_argument("--execute-dry-run", action="store_true", help="「开始运行」自动执行时，以 dry-run 模式运行")
+    parser.add_argument("--execute-verbose", action="store_true", help="「开始运行」自动执行时打印执行器详细输出")
+    parser.add_argument("--continue-on-error", action="store_true", help="「开始运行」自动执行时，执行器遇错继续")
     args = parser.parse_args()
 
     api_key = load_api_key(GEMINI_CONFIG_PATH)
@@ -507,13 +507,14 @@ def main() -> None:
             pass
 
     transcript: List[Dict[str, str]] = []
-    print(f"需求对话已启动（模型: {actual_model}）。输入 /done 生成并执行；/save 立即保存；/show 查看摘要；/exit 退出。")
+    _hint = '\u300c\u5f00\u59cb\u8fd0\u884c\u300d'  # 「开始运行」
+    print(f"需求对话已启动（模型: {actual_model}）。描述你的需求，输入{_hint}并回车开始执行；/show 查看摘要；/exit 退出。")
 
     turns = 0
     while True:
         if args.max_turns > 0 and turns >= args.max_turns:
-            print("达到 max-turns，自动执行 /done。")
-            cmd = "/done"
+            print("达到 max-turns，自动执行 \u300c\u5f00\u59cb\u8fd0\u884c\u300d。")
+            cmd = "开始运行"
         else:
             cmd = read_user_input("\n你: ").strip()
 
@@ -526,11 +527,9 @@ def main() -> None:
         if cmd == "/show":
             print_transcript_summary(transcript)
             continue
-        if cmd in ("/save", "/done"):
+        if cmd == "开始运行":
             if not transcript:
-                print("当前没有对话内容，无法生成需求 JSON。")
-                if cmd == "/done":
-                    return
+                print("当前没有对话内容，请先输入你的需求。")
                 continue
             prompt = build_spec_prompt(transcript)
             spinner = Spinner("正在生成需求 JSON").start()
@@ -546,21 +545,20 @@ def main() -> None:
             spec = normalize_spec(extract_json(resp.text or ""))
             out = save_spec(spec, output=output_path)
             print(f"需求 JSON 已保存: {out}")
-            if cmd == "/done":
-                if not args.no_auto_execute:
-                    exec_cmd = [sys.executable, str(EXECUTE_REQUIREMENTS_SCRIPT), "--spec-json", str(out)]
-                    if args.execute_dry_run:
-                        exec_cmd.append("--dry-run")
-                    if args.execute_verbose:
-                        exec_cmd.append("--verbose")
-                    if args.continue_on_error:
-                        exec_cmd.append("--continue-on-error")
-                    print("\n开始自动执行需求 ...")
-                    proc = subprocess.run(exec_cmd, check=False)
-                    if proc.returncode != 0:
-                        raise SystemExit(proc.returncode)
-                return
-            continue
+            if not args.no_auto_execute:
+                exec_cmd = [sys.executable, str(EXECUTE_REQUIREMENTS_SCRIPT), "--spec-json", str(out)]
+                if args.execute_dry_run:
+                    exec_cmd.append("--dry-run")
+                if args.execute_verbose:
+                    exec_cmd.append("--verbose")
+                if args.continue_on_error:
+                    exec_cmd.append("--continue-on-error")
+                print("\n开始自动执行需求 ...")
+                proc = subprocess.run(exec_cmd, check=False)
+                if proc.returncode != 0:
+                    raise SystemExit(proc.returncode)
+            return
+        continue
 
         transcript.append({"role": "user", "text": cmd})
         turns += 1
