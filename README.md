@@ -2,6 +2,20 @@
 
 基于 Gemini + 明道云 OpenAPI 的自动化应用搭建工具。通过自然语言描述需求，自动完成从建应用、建表、配视图、造数据到生成机器人的全流程。
 
+---
+
+## 常用 Git 命令
+
+```bash
+# 保存所有改动并推送到 GitHub
+git add -A && git commit -m "说明改了什么" && git push origin main
+
+# 拉取最新代码
+git pull origin main
+```
+
+---
+
 ## 快速开始
 
 ### 0. 安装 Git (如已安装请跳过)
