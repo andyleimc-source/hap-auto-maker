@@ -67,31 +67,7 @@ python3 scripts/hap/agent_collect_requirements.py
 
 在终端与 Gemini 多轮对话，描述你想要的应用，输入 `/done` 后自动生成需求规格并开始搭建。
 
-### 一键全流程
-
-```bash
-python3 scripts/hap/run_app_to_video.py
-```
-
-完整流程（共 13 步）：
-
-| Step | 步骤 | 说明 |
-|------|------|------|
-| 1 | create_app | 创建应用 + 授权 + 应用图标 |
-| 2 | worksheets | 规划并创建工作表 |
-| 3 | roles | 规划并创建应用角色 |
-| 4 | worksheet_icon | 匹配并更新工作表图标 |
-| 5 | layout | 规划并应用字段布局 |
-| 6 | views | 规划并创建视图 |
-| 7 | view_filters | 规划并应用视图筛选 |
-| 8 | delete_default_views | 删除默认「全部」视图 |
-| 9 | navi | 设置应用导航风格 |
-| 10 | mock_data | 执行造数流水线 |
-| 11 | chatbots | 创建对话机器人 |
-| 12 | workflows_plan | 规划工作流（Gemini） |
-| 13 | workflows_execute | 创建工作流 |
-
-单独执行某步骤：
+### 单独执行某步骤：
 
 ```bash
 python3 scripts/hap/execute_requirements.py \

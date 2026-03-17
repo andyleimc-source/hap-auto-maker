@@ -131,9 +131,6 @@ def main():
     print()
     print("   # 对话式创建应用（推荐）")
     print("   python3 scripts/hap/agent_collect_requirements.py")
-    print()
-    print("   # 一键全流程")
-    print("   python3 scripts/hap/run_app_to_video.py")
     print("=" * 60)
 
 
