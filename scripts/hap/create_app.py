@@ -210,6 +210,13 @@ def pick_random_safe_color() -> str:
 
 
 def main() -> None:
+    auth = load_org_auth()
+    app_key = auth["app_key"]
+    secret_key = auth["secret_key"]
+    default_project_id = auth.get("project_id", "")
+    default_owner_id = auth.get("owner_id", "")
+    default_group_ids = auth.get("group_ids", "")
+
     parser = argparse.ArgumentParser(description="创建 HAP 应用")
     parser.add_argument("--name", required=True, help="应用名称")
     parser.add_argument("--icon", default="", help="图标名称，如 0_lego")
@@ -221,13 +228,6 @@ def main() -> None:
     )
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="API 基础地址")
     parser.add_argument("--dry-run", action="store_true", help="只打印请求体，不发送")
-    auth = load_org_auth()
-    app_key = auth["app_key"]
-    secret_key = auth["secret_key"]
-    default_project_id = auth.get("project_id", "")
-    default_owner_id = auth.get("owner_id", "")
-    default_group_ids = auth.get("group_ids", "")
-
     parser.add_argument("--project-id", default=default_project_id, help="HAP 组织Id")
     parser.add_argument("--owner-id", default=default_owner_id, help="应用拥有者 HAP 账号Id")
     args = parser.parse_args()
