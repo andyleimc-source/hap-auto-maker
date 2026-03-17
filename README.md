@@ -11,8 +11,8 @@
 ### 1. 下载并初始化项目
 
 ```bash
-git clone https://github.com/andyleimc-source/hap_auto_release.git
-cd hap_auto_release
+git clone https://github.com/andyleimc-source/auto_hap.git
+cd auto_hap
 python3 setup.py
 ```
 
@@ -79,7 +79,7 @@ python3 setup.py
 如果你之前已经克隆过项目，进入项目目录后拉取最新代码即可：
 
 ```bash
-cd hap_auto_release
+cd auto_hap
 git pull
 ```
 
@@ -89,17 +89,29 @@ git pull
 python3 setup.py --force
 ```
 
-> 💡 **提示**：忘了项目在哪？运行 `find ~ -name "hap_auto_release" -type d` 找一下。
+> 💡 **提示**：忘了项目在哪？运行 `find ~ -name "auto_hap" -type d` 找一下。
 
 ## 使用方式
 
-### 对话式创建应用（推荐）
+### 对话式一键创建应用 (推荐)
+
+```bash
+# 默认运行（不录屏）
+python3 scripts/run_app_pipeline.py
+
+# 开启录屏
+python3 scripts/run_app_pipeline.py --add-recording
+```
+
+在终端与 Gemini 多轮对话，描述你想要的应用，输入「开始运行」后自动生成需求规格并开始搭建全流程（创建应用、建表、视图、造数、机器人、工作流）。
+
+### 分步对话 (进阶)
 
 ```bash
 python3 scripts/hap/agent_collect_requirements.py
 ```
 
-在终端与 Gemini 多轮对话，描述你想要的应用，输入 `/done` 后自动生成需求规格并开始搭建。
+在终端与 Gemini 对话，输入「开始运行」后自动生成需求规格并开始执行。
 
 ### 单独执行某步骤：
 
