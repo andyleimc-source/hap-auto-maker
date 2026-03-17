@@ -15,6 +15,7 @@ import importlib.util
 import json
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -388,6 +389,64 @@ worksheetId：{worksheet_id}
 """.strip()
 
 
+def build_batch_filter_prompt(app_name: str, worksheets_data: List[dict]) -> str:
+    """一次 Prompt 规划所有工作表视图筛选。worksheets_data: [{worksheetId, worksheetName, targetViews, fields}]"""
+    count = len(worksheets_data)
+    ws_section = json.dumps(worksheets_data, ensure_ascii=False, indent=2)
+    return f"""你是明道云视图配置专家。请分析以下 {count} 个工作表中支持的视图，是否需要配置筛选列表和快速筛选。
+
+应用：{app_name}
+工作表列表：
+{ws_section}
+
+只输出 JSON：
+{{
+  "worksheets": [
+    {{
+      "worksheetId": "工作表ID",
+      "viewPlans": [
+        {{
+          "viewId": "视图ID",
+          "viewName": "视图名",
+          "needNavGroup": true,
+          "navGroup": [{{"controlId": "字段ID", "isAsc": true, "navshow": "0"}}],
+          "navAdvancedSetting": {{
+            "shownullitem": "1",
+            "navsorts": "",
+            "customnavs": "",
+            "navlayer": "",
+            "navshow": "0",
+            "navfilters": "[]",
+            "usenav": "0",
+            "navsearchtype": "0"
+          }},
+          "navEditAdKeys": ["shownullitem","navsorts","customnavs","navlayer","navshow","navfilters","usenav","navsearchtype","navsearchcontrol"],
+          "needFastFilters": true,
+          "fastFilters": [
+            {{"controlId": "字段ID", "filterType": 1}},
+            {{"controlId": "字段ID", "filterType": 2, "advancedSetting": {{"direction":"2","allowitem":"1"}}}}
+          ],
+          "fastAdvancedSetting": {{"enablebtn": "1"}},
+          "fastEditAdKeys": ["enablebtn"],
+          "reason": "原因"
+        }}
+      ]
+    }}
+  ]
+}}
+
+规则：
+1) 仅针对每个工作表 targetViews 中的视图输出 viewPlans。
+2) controlId 必须来自对应工作表的 fields 列表。
+3) 只有 表格视图(type=0) 和 画廊视图(type=3) 允许配置 navGroup。
+4) navGroup（筛选列表）只能使用"下拉字段"（isDropdown=true）。
+5) 若存在多个下拉字段，优先选择业务管理意义最强的（如状态/类型/分类/等级/阶段等）。
+6) 仅表格/看板/画廊视图允许配置 fastFilters；日历视图不要配置。
+7) 若不需要某功能，对应 needXxx=false，数组留空。
+8) fastFilters 建议 1-4 个。
+9) 输出必须为合法 JSON，worksheets 数组长度必须等于 {count}。""".strip()
+
+
 def generate_with_retry(client: genai.Client, model: str, prompt: str, retries: int) -> Any:
     last_exc: Optional[Exception] = None
     for attempt in range(1, max(1, retries) + 1):
@@ -621,21 +680,62 @@ def main() -> None:
         print(f"\n处理应用: {app['appName']} ({app['appId']})")
         ws_list = fetch_worksheets(app["appKey"], app["sign"])
         app_out = {"appId": app["appId"], "appName": app["appName"], "worksheets": []}
-        for ws in ws_list:
+
+        # 筛选出有目标视图的工作表，并行拉取字段
+        ws_with_targets = [
+            ws for ws in ws_list
+            if view_targets_by_app.get(app["appId"], {}).get(ws["workSheetId"])
+        ]
+        if not ws_with_targets:
+            output_apps.append(app_out)
+            continue
+
+        def _fetch_controls(ws):
+            detail = fetch_controls(ws["workSheetId"], web_auth)
+            return ws, [simplify_field(f) for f in detail.get("fields", []) if isinstance(f, dict)]
+
+        with ThreadPoolExecutor(max_workers=min(8, len(ws_with_targets))) as ex:
+            ws_fields_pairs = list(ex.map(_fetch_controls, ws_with_targets))
+
+        # 组装批量 Prompt 数据
+        worksheets_batch = []
+        ws_meta = {}  # ws_id -> (fields, field_map, views_by_id, target_views)
+        for ws, fields in ws_fields_pairs:
             ws_id = ws["workSheetId"]
-            detail = fetch_controls(ws_id, web_auth)
-            fields = [simplify_field(f) for f in detail.get("fields", []) if isinstance(f, dict)]
-            target_views = view_targets_by_app.get(app["appId"], {}).get(ws_id, [])
-            if not target_views:
-                continue
-
-            prompt = build_prompt(app["appName"], ws["workSheetName"], ws_id, target_views, fields)
-            resp = generate_with_retry(client, args.model, prompt, args.gemini_retries)
-            parsed = extract_json(resp.text or "")
-            view_plans_raw = parsed.get("viewPlans") if isinstance(parsed.get("viewPlans"), list) else []
-
+            target_views = view_targets_by_app[app["appId"]][ws_id]
             field_map = {str(f.get("id", "")).strip(): f for f in fields if str(f.get("id", "")).strip()}
             views_by_id = {str(v.get("viewId", "")).strip(): v for v in target_views}
+            ws_meta[ws_id] = (fields, field_map, views_by_id, target_views)
+            worksheets_batch.append({
+                "worksheetId": ws_id,
+                "worksheetName": ws["workSheetName"],
+                "targetViews": target_views,
+                "fields": fields,
+            })
+            total_views += len(target_views)
+            print(f"- {ws['workSheetName']}：目标视图 {len(target_views)} 个")
+
+        # 一次 Gemini 批量调用
+        print(f"  调用 Gemini 批量规划 {len(worksheets_batch)} 个工作表筛选...")
+        batch_prompt = build_batch_filter_prompt(app["appName"], worksheets_batch)
+        resp = generate_with_retry(client, args.model, batch_prompt, args.gemini_retries)
+        parsed = extract_json(resp.text or "")
+
+        # 解析批量结果
+        ws_plans_map: Dict[str, List] = {}
+        for ws_item in parsed.get("worksheets", []):
+            if not isinstance(ws_item, dict):
+                continue
+            ws_id = str(ws_item.get("worksheetId", "")).strip()
+            if ws_id:
+                ws_plans_map[ws_id] = ws_item.get("viewPlans", [])
+
+        # 逐工作表 normalize 并写入结果
+        for ws_data in worksheets_batch:
+            ws_id = ws_data["worksheetId"]
+            ws_name = ws_data["worksheetName"]
+            fields, field_map, views_by_id, target_views = ws_meta[ws_id]
+            view_plans_raw = ws_plans_map.get(ws_id, [])
             view_plans = []
             for item in view_plans_raw:
                 norm = normalize_view_plan(item, field_map, fields, views_by_id)
@@ -643,33 +743,26 @@ def main() -> None:
                     view_plans.append(norm)
             for vid, v in views_by_id.items():
                 if not any(p.get("viewId") == vid for p in view_plans):
-                    view_plans.append(
-                        {
-                            "viewId": vid,
-                            "viewName": v.get("viewName", ""),
-                            "viewType": v.get("viewType", ""),
-                            "needNavGroup": False,
-                            "navGroup": [],
-                            "navAdvancedSetting": {},
-                            "navEditAdKeys": [],
-                            "needFastFilters": False,
-                            "fastFilters": [],
-                            "fastAdvancedSetting": {"enablebtn": "0"},
-                            "fastEditAdKeys": ["enablebtn"],
-                            "reason": "Gemini 未返回该视图，默认不改",
-                        }
-                    )
-
-            app_out["worksheets"].append(
-                {
-                    "worksheetId": ws_id,
-                    "worksheetName": ws["workSheetName"],
-                    "targetViews": target_views,
-                    "viewPlans": view_plans,
-                }
-            )
-            total_views += len(target_views)
-            print(f"- {ws['workSheetName']}：目标视图 {len(target_views)} 个")
+                    view_plans.append({
+                        "viewId": vid,
+                        "viewName": v.get("viewName", ""),
+                        "viewType": v.get("viewType", ""),
+                        "needNavGroup": False,
+                        "navGroup": [],
+                        "navAdvancedSetting": {},
+                        "navEditAdKeys": [],
+                        "needFastFilters": False,
+                        "fastFilters": [],
+                        "fastAdvancedSetting": {"enablebtn": "0"},
+                        "fastEditAdKeys": ["enablebtn"],
+                        "reason": "Gemini 未返回该视图，默认不改",
+                    })
+            app_out["worksheets"].append({
+                "worksheetId": ws_id,
+                "worksheetName": ws_name,
+                "targetViews": target_views,
+                "viewPlans": view_plans,
+            })
         output_apps.append(app_out)
 
     payload = {

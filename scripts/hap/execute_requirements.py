@@ -58,6 +58,7 @@ SCRIPT_PIPELINE_WORKFLOWS = WORKFLOW_SCRIPTS_DIR / "pipeline_workflows.py"
 SCRIPT_EXECUTE_WORKFLOWS = WORKFLOW_SCRIPTS_DIR / "execute_workflow_plan.py"
 SCRIPT_DELETE_DEFAULT_VIEWS = resolve_script("delete_default_views.py")
 SCRIPT_PIPELINE_PAGES = resolve_script("pipeline_pages.py")
+SCRIPT_PLAN_PAGES = resolve_script("plan_pages_gemini.py")
 VIEW_PLAN_DIR = OUTPUT_ROOT / "view_plans"
 VIEW_CREATE_RESULT_DIR = OUTPUT_ROOT / "view_create_results"
 TABLEVIEW_FILTER_PLAN_DIR = OUTPUT_ROOT / "tableview_filter_plans"
@@ -186,7 +187,7 @@ def normalize_spec(raw: dict) -> dict:
 
     delete_default_views = spec.get("delete_default_views") if isinstance(spec.get("delete_default_views"), dict) else {}
     delete_default_views.setdefault("enabled", True)
-    delete_default_views.setdefault("refresh_auth", True)
+    delete_default_views.setdefault("refresh_auth", False)  # pipeline 启动时 auth 已新鲜，无需重复刷新
     spec["delete_default_views"] = delete_default_views
 
     pages = spec.get("pages") if isinstance(spec.get("pages"), dict) else {}
@@ -671,11 +672,13 @@ def main() -> None:
     # Wave 4: Step 4/5/6/9/10/11 并行
     #   全部使用 Gemini，受 GEMINI_SEMAPHORE 约束
     # ──────────────────────────────────────────────
-    print(f"\n── Wave 4: icon / 布局 / 视图 / 造数 / 机器人 / 工作流规划 / 删除默认视图（并行） ─── 总计 {time.time()-pipeline_start:.0f}s", flush=True)
+    print(f"\n── Wave 4: icon / 布局 / 视图 / 造数 / 机器人 / 工作流规划 / 删除默认视图 / 规划图表页（并行） ─── 总计 {time.time()-pipeline_start:.0f}s", flush=True)
 
     view_plan_output = (VIEW_PLAN_DIR / f"view_plan_{app_id}_{now_ts()}.json").resolve()
     view_create_output = (VIEW_CREATE_RESULT_DIR / f"view_create_result_{app_id}_{now_ts()}.json").resolve()
     workflow_plan_output = (WORKFLOW_OUTPUT_DIR / f"pipeline_workflows_{app_id}_{now_ts()}.json").resolve()
+    page_plan_output = (OUTPUT_ROOT / "page_plans" / f"page_plan_{app_id}_pipeline.json").resolve()
+    ok_14a = False
 
     def run_step_4() -> bool:
         if not ws["icon_update"].get("enabled", True):
@@ -809,14 +812,43 @@ def main() -> None:
             cmd13.append("--dry-run")
         return execute_step(13, "delete_default_views", "删除[全部]默认视图", cmd13, uses_gemini=False)
 
-    with ThreadPoolExecutor(max_workers=7) as pool:
-        f4  = pool.submit(run_step_4)
-        f5  = pool.submit(run_step_5)
-        f6  = pool.submit(run_step_6)
-        f9  = pool.submit(run_step_9)
-        f10 = pool.submit(run_step_10)
-        f11 = pool.submit(run_step_11)
-        f13 = pool.submit(run_step_13)
+    def run_step_14a() -> bool:
+        nonlocal ok_14a
+        if not pages_cfg.get("enabled", True):
+            ok_14a = False
+            return True
+        cmd14a = [
+            sys.executable, str(SCRIPT_PLAN_PAGES),
+            "--app-id", app_id,
+            "--model", str(pages_cfg.get("model", DEFAULT_MODEL)),
+            "--auth-config", str(CONFIG_WEB_AUTH),
+            "--output", str(page_plan_output),
+        ]
+        elapsed_total = time.time() - pipeline_start
+        print(f"  ▶ Step 14a/ 14  规划统计图表页（Gemini）  [{elapsed_total:.0f}s]", flush=True)
+        step_start = time.time()
+        with GEMINI_SEMAPHORE:
+            result = run_cmd(cmd14a, dry_run=execution_dry_run, verbose=args.verbose)
+        ok_14a = int(result.get("returncode", 1)) == 0
+        duration = time.time() - step_start
+        elapsed_total = time.time() - pipeline_start
+        status = "✓" if ok_14a else "✗"
+        print(f"  {status} Step 14a/ 14  规划统计图表页（Gemini）  ({duration:.0f}s, 总计 {elapsed_total:.0f}s)", flush=True)
+        if not ok_14a:
+            err = str(result.get("stderr", "") or "").strip()
+            if err:
+                print(err[-600:], flush=True)
+        return ok_14a
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        f4   = pool.submit(run_step_4)
+        f5   = pool.submit(run_step_5)
+        f6   = pool.submit(run_step_6)
+        f9   = pool.submit(run_step_9)
+        f10  = pool.submit(run_step_10)
+        f11  = pool.submit(run_step_11)
+        f13  = pool.submit(run_step_13)
+        f14a = pool.submit(run_step_14a)
         ok4  = f4.result()
         ok5  = f5.result()
         ok6  = f6.result()
@@ -824,6 +856,7 @@ def main() -> None:
         ok10 = f10.result()
         ok11 = f11.result()
         f13.result()
+        f14a.result()
 
     if fail_fast and has_failure():
         out = save_report()
@@ -900,17 +933,22 @@ def main() -> None:
     def run_step_14() -> bool:
         if not pages_cfg.get("enabled", True):
             with steps_lock:
-                steps_report.append({"step_id": 14, "step_key": "pages", "title": "规划并创建统计图表页", "skipped": True, "reason": "disabled_by_spec"})
+                steps_report.append({"step_id": 14, "step_key": "pages", "title": "创建统计图表页", "skipped": True, "reason": "disabled_by_spec"})
             return True
         cmd14 = [
             sys.executable, str(SCRIPT_PIPELINE_PAGES),
             "--app-id", app_id,
             "--model", str(pages_cfg.get("model", DEFAULT_MODEL)),
             "--auth-config", str(CONFIG_WEB_AUTH),
+            "--plan-output", str(page_plan_output),
         ]
+        # Wave 4 已完成 Gemini 规划（14a），直接跳过规划阶段
+        if ok_14a:
+            cmd14.append("--skip-plan")
         if execution_dry_run:
             cmd14.append("--dry-run")
-        return execute_step(14, "pages", "规划并创建统计图表页", cmd14, uses_gemini=True)
+        title = "创建统计图表页" if ok_14a else "规划并创建统计图表页"
+        return execute_step(14, "pages", title, cmd14, uses_gemini=not ok_14a)
 
     run_step_14()
 

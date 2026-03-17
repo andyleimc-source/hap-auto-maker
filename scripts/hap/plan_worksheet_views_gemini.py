@@ -13,6 +13,7 @@ import importlib.util
 import json
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -415,6 +416,126 @@ def normalize_views(raw_views: Any, fields: List[dict]) -> List[dict]:
     return out
 
 
+def build_batch_prompt(app_name: str, worksheets_data: List[dict]) -> str:
+    """一次 Prompt 规划所有工作表视图。worksheets_data: [{worksheetId, worksheetName, fields}]"""
+    count = len(worksheets_data)
+    ws_section = json.dumps(worksheets_data, ensure_ascii=False, indent=2)
+    return f"""你是明道云视图规划助手。请基于以下 {count} 个工作表的名称和字段，为每个工作表规划"建议创建的视图列表"。
+
+应用名：{app_name}
+工作表列表：
+{ws_section}
+
+仅输出 JSON（不要 markdown）：
+{{
+  "worksheets": [
+    {{
+      "worksheetId": "工作表ID",
+      "worksheetName": "工作表名",
+      "views": [
+        {{
+          "name": "视图名",
+          "viewType": "0|1|3|4",
+          "reason": "建议理由",
+          "displayControls": ["字段ID1", "字段ID2"],
+          "coverCid": "封面字段ID或空字符串",
+          "viewControl": "看板分组字段ID或空字符串",
+          "advancedSetting": {{}},
+          "postCreateUpdates": [
+            {{
+              "editAttrs": ["advancedSetting"],
+              "editAdKeys": ["calendarcids"],
+              "advancedSetting": {{}}
+            }}
+          ]
+        }}
+      ]
+    }}
+  ]
+}}
+
+规则：
+1) 仅允许 viewType=0(表格),1(看板),3(画廊),4(日历)。
+2) 每个工作表视图数量 1-4 个，必须实用，不要凑数。
+3) displayControls / coverCid / viewControl 必须来自对应工作表提供的字段ID；无法确定时填空或省略。
+4) 日历视图必须在 postCreateUpdates.advancedSetting 中提供 calendarcids（字符串化 JSON），格式必须为：'[{{"begin":"日期字段ID","end":"结束日期字段ID或空字符串"}}]'。begin 为开始日期字段ID（必填），end 为结束日期字段ID（无则填空字符串）。
+5) 看板视图建议设置 viewControl 为单选字段ID（若存在）。
+6) 若字段不支持某视图，请不要输出该视图类型。
+7) 输出必须是可解析 JSON，worksheets 数组长度必须等于 {count}。""".strip()
+
+
+def plan_views_batch(
+    client: genai.Client,
+    model: str,
+    app_name: str,
+    ws_with_fields: List[tuple],
+) -> List[dict]:
+    """一次 Gemini 调用规划所有工作表视图。返回 [{worksheetId, worksheetName, fields, views}]"""
+    ws_data_for_prompt = [
+        {"worksheetId": ws["workSheetId"], "worksheetName": ws["workSheetName"], "fields": fields}
+        for ws, fields in ws_with_fields
+    ]
+    base_prompt = build_batch_prompt(app_name, ws_data_for_prompt)
+    validation_retries = 3
+    last_error: Optional[str] = None
+    ws_views_map: Dict[str, List] = {}
+
+    for val_attempt in range(1, validation_retries + 1):
+        prompt = base_prompt
+        if last_error:
+            prompt = base_prompt + f"\n\n# 上次输出验证失败（第 {val_attempt - 1} 次）\n错误信息：{last_error}\n请仔细检查并修正后重新输出。"
+        last_exc: Optional[Exception] = None
+        resp = None
+        for attempt in range(1, 4):
+            try:
+                resp = client.models.generate_content(
+                    model=model,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0.2),
+                )
+                break
+            except Exception as exc:
+                last_exc = exc
+                if attempt >= 3:
+                    raise
+                wait_seconds = attempt * 2
+                print(f"Gemini 批量规划视图请求失败 attempt={attempt}/3，{wait_seconds} 秒后重试: {exc}")
+                time.sleep(wait_seconds)
+        if resp is None:
+            raise last_exc or RuntimeError("Gemini 批量规划视图失败")
+        parsed = extract_json(resp.text or "")
+        try:
+            ws_list = parsed.get("worksheets", [])
+            if not isinstance(ws_list, list) or len(ws_list) == 0:
+                raise ValueError(f"返回的 worksheets 不是有效数组（得到 {type(ws_list).__name__}）")
+            ws_views_map = {}
+            for ws_item in ws_list:
+                if not isinstance(ws_item, dict):
+                    continue
+                ws_id = str(ws_item.get("worksheetId", "")).strip()
+                if ws_id:
+                    ws_views_map[ws_id] = ws_item.get("views", [])
+            break
+        except Exception as exc:
+            last_error = str(exc)
+            if val_attempt >= validation_retries:
+                raise
+            print(f"[验证重试 {val_attempt}/{validation_retries}] 批量视图解析失败，重新生成：{exc}")
+
+    results = []
+    for ws, fields in ws_with_fields:
+        ws_id = ws["workSheetId"]
+        views_raw = ws_views_map.get(ws_id, [])
+        views = normalize_views(views_raw, fields)
+        results.append({
+            "worksheetId": ws_id,
+            "worksheetName": ws["workSheetName"],
+            "fields": fields,
+            "views": views,
+        })
+    return results
+
+
 def plan_views_for_worksheet(client: genai.Client, model: str, app_name: str, worksheet: dict, fields: List[dict]) -> dict:
     base_prompt = build_prompt(app_name, worksheet["workSheetName"], worksheet["workSheetId"], fields)
     validation_retries = 3
@@ -525,14 +646,23 @@ def main() -> None:
         print(f"\n处理应用: {app['appName']} ({app['appId']})")
         worksheets = fetch_worksheets(app["appKey"], app["sign"])
         app_out = {"appId": app["appId"], "appName": app["appName"], "worksheets": []}
-        for ws in worksheets:
+        if not worksheets:
+            result_apps.append(app_out)
+            continue
+        # 并行拉取所有工作表字段
+        def _fetch_ws(ws):
             schema = fetch_controls(ws["workSheetId"], web_auth)
-            fields = [simplify_field(f) for f in schema.get("fields", []) if isinstance(f, dict)]
-            planned = plan_views_for_worksheet(client, args.model, app["appName"], ws, fields)
+            return ws, [simplify_field(f) for f in schema.get("fields", []) if isinstance(f, dict)]
+        with ThreadPoolExecutor(max_workers=min(8, len(worksheets))) as ex:
+            ws_with_fields = list(ex.map(_fetch_ws, worksheets))
+        # 一次 Gemini 批量调用
+        print(f"  调用 Gemini 批量规划 {len(worksheets)} 个工作表视图...")
+        planned_list = plan_views_batch(client, args.model, app["appName"], ws_with_fields)
+        for planned in planned_list:
             app_out["worksheets"].append(planned)
             total_worksheets += 1
             total_views += len(planned.get("views", []))
-            print(f"- {ws['workSheetName']}：规划 {len(planned.get('views', []))} 个视图")
+            print(f"  - {planned['worksheetName']}：规划 {len(planned.get('views', []))} 个视图")
         result_apps.append(app_out)
 
     payload = {
