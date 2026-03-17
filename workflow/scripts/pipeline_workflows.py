@@ -42,6 +42,10 @@ import requests
 sys.path.insert(0, str(Path(__file__).parent))
 from workflow_io import persist
 
+# 引入共享的健壮 JSON 解析工具
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts" / "hap"))
+from gemini_utils import parse_gemini_json  # type: ignore
+
 
 # ── 常量 ───────────────────────────────────────────────────────────────────────
 
@@ -103,7 +107,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--app-auth-json", default="", help="应用授权 JSON 文件路径（留空则自动匹配）。")
     parser.add_argument("--gemini-key", default="", help="Gemini API Key。")
     parser.add_argument("--model", default="gemini-2.5-flash", help="Gemini 模型（默认：gemini-2.5-flash）。")
-    parser.add_argument("--thinking", default="high", choices=["none", "low", "medium", "high"], help="主规划调用的推理深度（默认：high）。none=不开启，适合快速/低成本调用。")
+    parser.add_argument("--thinking", default="none", choices=["none", "low", "medium", "high"], help="主规划调用的推理深度（默认：none）。Prompt 已内置业务分析，无需额外推理；high thinking 反而易导致 JSON 输出破损。")
     parser.add_argument("--skip-analysis", action="store_true", help="跳过业务关系预分析（直接规划，速度更快但质量略低）。")
     parser.add_argument("--output", default="", help="自定义输出路径（默认写入 output/pipeline_workflows_latest.json）。")
     return parser.parse_args()
@@ -628,32 +632,22 @@ _THINKING_BUDGETS: dict[str, int] = {
     "high": 24576,
 }
 
+_MAX_JSON_RETRIES = 2  # JSON 解析失败时最多重试 Gemini 调用的次数
 
-def call_gemini(prompt: str, api_key: str, model: str, thinking: str = "high") -> dict:
-    """
-    调用 Gemini API 生成工作流规划 JSON。
 
-    参数：
-      thinking: "none"|"low"|"medium"|"high"
-        - none：不开启推理，速度最快，适合 flash-lite 等轻量模型
-        - low/medium/high：开启 thinking，适合 pro 模型复杂规划任务
-        文档建议不修改 temperature（保持默认 1.0）。
-    """
-    # 优先使用新版 google-genai，回退到旧版 google-generativeai
+def _call_gemini_once(prompt: str, api_key: str, model: str, thinking: str) -> str:
+    """发起一次 Gemini API 调用，返回原始文本。"""
     try:
-        from google import genai as _genai          # type: ignore  # pip install google-genai
+        from google import genai as _genai          # type: ignore
         from google.genai import types as _gtypes   # type: ignore
 
         client = _genai.Client(api_key=api_key)
-
-        # 构建 GenerateContentConfig
         config_kwargs: dict = {"response_mime_type": "application/json"}
         if thinking != "none":
             budget = _THINKING_BUDGETS.get(thinking, 8192)
             try:
                 config_kwargs["thinking_config"] = _gtypes.ThinkingConfig(thinking_budget=budget)
             except (AttributeError, TypeError):
-                # 旧版 google-genai 不支持 thinking_config，忽略
                 pass
 
         print(f"[gemini] 正在生成工作流规划（google-genai，model={model}，thinking={thinking}）...", file=sys.stderr)
@@ -662,11 +656,11 @@ def call_gemini(prompt: str, api_key: str, model: str, thinking: str = "high") -
             contents=prompt,
             config=_gtypes.GenerateContentConfig(**config_kwargs),
         )
-        raw = resp.text
+        return resp.text
 
     except ImportError:
         try:
-            import google.generativeai as genai_old  # type: ignore  # pip install google-generativeai
+            import google.generativeai as genai_old  # type: ignore
         except ImportError:
             raise RuntimeError(
                 "缺少依赖，请安装：\n  pip install google-genai\n  或  pip install google-generativeai"
@@ -679,10 +673,37 @@ def call_gemini(prompt: str, api_key: str, model: str, thinking: str = "high") -
             ),
         )
         print(f"[gemini] 正在生成工作流规划（google-generativeai，model={model}）...", file=sys.stderr)
-        raw = gm.generate_content(prompt).text
+        return gm.generate_content(prompt).text
 
-    print(f"[gemini] 响应长度 {len(raw)} 字符", file=sys.stderr)
-    return json.loads(raw)
+
+def call_gemini(prompt: str, api_key: str, model: str, thinking: str = "none") -> dict:
+    """
+    调用 Gemini API 生成工作流规划 JSON。
+    JSON 解析失败时自动重试（最多 _MAX_JSON_RETRIES 次）。
+
+    参数：
+      thinking: "none"|"low"|"medium"|"high"
+        - none：不开启推理，速度最快，适合 flash-lite 等轻量模型
+        - low/medium/high：开启 thinking，适合 pro 模型复杂规划任务
+    """
+    last_exc: Exception = RuntimeError("未知错误")
+    for attempt in range(1, _MAX_JSON_RETRIES + 2):  # 1 次正常 + 最多 _MAX_JSON_RETRIES 次重试
+        try:
+            raw = _call_gemini_once(prompt, api_key, model, thinking)
+            print(f"[gemini] 响应长度 {len(raw)} 字符", file=sys.stderr)
+            return parse_gemini_json(raw)
+        except (ValueError, Exception) as exc:
+            last_exc = exc
+            if attempt <= _MAX_JSON_RETRIES:
+                wait = attempt * 5
+                print(
+                    f"[gemini] JSON 解析失败（第 {attempt} 次），{wait}s 后重试：{exc}",
+                    file=sys.stderr,
+                )
+                time.sleep(wait)
+            else:
+                break
+    raise last_exc
 
 
 # ── 主流程 ─────────────────────────────────────────────────────────────────────

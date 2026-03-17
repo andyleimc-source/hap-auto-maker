@@ -18,6 +18,7 @@ import re
 import subprocess
 import sys
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, Future, wait, FIRST_COMPLETED
 from datetime import datetime
 from pathlib import Path
@@ -178,7 +179,7 @@ def normalize_spec(raw: dict) -> dict:
     workflows = spec.get("workflows") if isinstance(spec.get("workflows"), dict) else {}
     workflows.setdefault("enabled", True)
     workflows.setdefault("model", "gemini-2.5-flash")
-    workflows.setdefault("thinking", "high")
+    workflows.setdefault("thinking", "none")
     workflows.setdefault("no_publish", False)
     workflows.setdefault("skip_analysis", False)
     spec["workflows"] = workflows
@@ -781,7 +782,7 @@ def main() -> None:
             sys.executable, str(SCRIPT_PIPELINE_WORKFLOWS),
             "--relation-id", app_id,
             "--model", str(workflows.get("model", "gemini-2.5-flash")),
-            "--thinking", str(workflows.get("thinking", "high")),
+            "--thinking", str(workflows.get("thinking", "none")),
             "--output", str(workflow_plan_output),
         ]
         if workflows.get("skip_analysis", False):
