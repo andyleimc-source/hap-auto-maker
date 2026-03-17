@@ -327,6 +327,19 @@ def main() -> None:
         planned_view_count = int(view_summary.get("plannedViewCount", 0) or 0)
         created_view_count = int(view_summary.get("createdViewCount", 0) or 0)
 
+        # 工作流数量
+        workflow_count = 0
+        if artifact_sources.get("workflow_execute_result_json"):
+            try:
+                wf_result = load_json(Path(artifact_sources["workflow_execute_result_json"]))
+                workflow_count = (
+                    len(wf_result.get("workflows", []))
+                    or len(wf_result.get("results", []))
+                    or int(wf_result.get("total", 0) or 0)
+                )
+            except Exception:
+                pass
+
         mock_data_enabled = bool(artifact_sources.get("mock_data_run_json"))
         if mock_data_enabled and isinstance(mock_data_run, dict):
             mock_data_summary = (
@@ -388,11 +401,26 @@ def main() -> None:
 
         write_json(run_dir / "tech_log.json", tech_log)
         if summary_md:
-            print(f"\n运行完成，产物目录: {run_dir}")
-            print(f"  摘要: {run_dir / 'summary.md'}")
-            print(f"  技术日志: {run_dir / 'tech_log.json'}")
+            stats = tech_log.get("aggregate_stats", {})
+            dur = int(stats.get("total_duration_seconds", 0))
+            mins, secs = divmod(dur, 60)
+            dur_str = f"{mins}m {secs}s" if mins else f"{secs}s"
+            w = 52
+            def row(label, value):
+                content = f"  {label:<10}{value}"
+                return f"│{content:<{w}}│"
+            print("\n┌" + "─" * w + "┐")
+            title = f"  ✓ 运行完成  {app_name}"
+            print(f"│{title:<{w}}│")
+            print("├" + "─" * w + "┤")
+            print(row("应用地址", app_entry_url))
+            print(row("工作表", f"{stats.get('worksheet_count', 0)} 张"))
+            print(row("视图", f"{stats.get('created_view_count', 0)} 个"))
+            print(row("工作流", f"{workflow_count} 个"))
+            print(row("总耗时", dur_str))
+            print("└" + "─" * w + "┘")
         elif tech_log.get("error_context"):
-            print(f"\n运行失败，排障日志已写入: {run_dir / 'tech_log.json'}")
+            print(f"\n✗ 运行失败，排障日志: {run_dir / 'tech_log.json'}")
 
 
 if __name__ == "__main__":

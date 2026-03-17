@@ -360,6 +360,8 @@ def main() -> None:
     global GEMINI_SEMAPHORE
     GEMINI_SEMAPHORE = threading.Semaphore(args.gemini_concurrency)
 
+    pipeline_start = time.time()
+
     ensure_scripts_exist()
     spec_path = Path(args.spec_json).expanduser().resolve()
     spec = normalize_spec(load_json(spec_path))
@@ -460,9 +462,10 @@ def main() -> None:
                 steps_report.append({"step_id": step_id, "step_key": step_key, "title": title, "skipped": True, "reason": "disabled_by_spec"})
             return True
 
-        print(f"\n== Step {step_id}: {title} ==")
-        print("命令:", " ".join(cmd))
+        elapsed_total = time.time() - pipeline_start
+        print(f"  ▶ Step {step_id:2d} / 14  {title}  [{elapsed_total:.0f}s]", flush=True)
         started = now_iso()
+        step_start = time.time()
 
         if uses_gemini:
             with GEMINI_SEMAPHORE:
@@ -472,6 +475,14 @@ def main() -> None:
 
         ended = now_iso()
         ok = int(result.get("returncode", 1)) == 0
+        duration = time.time() - step_start
+        elapsed_total = time.time() - pipeline_start
+        status = "✓" if ok else "✗"
+        print(f"  {status} Step {step_id:2d} / 14  {title}  ({duration:.0f}s, 总计 {elapsed_total:.0f}s)", flush=True)
+        if not ok:
+            err = str(result.get("stderr", "") or "").strip()
+            if err:
+                print(err[-600:], flush=True)
         step_item = {
             "step_id": step_id,
             "step_key": step_key,
@@ -481,13 +492,6 @@ def main() -> None:
             "ok": ok,
             "result": result,
         }
-        if (not execution_dry_run) and (not args.verbose):
-            out = str(result.get("stdout", "") or "").strip()
-            err = str(result.get("stderr", "") or "").strip()
-            if out:
-                print(out[-1200:])
-            if err:
-                print(err[-800:])
         with steps_lock:
             steps_report.append(step_item)
         return ok
@@ -558,9 +562,7 @@ def main() -> None:
     # Wave 2: Step 2a + Step 3 + Step 8 并行
     #   2a 用 Gemini（pro），3 用 Gemini（flash），8 不用 Gemini
     # ──────────────────────────────────────────────
-    print("\n" + "=" * 50)
-    print("== Wave 2: 工作表规划 / 角色 / 导航风格（并行）==")
-    print("=" * 50)
+    print(f"\n── Wave 2: 工作表规划 / 角色 / 导航风格（并行） ─── 总计 {time.time()-pipeline_start:.0f}s", flush=True)
 
     plan_output = (WORKSHEET_PLAN_DIR / f"worksheet_plan_{app_id}_{now_ts()}.json").resolve()
 
@@ -636,9 +638,7 @@ def main() -> None:
     # ──────────────────────────────────────────────
     # Wave 3: Step 2b 创建工作表（依赖 2a，串行）
     # ──────────────────────────────────────────────
-    print("\n" + "=" * 50)
-    print("== Wave 3: 创建工作表 ==")
-    print("=" * 50)
+    print(f"\n── Wave 3: 创建工作表 ─── 总计 {time.time()-pipeline_start:.0f}s", flush=True)
 
     worksheet_create_result_path: Optional[str] = None
     if ws.get("enabled", True) and ok2a:
@@ -669,9 +669,7 @@ def main() -> None:
     # Wave 4: Step 4/5/6/9/10/11 并行
     #   全部使用 Gemini，受 GEMINI_SEMAPHORE 约束
     # ──────────────────────────────────────────────
-    print("\n" + "=" * 50)
-    print("== Wave 4: icon / 布局 / 视图 / 造数 / chatbot / 工作流规划（并行）==")
-    print("=" * 50)
+    print(f"\n── Wave 4: icon / 布局 / 视图 / 造数 / 机器人 / 工作流规划 / 删除默认视图（并行） ─── 总计 {time.time()-pipeline_start:.0f}s", flush=True)
 
     view_plan_output = (VIEW_PLAN_DIR / f"view_plan_{app_id}_{now_ts()}.json").resolve()
     view_create_output = (VIEW_CREATE_RESULT_DIR / f"view_create_result_{app_id}_{now_ts()}.json").resolve()
@@ -831,9 +829,7 @@ def main() -> None:
     # ──────────────────────────────────────────────
     # Wave 5: Step 7（依赖 6）+ Step 12（依赖 11）并行
     # ──────────────────────────────────────────────
-    print("\n" + "=" * 50)
-    print("== Wave 5: 视图筛选 / 创建工作流（并行）==")
-    print("=" * 50)
+    print(f"\n── Wave 5: 视图筛选 / 创建工作流（并行） ─── 总计 {time.time()-pipeline_start:.0f}s", flush=True)
 
     filter_plan_output = (TABLEVIEW_FILTER_PLAN_DIR / f"tableview_filter_plan_{app_id}_{now_ts()}.json").resolve()
     filter_apply_output = (
@@ -895,9 +891,7 @@ def main() -> None:
     # ──────────────────────────────────────────────
     # Wave 6: Step 14 统计图表 Pages（依赖 Wave 4/5 完成）
     # ──────────────────────────────────────────────
-    print("\n" + "=" * 50)
-    print("== Wave 6: 统计图表 Pages ==")
-    print("=" * 50)
+    print(f"\n── Wave 6: 统计图表 Pages ─── 总计 {time.time()-pipeline_start:.0f}s", flush=True)
 
     def run_step_14() -> bool:
         if not pages_cfg.get("enabled", True):
@@ -919,11 +913,8 @@ def main() -> None:
     out = save_report()
     report = build_report()
 
-    print("\n执行完成（摘要）")
-    print(f"- dry-run: {execution_dry_run}")
-    print(f"- 成功/跳过: {report['summary']['ok_or_skipped']}")
-    print(f"- 失败: {report['summary']['failed']}")
-    print(f"- 报告文件: {out}")
+    total_elapsed = time.time() - pipeline_start
+    print(f"\n── 执行完成  成功/跳过: {report['summary']['ok_or_skipped']}  失败: {report['summary']['failed']}  总耗时: {total_elapsed:.0f}s", flush=True)
 
 
 if __name__ == "__main__":
