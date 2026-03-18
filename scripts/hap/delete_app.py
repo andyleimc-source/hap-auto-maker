@@ -245,6 +245,13 @@ def main() -> None:
         action="store_true",
         help="删除 app_authorizations 下记录到的所有应用，并按规则清理 outputs 下 JSON 文件",
     )
+    parser.add_argument(
+        "--delete-all-exclusion",
+        nargs="?",
+        const="PROMPT",
+        default=None,
+        help="删除所有应用时的排除序号，如 1,2。如果不带具体序号，则显示列表后交互输入。",
+    )
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="API 基础地址")
     parser.add_argument("--dry-run", action="store_true", help="只打印请求体，不发送")
 
@@ -257,6 +264,9 @@ def main() -> None:
     parser.add_argument("--project-id", default=default_project_id, help="HAP 组织Id")
     parser.add_argument("--operator-id", default=default_operator_id, help="操作者 HAP 账号Id")
     args = parser.parse_args()
+
+    if args.delete_all_exclusion is not None:
+        args.delete_all = True
 
     if args.delete_all and args.app_id:
         raise ValueError("--delete-all 与 --app-id 只能二选一")
@@ -287,24 +297,27 @@ def main() -> None:
             print("未发现可删除应用，流程结束。")
             return
 
-        choice = input("请输入 Y(全删) / 序号(如 1,2,3 或 1.2.3 仅删除所选)。其他任意输入将取消: ").strip()
-        choice_lower = choice.lower()
-
         selected_apps: List[Dict[str, object]]
         files_to_delete: List[str]
         delete_all_json = False
-        if choice_lower == "y":
-            selected_apps = apps
-            files_to_delete = collect_all_json_files(OUTPUT_ROOT)
-            delete_all_json = True
-        else:
+
+        if args.delete_all_exclusion is not None:
+            if args.delete_all_exclusion == "PROMPT":
+                exclusion_value = input("请输入要【保留(不删除)】的序号(如 1,2,3 或 1.2.3)。其他输入将取消: ").strip()
+                if not exclusion_value:
+                    print("未输入任何内容，已取消删除。")
+                    return
+            else:
+                exclusion_value = args.delete_all_exclusion
+
             try:
-                selected_indexes = parse_selection(choice, len(apps))
-            except ValueError:
-                print("已取消删除。")
+                excluded_indexes = parse_selection(exclusion_value, len(apps))
+            except ValueError as e:
+                print(f"解析排除序号失败: {e}")
                 return
+            selected_indexes = [i for i in range(1, len(apps) + 1) if i not in excluded_indexes]
             if not selected_indexes:
-                print("未选择任何序号，已取消删除。")
+                print("所有应用都已被排除，未选中任何待删除应用。")
                 return
             selected_apps = [apps[i - 1] for i in selected_indexes]
             files_set = set()
@@ -312,6 +325,30 @@ def main() -> None:
                 for fp in app.get("files", []):
                     files_set.add(fp)
             files_to_delete = sorted(files_set)
+            print(f"自动执行删除，共排除了序号: {excluded_indexes}")
+        else:
+            choice = input("请输入 Y(全删) / 序号(如 1,2,3 或 1.2.3 仅删除所选)。其他任意输入将取消: ").strip()
+            choice_lower = choice.lower()
+
+            if choice_lower == "y":
+                selected_apps = apps
+                files_to_delete = collect_all_json_files(OUTPUT_ROOT)
+                delete_all_json = True
+            else:
+                try:
+                    selected_indexes = parse_selection(choice, len(apps))
+                except ValueError:
+                    print("已取消删除。")
+                    return
+                if not selected_indexes:
+                    print("未选择任何序号，已取消删除。")
+                    return
+                selected_apps = [apps[i - 1] for i in selected_indexes]
+                files_set = set()
+                for app in selected_apps:
+                    for fp in app.get("files", []):
+                        files_set.add(fp)
+                files_to_delete = sorted(files_set)
 
         results = []
         for app in selected_apps:
