@@ -96,6 +96,17 @@ def write_json(path: Path, payload: dict) -> None:
 
 
 def _load_org_group_ids() -> str:
+    """获取 group_ids，优先级：.env.local > organization_auth.json"""
+    # 1. 尝试从 .env.local (local_config.py) 加载
+    try:
+        from local_config import load_local_group_id
+        local_gid = load_local_group_id()
+        if local_gid:
+            return local_gid
+    except Exception:
+        pass
+
+    # 2. 回退到 organization_auth.json
     try:
         data = load_json(CONFIG_ORG)
         return str(data.get("group_ids", "")).strip()

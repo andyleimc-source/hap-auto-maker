@@ -13,7 +13,11 @@ HAP Auto 一键初始化脚本
 import json
 import subprocess
 import sys
+import hashlib
+import time
 from pathlib import Path
+
+import requests
 
 BASE_DIR = Path(__file__).resolve().parent
 CRED_DIR = BASE_DIR / "config" / "credentials"
@@ -143,6 +147,26 @@ def step_org_auth(force=False):
 
     results = {}
     for key, name, hint, sensitive, required in fields:
+        # 自动尝试获取 project_id
+        if key == "project_id" and results.get("app_key") and results.get("secret_key"):
+            if not existing.get("project_id") or existing.get("project_id") in _PLACEHOLDERS:
+                print("\n   🔍 正在尝试根据 app_key 和 secret_key 自动获取 project_id...")
+                try:
+                    ak = results["app_key"]
+                    sk = results["secret_key"]
+                    ts = int(time.time())
+                    sign = hashlib.md5(f"{ak}{sk}{ts}".encode("utf-8")).hexdigest()
+                    url = "https://api.mingdao.com/v3/app"
+                    resp = requests.get(url, headers={"HAP-Appkey": ak, "HAP-Sign": sign}, params={"timestamp": ts}, timeout=10)
+                    data = resp.json()
+                    if data.get("success"):
+                        pid = data.get("data", {}).get("organizationId")
+                        if pid:
+                            print(f"   ✅ 自动探测到 project_id: {pid}")
+                            existing["project_id"] = pid
+                except Exception as e:
+                    print(f"   ⚠️  自动获取 project_id 失败: {e}")
+
         if hint:
             print(f"\n   {hint}")
         old_val = existing.get(key, "")
