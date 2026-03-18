@@ -13,11 +13,7 @@ HAP Auto 一键初始化脚本
 import json
 import subprocess
 import sys
-import hashlib
-import time
 from pathlib import Path
-
-import requests
 
 BASE_DIR = Path(__file__).resolve().parent
 CRED_DIR = BASE_DIR / "config" / "credentials"
@@ -102,17 +98,13 @@ def step_gemini(force=False):
     else:
         key = ask("   请输入你的 Gemini API Key")
 
-    if old_model and old_model not in _PLACEHOLDERS:
-        model = ask(f"   默认模型 [当前: {old_model}, 回车保留]", default=old_model)
-    else:
-        model = ask("   请输入默认模型 (建议 gemini-2.5-pro)", default="gemini-2.5-pro")
+    model = ask("   请输入 Gemini 模型名称", default=old_model)
 
-    if not key:
-        print("   ⚠️  API Key 未填写，稍后可手动编辑 config/credentials/gemini_auth.json")
-        key = "YOUR_GEMINI_API_KEY"
-    
-    config_data = {"api_key": key, "model": model}
-    dst.write_text(json.dumps(config_data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    data = {
+        "api_key": key or "YOUR_GEMINI_API_KEY",
+        "model": model or "YOUR_GEMINI_MODEL"
+    }
+    dst.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"   ✔ 已写入 {dst.name}")
 
 
@@ -147,26 +139,6 @@ def step_org_auth(force=False):
 
     results = {}
     for key, name, hint, sensitive, required in fields:
-        # 自动尝试获取 project_id
-        if key == "project_id" and results.get("app_key") and results.get("secret_key"):
-            if not existing.get("project_id") or existing.get("project_id") in _PLACEHOLDERS:
-                print("\n   🔍 正在尝试根据 app_key 和 secret_key 自动获取 project_id...")
-                try:
-                    ak = results["app_key"]
-                    sk = results["secret_key"]
-                    ts = int(time.time())
-                    sign = hashlib.md5(f"{ak}{sk}{ts}".encode("utf-8")).hexdigest()
-                    url = "https://api.mingdao.com/v3/app"
-                    resp = requests.get(url, headers={"HAP-Appkey": ak, "HAP-Sign": sign}, params={"timestamp": ts}, timeout=10)
-                    data = resp.json()
-                    if data.get("success"):
-                        pid = data.get("data", {}).get("organizationId")
-                        if pid:
-                            print(f"   ✅ 自动探测到 project_id: {pid}")
-                            existing["project_id"] = pid
-                except Exception as e:
-                    print(f"   ⚠️  自动获取 project_id 失败: {e}")
-
         if hint:
             print(f"\n   {hint}")
         old_val = existing.get(key, "")
@@ -303,210 +275,103 @@ def step_group_init(force=False):
         from local_config import load_local_group_id, save_local_group_id
         from list_groups import get_groups
     except ImportError:
-        print("\n   ⚠️  无法加载分组管理脚本，跳过分组配置。")
+        print("   ⚠️  无法加载 HAP 基础模块，跳过分组初始化。")
         return
 
-    current_gid = load_local_group_id()
-    if current_gid and not force:
+    # 如果已经有选中分组且不是强制模式，跳过
+    current_group_id = load_local_group_id()
+    if current_group_id and not force:
         return
 
-    print("\n📂 [5/5] 配置默认应用分组")
-    print("   新创建的应用将默认归属于此分组。")
+    print("\n📁 [Extra] 初始化应用工作分组")
+    groups = get_groups()
+    if not groups:
+        print("   ⚠️  未能获取到分组列表，请检查网络或授权。")
+        return
 
-    try:
-        groups = get_groups()
-        
-        if not groups:
-            print("   目前组织下没有任何应用分组，请创建一个。")
-            from create_group import create_group
-            create_group()
-            return
+    print("   请选择一个应用分组：")
+    for i, g in enumerate(groups, 1):
+        mark = " (当前)" if g["groupId"] == current_group_id else ""
+        print(f"      {i}. {g['name']}{mark}")
+    print(f"      n. 新建分组")
 
-        print("\n   请选择一个现有的分组，或输入 '+' 创建新分组：")
-        for i, g in enumerate(groups, 1):
-            name = g.get("name", "Unknown")
-            gid = g.get("groupId", "Unknown")
-            status = "⭐ (当前)" if gid == current_gid else ""
-            print(f"      {i}. {name:<20} ({gid}) {status}")
-        print("      +. 创建新分组")
-
-        choice = ask("   请选择", default="1" if not current_gid else "").strip()
-        
-        if choice == "+":
-            from create_group import create_group
-            create_group()
-        elif choice.isdigit():
+    choice = ask("   请输入序号", default="1")
+    if choice.lower() == "n":
+        new_name = ask("   请输入新分组名称")
+        if new_name:
+            try:
+                from create_group import create_group
+                new_group = create_group(new_name)
+                save_local_group_id(new_group["groupId"])
+                print(f"   ✔ 分组已创建并选中: {new_name}")
+            except Exception as e:
+                print(f"   ❌ 创建分组失败: {e}")
+    else:
+        try:
             idx = int(choice) - 1
             if 0 <= idx < len(groups):
-                selected = groups[idx]
-                save_local_group_id(selected["groupId"])
-                print(f"   ✅ 已将 '{selected['name']}' 设为默认分组。")
-            else:
-                print("   ❌ 编号无效，跳过分组设置。")
-        else:
-            print("   已保留当前设置。")
-
-    except Exception as e:
-        print(f"   ❌ 分组配置失败: {e}")
+                save_local_group_id(groups[idx]["groupId"])
+                print(f"   ✔ 已选中分组: {groups[idx]['name']}")
+        except (ValueError, IndexError):
+            print("   ⚠️  无效选择。")
 
 
-def manage_groups_menu():
-    """二级菜单：应用分组管理"""
-    sys.path.append(str(BASE_DIR / "scripts" / "hap"))
-    from local_config import load_local_group_id
-    
-    while True:
-        current_gid = load_local_group_id()
-        print("\n" + "="*40)
-        print("  📂 应用分组管理")
-        print(f"  当前默认分组 ID: {current_gid or '(未设置)'}")
-        print("-" * 40)
-        print("  1. 切换默认分组 (从组织已有列表中选择)")
-        print("  2. 新建应用分组 (在 HAP 中创建并设为默认)")
-        print("  3. 彻底删除分组 (从 HAP 组织中移除)")
-        print("  0. 返回上级菜单")
-        print("="*40)
-        
-        choice = input("请选择操作 [0-3]: ").strip()
-        
-        if choice == "1":
-            subprocess.run([sys.executable, str(BASE_DIR / "scripts" / "hap" / "switch_group.py")])
-        elif choice == "2":
-            subprocess.run([sys.executable, str(BASE_DIR / "scripts" / "hap" / "create_group.py")])
-        elif choice == "3":
-            subprocess.run([sys.executable, str(BASE_DIR / "scripts" / "hap" / "delete_group.py")])
-        elif choice == "0" or not choice:
-            break
-        else:
-            print("❌ 无效选择。")
+def show_config():
+    """查看当前所有配置内容"""
+    conf = _read_all_config()
+    print("\n" + "=" * 60)
+    print("📋 HAP Auto 当前完整配置")
+    print("=" * 60)
+
+    print("\n[Gemini AI]")
+    print(f"   API Key:   {_mask(conf['gemini_api_key'])}")
+    print(f"   Model:     {conf['gemini_model']}")
+
+    print("\n[HAP Organization]")
+    print(f"   AppKey:    {_mask(conf['app_key'])}")
+    print(f"   SecretKey: {_mask(conf['secret_key'])}")
+    print(f"   ProjectID: {conf['project_id']}")
+    print(f"   OwnerID:   {conf['owner_id']}")
+    print(f"   GroupIDs:  {conf['group_ids'] or '(未指定)'}")
+
+    print("\n[Login Credentials]")
+    print(f"   Account:   {conf['account']}")
+    print(f"   Password:  {_mask(conf['password'])}")
+
+    print("\n" + "=" * 60)
+    print("提示：如需修改，请运行 python3 setup.py --force")
+    print("=" * 60 + "\n")
 
 
 def main():
-    import argparse
-    parser = argparse.ArgumentParser(description="HAP Auto 一键初始化脚本")
-    parser.add_argument("--force", action="store_true", help="强制重新初始化（保留已有值，回车跳过，输入新值覆盖）")
-    parser.add_argument("--show", action="store_true", help="查看并修改已有配置（选择性修改，无需全部重新输入）")
-    args = parser.parse_args()
+    # 参数处理
+    force = "--force" in sys.argv
+    show = "--show" in sys.argv
 
-    if args.show:
-        while True:
-            cfg = _read_all_config()
-            # 临时展示本地分组 ID
-            sys.path.append(str(BASE_DIR / "scripts" / "hap"))
-            try:
-                from local_config import load_local_group_id
-                local_gid = load_local_group_id()
-            except:
-                local_gid = "Error"
-
-            items = [
-                ("account",        "登录账号",         False),
-                ("password",       "登录密码",         True),
-                ("gemini_api_key", "Gemini API Key",  True),
-                ("gemini_model",   "Gemini 模型",     False),
-                ("app_key",        "app_key",         True),
-                ("secret_key",     "secret_key",      True),
-                ("project_id",     "project_id",      False),
-                ("owner_id",       "owner_id",        False),
-            ]
-
-            print("\n📋 当前核心配置：")
-            print("-" * 50)
-            for idx, (key, name, sensitive) in enumerate(items, 1):
-                val = cfg.get(key, "")
-                display = _display_val(val, sensitive)
-                print(f"  {idx}. {name:18s} = {display}")
-            
-            print(f"  G. [应用分组管理]   (当前默认 ID: {local_gid or '(未设置)'})")
-            print("-" * 50)
-            print("\n输入编号修改核心配置（多个用逗号隔开），输入 'G' 进入分组管理，直接回车退出：")
-            
-            choice = input("修改项: ").strip().upper()
-            if not choice:
-                break
-            
-            if choice == "G":
-                manage_groups_menu()
-                continue
-
-            # 处理数字选择逻辑（复用原有逻辑但精简）
-            indices = set()
-            for part in choice.replace("，", ",").split(","):
-                part = part.strip()
-                if part.isdigit():
-                    indices.add(int(part))
-            
-            if indices:
-                # 这里为了简洁，直接调用修改逻辑（实际可进一步重构优化）
-                # 为了不破坏原有逻辑，我们调用一个修改函数
-                _update_config_by_indices(cfg, items, indices)
-            
+    if show:
+        show_config()
         return
 
-    print("=" * 60)
-    print("  HAP Auto — 一键初始化")
-    if args.force:
-        print("  （--force 模式：显示当前配置，直接回车保留，输入新值覆盖）")
-    print("=" * 60)
+    print("\n" + "🚀" * 20)
+    print("  HAP Auto 自动化环境初始化")
+    print("🚀" * 20)
 
-    step_install_deps()
-    step_gemini(force=args.force)
-    step_org_auth(force=args.force)
-    step_login_and_auth(force=args.force)
-    step_group_init(force=args.force)
+    try:
+        step_install_deps()
+        step_gemini(force)
+        step_org_auth(force)
+        step_login_and_auth(force)
+        step_group_init(force)
 
-    print("\n" + "=" * 60)
-    print("🎉 初始化完成！现在可以运行：")
-    print()
-    print("   # 对话式创建应用（推荐）")
-    print("   python3 scripts/run_app_pipeline.py")
-    print("=" * 60)
+        print("\n" + "✨" * 20)
+        print("  所有配置已完成！")
+        print("  现在你可以运行主流程：python3 scripts/run_app_pipeline.py")
+        print("✨" * 20 + "\n")
 
-def _update_config_by_indices(cfg, items, indices):
-    """提取的配置更新逻辑"""
-    changed_gemini = False
-    changed_org = False
-    changed_login = False
-
-    for idx, (key, name, sensitive) in enumerate(items, 1):
-        if idx not in indices:
-            continue
-        old_val = cfg.get(key, "")
-        default = old_val if old_val and old_val not in _PLACEHOLDERS else ""
-        
-        if sensitive and default:
-            raw_input = ask(f"  {name} [{_mask(default)}]")
-            if raw_input == "" and old_val and old_val not in _PLACEHOLDERS:
-                new_val = old_val
-            else:
-                new_val = raw_input
-        else:
-            new_val = ask(f"  {name}", default=default)
-        
-        cfg[key] = new_val
-        if key in ("gemini_api_key", "gemini_model"): changed_gemini = True
-        elif key in ("account", "password"): changed_login = True
-        else: changed_org = True
-
-    if changed_gemini:
-        data = {"api_key": cfg.get("gemini_api_key") or "YOUR_GEMINI_API_KEY", "model": cfg.get("gemini_model") or "gemini-2.5-pro"}
-        (CRED_DIR / "gemini_auth.json").write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    if changed_org:
-        data = {
-            "app_key": cfg.get("app_key") or "YOUR_HAP_APP_KEY",
-            "secret_key": cfg.get("secret_key") or "YOUR_HAP_SECRET_KEY",
-            "project_id": cfg.get("project_id") or "YOUR_HAP_PROJECT_ID",
-            "owner_id": cfg.get("owner_id") or "YOUR_HAP_OWNER_ID",
-            "group_ids": cfg.get("group_ids") or ""
-        }
-        (CRED_DIR / "organization_auth.json").write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    if changed_login:
-        account = cfg.get("account") or "your-account@example.com"
-        password = cfg.get("password") or "your-password"
-        (CRED_DIR / "login_credentials.py").write_text(
-            f'LOGIN_ACCOUNT = "{account}"\nLOGIN_PASSWORD = "{password}"\nLOGIN_URL = "https://www.mingdao.com/login"\n', encoding="utf-8"
-        )
-    print("\n✅ 配置已更新。")
+    except KeyboardInterrupt:
+        print("\n\n👋 已由用户取消。")
+    except Exception as e:
+        print(f"\n\n❌ 初始化过程中发生错误: {e}")
 
 
 if __name__ == "__main__":
