@@ -75,7 +75,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--refresh-auth",
         action="store_true",
-        help="Refresh auth via scripts/refresh_auth.py before creating workflow.",
+        help="Refresh auth via scripts/auth/refresh_auth.py before creating workflow.",
     )
     parser.add_argument(
         "--refresh-on-fail",

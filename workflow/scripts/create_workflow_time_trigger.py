@@ -88,7 +88,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--refresh-auth",
         action="store_true",
-        help="创建前先刷新 auth（调用 scripts/refresh_auth.py）。",
+        help="创建前先刷新 auth（调用 scripts/auth/refresh_auth.py）。",
     )
     parser.add_argument(
         "--refresh-on-fail",

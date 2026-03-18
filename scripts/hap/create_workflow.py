@@ -72,7 +72,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--refresh-auth",
         action="store_true",
-        help="Refresh auth via scripts/refresh_auth.py before creating workflow.",
+        help="Refresh auth via scripts/auth/refresh_auth.py before creating workflow.",
     )
     parser.add_argument(
         "--refresh-on-fail",
@@ -143,7 +143,7 @@ def load_auth_from_auth_config(path: Path) -> tuple[str, str, str]:
 
 def refresh_auth(headless: bool) -> None:
     project_root = Path(__file__).resolve().parents[2]
-    refresh_script = project_root / "scripts" / "refresh_auth.py"
+    refresh_script = project_root / "scripts" / "auth" / "refresh_auth.py"
     if not refresh_script.exists():
         raise RuntimeError(f"Refresh script not found: {refresh_script}")
     cmd = [sys.executable, str(refresh_script)]

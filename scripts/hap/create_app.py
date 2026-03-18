@@ -22,7 +22,6 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 CONFIG_PATH = BASE_DIR / "config" / "credentials" / "organization_auth.json"
 DEFAULT_BASE_URL = "https://api.mingdao.com"
 ENDPOINT = "/v1/open/app/create"
-DEFAULT_GROUP_IDS = ""  # 从 organization_auth.json 读取，不再硬编码
 ICON_JSON_PATH = BASE_DIR / "data" / "assets" / "icons" / "icon.json"
 COLOR_POLICY_PATH = BASE_DIR / "config" / "policies" / "theme_color_policy.json"
 DEFAULT_COLOR_POOL = [
@@ -215,7 +214,7 @@ def main() -> None:
     secret_key = auth["secret_key"]
     default_project_id = auth.get("project_id", "")
     default_owner_id = auth.get("owner_id", "")
-    default_group_ids = auth.get("group_ids", "")
+    default_group_ids = auth.get("group_ids", "").strip()
 
     parser = argparse.ArgumentParser(description="创建 HAP 应用")
     parser.add_argument("--name", required=True, help="应用名称")
@@ -223,8 +222,8 @@ def main() -> None:
     parser.add_argument("--color", default="", help="主题颜色，如 #00bcd4")
     parser.add_argument(
         "--group-ids",
-        default=default_group_ids or DEFAULT_GROUP_IDS,
-        help="应用分组Id列表，逗号分隔",
+        default=default_group_ids if default_group_ids else None,
+        help="应用分组Id列表，逗号分隔 (可选，默认不指定分组)",
     )
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="API 基础地址")
     parser.add_argument("--dry-run", action="store_true", help="只打印请求体，不发送")
@@ -251,6 +250,9 @@ def main() -> None:
     timestamp_ms = int(time.time() * 1000)
     sign = build_sign(app_key, secret_key, timestamp_ms)
 
+    # 处理 group_ids: 只有非空且不是占位符时才加入 payload
+    group_ids_list = parse_group_ids(args.group_ids)
+    
     payload = {
         "appKey": app_key,
         "sign": sign,
@@ -260,7 +262,7 @@ def main() -> None:
         "icon": icon_value,
         "color": color_value,
         "ownerId": args.owner_id,
-        "groupIds": parse_group_ids(args.group_ids) or None,
+        "groupIds": group_ids_list if group_ids_list else None,
     }
     # remove None fields
     payload = {k: v for k, v in payload.items() if v is not None}

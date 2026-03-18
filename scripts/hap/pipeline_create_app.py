@@ -29,7 +29,6 @@ GET_AUTH_SCRIPT = resolve_script("get_app_authorize.py")
 LIST_APPS_SCRIPT = resolve_script("list_apps_for_icon.py")
 MATCH_APPS_ICON_SCRIPT = resolve_script("match_app_icons_gemini.py")
 UPDATE_APPS_ICON_SCRIPT = resolve_script("update_app_icons.py")
-DEFAULT_GROUP_IDS = ""  # 从 organization_auth.json 读取，不再硬编码
 
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 APP_AUTH_DIR = OUTPUT_ROOT / "app_authorizations"
@@ -119,7 +118,7 @@ def main() -> None:
     parser.add_argument("--name", required=True, help="应用名称")
     parser.add_argument("--icon", default="", help="图标名称，如 0_lego")
     parser.add_argument("--color", default="", help="主题颜色，如 #00bcd4")
-    parser.add_argument("--group-ids", default=DEFAULT_GROUP_IDS, help="应用分组Id列表，逗号分隔")
+    parser.add_argument("--group-ids", default=None, help="应用分组Id列表，逗号分隔")
     parser.add_argument("--base-url", default="", help="API 基础地址（默认沿用子脚本默认值）")
     parser.add_argument("--project-id", default="", help="HAP 组织Id")
     parser.add_argument("--owner-id", default="", help="应用拥有者 HAP 账号Id")

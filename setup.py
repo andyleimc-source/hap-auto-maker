@@ -46,7 +46,12 @@ def ask(prompt: str, default: str = "") -> str:
     val = input(f"{prompt}{hint}: ").strip()
     # 清理 copy-paste 常见的多余字符：引号、零宽空格等
     val = val.strip("\"'""''").strip("\u200b\u200c\u200d\ufeff").strip()
-    return val or default
+    
+    # 特殊规则：输入 '-' 表示清除该项内容（设为空字符串）
+    if val == "-":
+        return ""
+    
+    return val if val else default
 
 
 def _load_json_safe(path: Path) -> dict:
@@ -147,7 +152,12 @@ def step_org_auth(force=False):
         default = old_val if old_val and old_val not in _PLACEHOLDERS else ""
         if default and sensitive:
             # 敏感字段显示脱敏值作为提示
-            results[key] = ask(f"   {name} [{_mask(default)}]") or default
+            raw_input = ask(f"   {name} [{_mask(default)}]")
+            # 同 show_config: 空字符串回车保留，'-' 清空
+            if raw_input == "" and old_val and old_val not in _PLACEHOLDERS:
+                results[key] = old_val 
+            else:
+                results[key] = raw_input
         else:
             results[key] = ask(f"   {name}", default=default)
 
@@ -221,13 +231,13 @@ def step_login_and_auth(force=False):
         print("\n🔄 自动登录并获取认证信息...")
         try:
             subprocess.check_call(
-                [sys.executable, str(BASE_DIR / "scripts" / "refresh_auth.py"), "--headless"],
+                [sys.executable, str(BASE_DIR / "scripts" / "auth" / "refresh_auth.py"), "--headless"],
                 cwd=str(BASE_DIR),
             )
         except subprocess.CalledProcessError:
-            print("   ⚠️  自动登录失败，请稍后手动运行: python3 scripts/refresh_auth.py")
+            print("   ⚠️  自动登录失败，请稍后手动运行: python3 scripts/auth/refresh_auth.py")
     else:
-        print("   ⚠️  未填写账号密码，跳过自动认证。稍后手动运行: python3 scripts/refresh_auth.py")
+        print("   ⚠️  未填写账号密码，跳过自动认证。稍后手动运行: python3 scripts/auth/refresh_auth.py")
 
 
 def _read_all_config() -> dict:
@@ -289,6 +299,7 @@ def show_config():
         print(f"  {idx}. {name:18s} = {display}")
     print("-" * 50)
     print("\n输入要修改的编号（多个用逗号分隔，如 1,3,5），直接回车跳过：")
+    print("（提示：输入 '-' 可将该项清空）")
     choice = input("修改项: ").strip()
     if not choice:
         print("未修改任何配置。")
@@ -314,10 +325,22 @@ def show_config():
             continue
         old_val = cfg.get(key, "")
         default = old_val if old_val and old_val not in _PLACEHOLDERS else ""
+        
+        # 统一使用 ask 且手动处理其内部逻辑，以准确支持 '-' 清空
         if sensitive and default:
-            new_val = ask(f"  {name} [{_mask(default)}]") or default
+            raw_input = ask(f"  {name} [{_mask(default)}]")
+            # ask 内部对于 '-' 会返回 ""，但我们这里需要区分：
+            # 1. 输入为空 -> 保留默认 (ask 返回 default)
+            # 2. 输入为 '-' -> 清空 (ask 返回 "")
+            # 但 ask 此时其实拿不到 default 参数，所以若输入为空它会返回 ""。
+            # 为了严谨，我们直接在 callsite 判定：
+            if raw_input == "" and old_val and old_val not in _PLACEHOLDERS:
+                new_val = old_val # 回车保留
+            else:
+                new_val = raw_input # 可能是新值也可能是清空后的 ""
         else:
             new_val = ask(f"  {name}", default=default)
+        
         cfg[key] = new_val
 
         if key in ("gemini_api_key", "gemini_model"):
@@ -368,11 +391,11 @@ def show_config():
             print("\n🔄 自动登录并获取认证信息...")
             try:
                 subprocess.check_call(
-                    [sys.executable, str(BASE_DIR / "scripts" / "refresh_auth.py"), "--headless"],
+                    [sys.executable, str(BASE_DIR / "scripts" / "auth" / "refresh_auth.py"), "--headless"],
                     cwd=str(BASE_DIR),
                 )
             except subprocess.CalledProcessError:
-                print("   ⚠️  自动登录失败，请稍后手动运行: python3 scripts/refresh_auth.py")
+                print("   ⚠️  自动登录失败，请稍后手动运行: python3 scripts/auth/refresh_auth.py")
 
     print("\n✅ 配置修改完成！")
 

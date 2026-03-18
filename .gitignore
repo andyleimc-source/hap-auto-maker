@@ -1,13 +1,17 @@
 .DS_Store
 __pycache__/
 *.pyc
-# 本地敏感配置（不入库）
-config/credentials/auth_config.py
-config/credentials/login_credentials.py
-config/credentials/gemini_auth.json
-config/credentials/organization_auth.json
-# record 文件夹整体忽略
-record/
+
+# 虚拟环境 (Virtual Environments)
+.venv/
+env/
+venv/
+.venv-chatbot/
+
+# 本地敏感配置 (Credentials & Config)
+config/credentials/*.py
+config/credentials/*.json
+!config/credentials/__init__.py
 
 # 环境变量文件
 .env
@@ -20,6 +24,8 @@ record/
 *.p12
 *.pfx
 
+# 模拟录屏与缓存
+record/
 cache/
 
 # Claude Code 本地设置
@@ -28,8 +34,15 @@ cache/
 # HAR 抓包文件（可能含认证信息）
 *.har
 
-# 运行日志
+# 运行数据与日志
 data/logs/
-
-# 运行产出物（无需入库）
 data/outputs/
+data/temp/
+
+# PRD (如果不想同步到 Git)
+PRD.md
+
+# 系统文件
+.DS_Store
+Thumbs.db
+

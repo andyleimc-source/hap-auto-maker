@@ -149,7 +149,7 @@ python3 scripts/hap/clear_app_records.py
 python3 scripts/hap/delete_app.py --delete-all
 
 # 认证过期时重新登录
-python3 scripts/refresh_auth.py
+python3 scripts/auth/refresh_auth.py
 ```
 
 ## 目录结构
@@ -173,8 +173,8 @@ hap_auto/
 网页登录态会过期（通常 Cookie 有效期几天到几周不等）。遇到 `401 / 403` 错误时，运行：
 
 ```bash
-python3 scripts/refresh_auth.py            # 有头模式（可看到浏览器）
-python3 scripts/refresh_auth.py --headless # 无头模式
+python3 scripts/auth/refresh_auth.py            # 有头模式（可看到浏览器）
+python3 scripts/auth/refresh_auth.py --headless # 无头模式
 ```
 
 会自动重新登录并更新 `config/credentials/auth_config.py`。
@@ -184,7 +184,7 @@ python3 scripts/refresh_auth.py --headless # 无头模式
 | 问题 | 解决方案 |
 |------|----------|
 | Gemini 调用失败 | 检查 `config/credentials/gemini_auth.json` 中的 API Key 是否有效 |
-| 页面接口 401/403 | 运行 `python3 scripts/refresh_auth.py` 刷新登录态 |
+| 页面接口 401/403 | 运行 `python3 scripts/auth/refresh_auth.py` 刷新登录态 |
 | OpenAPI "签名不合法" | 检查 `organization_auth.json` 中的 `app_key`、`secret_key`、`project_id`、`owner_id` 是否都已正确填写（不能是占位符），运行 `python3 setup.py --force` 重新配置 |
 | OpenAPI 调用失败 | 检查 `config/credentials/organization_auth.json` 中的密钥 |
 | 选择不到应用 | 先运行创建应用流程，生成 `data/outputs/app_authorizations/` 下的授权文件 |
