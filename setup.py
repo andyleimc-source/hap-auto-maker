@@ -88,7 +88,6 @@ def step_gemini(force=False):
     old_model = existing.get("model", "gemini-2.5-pro")
 
     if dst.exists() and not force:
-        print(f"\n✅ {dst.name} 已存在，跳过（需重新配置请加上 --force）")
         return
 
     print("\n🔑 [2/4] 配置 Gemini API & Model")
@@ -119,7 +118,6 @@ def step_org_auth(force=False):
     existing = _load_json_safe(dst)
 
     if dst.exists() and not force:
-        print(f"\n✅ {dst.name} 已存在，跳过（需重新配置请加上 --force）")
         return
 
     print("\n🏢 [3/4] 配置 HAP 组织级密钥")
@@ -178,7 +176,6 @@ def step_login_and_auth(force=False):
     auth_dst = CRED_DIR / "auth_config.py"
 
     if login_dst.exists() and auth_dst.exists() and not force:
-        print(f"\n✅ login_credentials.py & auth_config.py 已存在，跳过（需重新配置请加上 --force）")
         return
 
     print("\n🔐 [4/4] 配置明道云登录账号")
@@ -429,7 +426,7 @@ def main():
     print("🎉 初始化完成！现在可以运行：")
     print()
     print("   # 对话式创建应用（推荐）")
-    print("   python3 scripts/hap/agent_collect_requirements.py")
+    print("   python3 scripts/run_app_pipeline.py")
     print("=" * 60)
 
 

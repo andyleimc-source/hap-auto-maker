@@ -54,8 +54,8 @@
 
 ### 2. 克隆与初始化
 ```bash
-git clone https://github.com/andyleimc-source/auto_hap.git
-cd auto_hap
+git clone https://github.com/andyleimc-source/hap-auto-maker.git
+cd hap-auto-maker
 
 # 运行一键初始化（自动安装依赖、引导配置密钥）
 python3 setup.py
