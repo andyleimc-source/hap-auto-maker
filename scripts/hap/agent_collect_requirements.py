@@ -422,7 +422,7 @@ def normalize_spec(raw: dict) -> dict:
 
     app = spec.get("app") if isinstance(spec.get("app"), dict) else {}
     app.setdefault("target_mode", "create_new")
-    app.setdefault("name", "CRM自动化应用")
+    app.setdefault("name", "智能自动化应用")
     app.setdefault("group_ids", _load_org_group_ids())
     app.setdefault("icon_mode", "gemini_match")
     app.setdefault("color_mode", "random")
