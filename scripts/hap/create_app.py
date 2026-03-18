@@ -209,12 +209,23 @@ def pick_random_safe_color() -> str:
 
 
 def main() -> None:
+    # 尝试加载本地默认分组
+    local_group_id = ""
+    try:
+        sys.path.append(str(Path(__file__).resolve().parent))
+        from local_config import load_local_group_id
+        local_group_id = load_local_group_id()
+    except Exception:
+        pass
+
     auth = load_org_auth()
     app_key = auth["app_key"]
     secret_key = auth["secret_key"]
     default_project_id = auth.get("project_id", "")
     default_owner_id = auth.get("owner_id", "")
-    default_group_ids = auth.get("group_ids", "").strip()
+    
+    # 优先级：.env.local > organization_auth.json
+    default_group_ids = local_group_id if local_group_id else auth.get("group_ids", "").strip()
 
     parser = argparse.ArgumentParser(description="创建 HAP 应用")
     parser.add_argument("--name", required=True, help="应用名称")
