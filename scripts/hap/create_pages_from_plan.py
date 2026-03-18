@@ -433,6 +433,9 @@ def main() -> None:
     print(f"\n完成：{success_count}/{len(pages)} 个 Page 成功")
     print(f"结果文件: {output_path}")
 
+    if success_count == 0 and len(pages) > 0:
+        sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
