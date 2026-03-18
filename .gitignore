@@ -41,8 +41,14 @@ data/temp/
 
 # PRD (如果不想同步到 Git)
 PRD.md
+plan.md
+progress.md
+rules.md
+achieve/
 
 # 系统文件
 .DS_Store
 Thumbs.db
 
+# 应用介绍
+app_intro/
