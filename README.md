@@ -28,36 +28,6 @@ python3 scripts/run_app_pipeline.py
 
 ---
 
-### AI 平台一键安装
-
-如果你使用的是 **Codex / Claude / Gemini / Trae** 这类带终端能力的 AI 编程平台，可直接在平台终端中粘贴以下命令完成安装与启动。
-
-#### Codex
-
-```bash
-git clone https://github.com/andyleimc-source/hap-auto-maker.git && cd hap-auto-maker && python3 setup.py && python3 scripts/run_app_pipeline.py
-```
-
-#### Claude
-
-```bash
-git clone https://github.com/andyleimc-source/hap-auto-maker.git && cd hap-auto-maker && python3 setup.py && python3 scripts/run_app_pipeline.py
-```
-
-#### Gemini
-
-```bash
-git clone https://github.com/andyleimc-source/hap-auto-maker.git && cd hap-auto-maker && python3 setup.py && python3 scripts/run_app_pipeline.py
-```
-
-#### Trae
-
-```bash
-git clone https://github.com/andyleimc-source/hap-auto-maker.git && cd hap-auto-maker && python3 setup.py && python3 scripts/run_app_pipeline.py
-```
-
-初始化时按提示填写 `Gemini API Key`、明道云 OpenAPI 密钥、组织信息和管理员登录账号即可。如果登录认证卡住，可单独执行 `python3 scripts/auth/refresh_auth.py`。
-
 ## 🎬 核心特性
 - **对话即开发**：描述需求即可，AI 自动转换为明道云的建表结构与字段关联。
 - **真实数据生成**：根据表结构自动生成符合业务逻辑的测试数据。
