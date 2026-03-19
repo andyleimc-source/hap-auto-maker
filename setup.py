@@ -214,8 +214,8 @@ def step_ai(force=True):
     try: existing = load_ai_config()
     except: pass
     print_box("第 1 步：配置 AI 平台 (AI Provider)")
-    old_p = existing.get("provider", "gemini")
-    p_choice = ask("AI 平台 (1=Gemini, 2=DeepSeek)", default="2" if old_p=="deepseek" else "1", required=True, hint="DeepSeek" if old_p=="deepseek" else "Gemini", choices=["1", "2"])
+    old_p = existing.get("provider", "deepseek")
+    p_choice = ask("AI 平台 (1=Gemini, 2=DeepSeek)", default="1" if old_p=="gemini" else "2", required=True, hint="Gemini" if old_p=="gemini" else "DeepSeek", choices=["1", "2"])
     provider = "deepseek" if p_choice == "2" else "gemini"
     key = ask(f"{provider.title()} API Key", default=existing.get("api_key", ""), required=True)
     opts = {"gemini": {"1": ("gemini-2.0-flash", "响应极快"), "2": ("gemini-2.0-pro-exp-02-05", "逻辑顶尖")},
