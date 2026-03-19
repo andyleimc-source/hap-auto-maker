@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import requests
+import auth_retry
 
 from mock_data_common import (
     BASE_DIR,
@@ -238,8 +238,8 @@ def build_web_headers(account_id: str, authorization: str, cookie: str, referer:
     }
 
 
-def post_json(url: str, payload: dict, headers: dict, timeout: int = 30) -> dict:
-    resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
+def post_json(url: str, payload: dict, auth_config_path: Path, referer: str = "", timeout: int = 30) -> dict:
+    resp = auth_retry.hap_web_post(url, auth_config_path, referer=referer, json=payload, timeout=timeout)
     try:
         data = resp.json()
     except Exception as exc:

@@ -7,28 +7,23 @@
 """
 
 import argparse
-import importlib.util
 import json
-import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Optional, Tuple
-
-import requests
+from typing import Optional
 
 CURRENT_DIR = Path(__file__).resolve().parent
 if str(CURRENT_DIR) not in sys.path:
     sys.path.insert(0, str(CURRENT_DIR))
 
-from script_locator import resolve_script
+import auth_retry
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 LAYOUT_PLAN_DIR = OUTPUT_ROOT / "worksheet_layout_plans"
 RESULT_DIR = OUTPUT_ROOT / "worksheet_layout_apply_results"
 AUTH_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "auth_config.py"
-REFRESH_AUTH_SCRIPT = resolve_script("refresh_auth.py")
 
 GET_CONTROLS_URL = "https://www.mingdao.com/api/Worksheet/GetWorksheetControls"
 SAVE_CONTROLS_URL = "https://www.mingdao.com/api/Worksheet/SaveWorksheetControls"
@@ -57,44 +52,6 @@ def resolve_plan_json(value: str) -> Path:
     return p.resolve()
 
 
-def load_web_auth() -> Tuple[str, str, str]:
-    if not AUTH_CONFIG_PATH.exists():
-        raise FileNotFoundError(f"缺少认证配置: {AUTH_CONFIG_PATH}")
-    spec = importlib.util.spec_from_file_location("auth_config_runtime", str(AUTH_CONFIG_PATH))
-    module = importlib.util.module_from_spec(spec)
-    assert spec and spec.loader
-    spec.loader.exec_module(module)
-    account_id = str(getattr(module, "ACCOUNT_ID", "")).strip()
-    authorization = str(getattr(module, "AUTHORIZATION", "")).strip()
-    cookie = str(getattr(module, "COOKIE", "")).strip()
-    if not account_id or not authorization or not cookie:
-        raise ValueError(f"auth_config.py 缺少 ACCOUNT_ID/AUTHORIZATION/COOKIE: {AUTH_CONFIG_PATH}")
-    return account_id, authorization, cookie
-
-
-def refresh_web_auth(headless: bool) -> None:
-    if not REFRESH_AUTH_SCRIPT.exists():
-        raise FileNotFoundError(f"找不到 refresh_auth 脚本: {REFRESH_AUTH_SCRIPT}")
-    cmd = [sys.executable, str(REFRESH_AUTH_SCRIPT)]
-    if headless:
-        cmd.append("--headless")
-    proc = subprocess.run(cmd, check=False)
-    if proc.returncode != 0:
-        raise RuntimeError(f"refresh_auth 执行失败，退出码: {proc.returncode}")
-
-
-def headers_for_web_auth(account_id: str, authorization: str, cookie: str, source_id: str) -> Dict[str, str]:
-    return {
-        "Accept": "application/json, text/plain, */*",
-        "Content-Type": "application/json",
-        "AccountId": account_id,
-        "Authorization": authorization,
-        "Cookie": cookie,
-        "X-Requested-With": "XMLHttpRequest",
-        "Origin": "https://www.mingdao.com",
-        "Referer": f"https://www.mingdao.com/worksheet/field/edit?sourceId={source_id}",
-    }
-
 
 def _safe_int(v, default: int) -> int:
     try:
@@ -116,9 +73,8 @@ def normalize_layout(size: int, row: int, col: int) -> tuple[int, int, int]:
     return size, row, col
 
 
-def fetch_controls(source_id: str, account_id: str, authorization: str, cookie: str) -> dict:
-    headers = headers_for_web_auth(account_id, authorization, cookie, source_id=source_id)
-    resp = requests.post(GET_CONTROLS_URL, headers=headers, json={"worksheetId": source_id}, timeout=30)
+def fetch_controls(source_id: str) -> dict:
+    resp = auth_retry.hap_web_post(GET_CONTROLS_URL, AUTH_CONFIG_PATH, referer=f"https://www.mingdao.com/worksheet/field/edit?sourceId={source_id}", json={"worksheetId": source_id}, timeout=30)
     data = resp.json()
     wrapped = data.get("data", {})
     if not isinstance(wrapped, dict) or int(wrapped.get("code", 0)) != 1:
@@ -169,8 +125,7 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.refresh_auth:
-        refresh_web_auth(headless=args.headless)
-    account_id, authorization, cookie = load_web_auth()
+        auth_retry.refresh_auth(AUTH_CONFIG_PATH, headless=args.headless)
 
     plan_path = resolve_plan_json(args.plan_json)
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
@@ -197,7 +152,7 @@ def main() -> None:
             if cid:
                 plan_fields[cid] = f
 
-        current = fetch_controls(source_id, account_id, authorization, cookie)
+        current = fetch_controls(source_id)
         controls = current.get("controls", [])
         version = _safe_int(current.get("version"), 0)
         source_id_from_api = str(current.get("sourceId", source_id)).strip() or source_id
@@ -215,8 +170,7 @@ def main() -> None:
             resp_data = {"dry_run": True}
             status_code = 0
         else:
-            headers = headers_for_web_auth(account_id, authorization, cookie, source_id=source_id_from_api)
-            resp = requests.post(SAVE_CONTROLS_URL, headers=headers, json=payload, timeout=60)
+            resp = auth_retry.hap_web_post(SAVE_CONTROLS_URL, AUTH_CONFIG_PATH, referer=f"https://www.mingdao.com/worksheet/field/edit?sourceId={source_id_from_api}", json=payload, timeout=60)
             status_code = resp.status_code
             try:
                 resp_data = resp.json()

@@ -7,8 +7,6 @@
 from __future__ import annotations
 
 import argparse
-import importlib.util
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Dict, List
@@ -23,30 +21,27 @@ from chatbot_common import (
     GENERATE_CHATBOT_INFO_URL,
     SAVE_CHATBOT_CONFIG_URL,
     append_log,
-    build_web_headers,
     ensure_chatbot_dirs,
     ensure_state_success,
     ensure_status_success,
     load_plan_json,
-    load_web_auth,
     make_chatbot_log_path,
     now_iso,
     pick_icon_bundle,
     post_json,
     write_json_with_latest,
 )
-from script_locator import resolve_script
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
-REFRESH_AUTH_SCRIPT = resolve_script("refresh_auth.py")
+AUTH_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "auth_config.py"
 
 
 def build_referer(app_id: str, app_section_id: str) -> str:
     return f"https://www.mingdao.com/app/{app_id}/{app_section_id}"
 
 
-def call_generate_chatbot_info(app_id: str, description: str, headers: dict) -> dict:
+def call_generate_chatbot_info(app_id: str, description: str, auth_config_path: Path, referer: str) -> dict:
     payload = {
         "appId": app_id,
         "type": 2,
@@ -54,7 +49,7 @@ def call_generate_chatbot_info(app_id: str, description: str, headers: dict) -> 
         "langType": 0,
         "hasIcon": True,
     }
-    data = post_json(GENERATE_CHATBOT_INFO_URL, payload, headers=headers)
+    data = post_json(GENERATE_CHATBOT_INFO_URL, payload, auth_config_path, referer=referer)
     ensure_state_success(data, "GenerateChatRobotInfo")
     return {"payload": payload, "response": data}
 
@@ -66,7 +61,8 @@ def call_add_chatbot(
     proposal: dict,
     prompt: str,
     icon_bundle: dict,
-    headers: dict,
+    auth_config_path: Path,
+    referer: str,
 ) -> dict:
     payload = {
         "appId": app_id,
@@ -80,7 +76,7 @@ def call_add_chatbot(
         "type": 3,
         "prompt": prompt,
     }
-    data = post_json(ADD_WORKSHEET_URL, payload, headers=headers)
+    data = post_json(ADD_WORKSHEET_URL, payload, auth_config_path, referer=referer)
     ensure_state_success(data, "AddWorkSheet")
     chatbot_id = str((data.get("data") or {}).get("chatbotId", "")).strip()
     if not chatbot_id:
@@ -93,7 +89,8 @@ def call_save_chatbot_config(
     proposal: dict,
     generated: dict,
     upload_permission: str,
-    headers: dict,
+    auth_config_path: Path,
+    referer: str,
 ) -> dict:
     generated_data = generated.get("response", {}).get("data", {}) if isinstance(generated.get("response"), dict) else {}
     greeting = str(generated_data.get("greeting", "")).strip() or f"您好，我是{proposal['name']}。"
@@ -108,50 +105,9 @@ def call_save_chatbot_config(
         "presetQuestion": preset_question,
         "uploadPermission": upload_permission,
     }
-    data = post_json(SAVE_CHATBOT_CONFIG_URL, payload, headers=headers)
+    data = post_json(SAVE_CHATBOT_CONFIG_URL, payload, auth_config_path, referer=referer)
     ensure_status_success(data, "saveChatbotConfig")
     return {"payload": payload, "response": data}
-
-
-def is_login_expired_error(message: str) -> bool:
-    text = str(message)
-    return "帐号已退出" in text or "请重新登录" in text
-
-
-def has_playwright() -> bool:
-    return importlib.util.find_spec("playwright") is not None
-
-
-def refresh_web_auth(log_path: Path, headless: bool) -> None:
-    if not has_playwright():
-        raise RuntimeError(
-            "检测到登录态已失效，但当前 Python 环境缺少 playwright，无法自动刷新登录。"
-            "请先执行 `python3 -m pip install playwright && python3 -m playwright install chromium`，"
-            "或先手动运行 refresh_auth.py 所在环境完成登录刷新。"
-        )
-    cmd = [sys.executable, str(REFRESH_AUTH_SCRIPT)]
-    if headless:
-        cmd.append("--headless")
-    append_log(log_path, "refresh_auth_start", cmd=cmd, headless=headless)
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    append_log(
-        log_path,
-        "refresh_auth_finished",
-        returncode=proc.returncode,
-        stdout=proc.stdout,
-        stderr=proc.stderr,
-    )
-    if proc.stdout.strip():
-        print(proc.stdout.strip())
-    if proc.returncode != 0:
-        if proc.stderr.strip():
-            print(proc.stderr.strip())
-        raise RuntimeError(f"refresh_auth.py 执行失败，退出码: {proc.returncode}")
-
-
-def build_auth_headers(app_id: str, app_section_id: str) -> dict:
-    account_id, authorization, cookie = load_web_auth()
-    return build_web_headers(account_id, authorization, cookie, build_referer(app_id, app_section_id))
 
 
 def main() -> None:
@@ -159,8 +115,6 @@ def main() -> None:
     parser.add_argument("--plan-json", default="", help="chatbot plan JSON 路径（默认使用 latest）")
     parser.add_argument("--upload-permission", default="11", help="上传权限，默认 11")
     parser.add_argument("--dry-run", action="store_true", help="仅生成请求计划，不真正创建")
-    parser.add_argument("--refresh-auth-on-expired", action="store_true", default=True, help="登录态失效时自动执行 refresh_auth.py 并重试")
-    parser.add_argument("--refresh-auth-headless", action="store_true", help="自动刷新登录态时使用无头模式")
     parser.add_argument("--output", default="", help="输出 JSON 文件路径")
     args = parser.parse_args()
 
@@ -194,9 +148,7 @@ def main() -> None:
         targetSection=app_section_id,
     )
 
-    headers = build_auth_headers(app_id, app_section_id) if not args.dry_run else {}
-    refreshed_once = False
-    refresh_unavailable_error = ""
+    referer = build_referer(app_id, app_section_id)
     results: List[dict] = []
     ok_count = 0
     fail_count = 0
@@ -242,61 +194,37 @@ def main() -> None:
                 results.append(item_result)
                 continue
 
-            while True:
-                try:
-                    generated = call_generate_chatbot_info(app_id, proposal["description"], headers=headers)
-                    generated_data = generated["response"].get("data", {}) if isinstance(generated["response"], dict) else {}
-                    prompt = str(generated_data.get("systemPrompt", "")).strip() or proposal["description"]
-                    item_result["generated"] = generated
+            generated = call_generate_chatbot_info(
+                app_id, proposal["description"], AUTH_CONFIG_PATH, referer=referer
+            )
+            generated_data = generated["response"].get("data", {}) if isinstance(generated["response"], dict) else {}
+            prompt = str(generated_data.get("systemPrompt", "")).strip() or proposal["description"]
+            item_result["generated"] = generated
 
-                    add_chatbot = call_add_chatbot(
-                        app_id=app_id,
-                        app_section_id=app_section_id,
-                        project_id=project_id,
-                        proposal=proposal,
-                        prompt=prompt,
-                        icon_bundle=icon_bundle,
-                        headers=headers,
-                    )
-                    item_result["create"] = add_chatbot
+            add_chatbot = call_add_chatbot(
+                app_id=app_id,
+                app_section_id=app_section_id,
+                project_id=project_id,
+                proposal=proposal,
+                prompt=prompt,
+                icon_bundle=icon_bundle,
+                auth_config_path=AUTH_CONFIG_PATH,
+                referer=referer,
+            )
+            item_result["create"] = add_chatbot
 
-                    save_config = call_save_chatbot_config(
-                        chatbot_id=add_chatbot["chatbotId"],
-                        proposal=proposal,
-                        generated=generated,
-                        upload_permission=args.upload_permission,
-                        headers=headers,
-                    )
-                    item_result["config"] = save_config
-                    item_result["ok"] = True
-                    ok_count += 1
-                    append_log(log_path, "proposal_finished", index=idx, name=proposal["name"], chatbotId=add_chatbot["chatbotId"])
-                    break
-                except Exception as exc:
-                    if (
-                        args.refresh_auth_on_expired
-                        and not refreshed_once
-                        and not refresh_unavailable_error
-                        and is_login_expired_error(str(exc))
-                    ):
-                        append_log(log_path, "login_expired_detected", index=idx, name=proposal["name"], error=str(exc))
-                        try:
-                            refresh_web_auth(log_path, headless=bool(args.refresh_auth_headless))
-                        except Exception as refresh_exc:
-                            refresh_unavailable_error = str(refresh_exc)
-                            append_log(
-                                log_path,
-                                "refresh_auth_failed",
-                                index=idx,
-                                name=proposal["name"],
-                                error=refresh_unavailable_error,
-                            )
-                            raise RuntimeError(f"{exc}；{refresh_unavailable_error}") from refresh_exc
-                        headers = build_auth_headers(app_id, app_section_id)
-                        refreshed_once = True
-                        append_log(log_path, "login_expired_retry", index=idx, name=proposal["name"])
-                        continue
-                    raise
+            save_config = call_save_chatbot_config(
+                chatbot_id=add_chatbot["chatbotId"],
+                proposal=proposal,
+                generated=generated,
+                upload_permission=args.upload_permission,
+                auth_config_path=AUTH_CONFIG_PATH,
+                referer=referer,
+            )
+            item_result["config"] = save_config
+            item_result["ok"] = True
+            ok_count += 1
+            append_log(log_path, "proposal_finished", index=idx, name=proposal["name"], chatbotId=add_chatbot["chatbotId"])
         except Exception as exc:
             item_result["ok"] = False
             item_result["error"] = str(exc)

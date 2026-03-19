@@ -11,9 +11,7 @@
 """
 
 import argparse
-import importlib.util
 import json
-import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -25,14 +23,13 @@ CURRENT_DIR = Path(__file__).resolve().parent
 if str(CURRENT_DIR) not in sys.path:
     sys.path.insert(0, str(CURRENT_DIR))
 
-from script_locator import resolve_script
+import auth_retry
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 APP_AUTH_DIR = OUTPUT_ROOT / "app_authorizations"
 RESULT_DIR = OUTPUT_ROOT / "app_navi_style_updates"
 AUTH_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "auth_config.py"
-REFRESH_AUTH_SCRIPT = resolve_script("refresh_auth.py")
 
 APP_INFO_URL = "https://api.mingdao.com/v3/app"
 EDIT_APP_INFO_URL = "https://www.mingdao.com/api/HomeApp/EditAppInfo"
@@ -41,32 +38,6 @@ EDIT_APP_INFO_URL = "https://www.mingdao.com/api/HomeApp/EditAppInfo"
 def latest_file(base_dir: Path, pattern: str) -> Optional[Path]:
     files = sorted(base_dir.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
     return files[0] if files else None
-
-
-def load_web_auth() -> tuple[str, str, str]:
-    if not AUTH_CONFIG_PATH.exists():
-        raise FileNotFoundError(f"缺少认证配置: {AUTH_CONFIG_PATH}")
-    spec = importlib.util.spec_from_file_location("auth_config_runtime", str(AUTH_CONFIG_PATH))
-    module = importlib.util.module_from_spec(spec)
-    assert spec and spec.loader
-    spec.loader.exec_module(module)
-    account_id = str(getattr(module, "ACCOUNT_ID", "")).strip()
-    authorization = str(getattr(module, "AUTHORIZATION", "")).strip()
-    cookie = str(getattr(module, "COOKIE", "")).strip()
-    if not account_id or not authorization or not cookie:
-        raise ValueError(f"auth_config.py 缺少 ACCOUNT_ID/AUTHORIZATION/COOKIE: {AUTH_CONFIG_PATH}")
-    return account_id, authorization, cookie
-
-
-def refresh_web_auth(headless: bool) -> None:
-    if not REFRESH_AUTH_SCRIPT.exists():
-        raise FileNotFoundError(f"找不到 refresh_auth 脚本: {REFRESH_AUTH_SCRIPT}")
-    cmd = [sys.executable, str(REFRESH_AUTH_SCRIPT)]
-    if headless:
-        cmd.append("--headless")
-    proc = subprocess.run(cmd, check=False)
-    if proc.returncode != 0:
-        raise RuntimeError(f"refresh_auth 执行失败，退出码: {proc.returncode}")
 
 
 def load_app_auth_rows() -> List[dict]:
@@ -153,9 +124,8 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.refresh_auth:
-        refresh_web_auth(headless=args.headless)
+        auth_retry.refresh_auth(AUTH_CONFIG_PATH, headless=args.headless)
 
-    account_id, authorization, cookie = load_web_auth()
     app_rows = load_app_auth_rows()
     if not app_rows:
         raise RuntimeError("没有可用应用授权记录")
@@ -224,17 +194,6 @@ def main() -> None:
         "displayIcon": "011",
     }
 
-    headers = {
-        "Accept": "application/json, text/plain, */*",
-        "Content-Type": "application/json",
-        "AccountId": account_id,
-        "Authorization": authorization,
-        "Cookie": cookie,
-        "X-Requested-With": "XMLHttpRequest",
-        "Origin": "https://www.mingdao.com",
-        "Referer": f"https://www.mingdao.com/app/{app['appId']}",
-    }
-
     if not payload["projectId"]:
         raise ValueError("当前授权记录缺少 projectId，无法调用 EditAppInfo")
 
@@ -242,7 +201,13 @@ def main() -> None:
         response_data = {"dry_run": True}
         status_code = 0
     else:
-        resp = requests.post(EDIT_APP_INFO_URL, headers=headers, json=payload, timeout=30)
+        resp = auth_retry.hap_web_post(
+            EDIT_APP_INFO_URL,
+            AUTH_CONFIG_PATH,
+            referer=f"https://www.mingdao.com/app/{app['appId']}",
+            json=payload,
+            timeout=30,
+        )
         status_code = resp.status_code
         try:
             response_data = resp.json()

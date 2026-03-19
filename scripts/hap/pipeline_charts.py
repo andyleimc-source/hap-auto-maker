@@ -19,7 +19,7 @@ OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 CHART_PLAN_DIR = OUTPUT_ROOT / "chart_plans"
 CHART_CREATE_DIR = OUTPUT_ROOT / "chart_create_results"
 
-DEFAULT_MODEL = "gemini-2.5-pro"
+DEFAULT_MODEL = "gemini-2.5-flash"
 DEFAULT_GEMINI_CONFIG = BASE_DIR / "config" / "credentials" / "gemini_auth.json"
 DEFAULT_AUTH_CONFIG = BASE_DIR / "config" / "credentials" / "auth_config.py"
 

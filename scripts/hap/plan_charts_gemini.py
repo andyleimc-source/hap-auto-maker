@@ -16,14 +16,13 @@
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import requests
+import auth_retry
 from google import genai
 from google.genai import types
 
@@ -33,7 +32,7 @@ CHART_PLAN_DIR = OUTPUT_ROOT / "chart_plans"
 MOCK_SCHEMA_DIR = OUTPUT_ROOT / "mock_data_schema_snapshots"
 GEMINI_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "gemini_auth.json"
 AUTH_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "auth_config.py"
-DEFAULT_MODEL = "gemini-2.5-pro"
+DEFAULT_MODEL = "gemini-2.5-flash"
 
 GET_CONTROLS_URL = "https://www.mingdao.com/api/Worksheet/GetWorksheetControls"
 GET_VIEWS_URL = "https://www.mingdao.com/api/Worksheet/GetWorksheetViews"
@@ -65,22 +64,6 @@ def load_gemini_api_key(config_path: Path) -> str:
     if not api_key:
         raise ValueError(f"Gemini 配置缺少 api_key: {config_path}")
     return api_key
-
-
-def load_web_auth(path: Path) -> tuple[str, str, str]:
-    if not path.exists():
-        raise FileNotFoundError(f"缺少认证配置: {path}")
-    spec = importlib.util.spec_from_file_location("auth_config_runtime", str(path))
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"无法加载认证文件: {path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    account_id = str(getattr(module, "ACCOUNT_ID", "")).strip()
-    authorization = str(getattr(module, "AUTHORIZATION", "")).strip()
-    cookie = str(getattr(module, "COOKIE", "")).strip()
-    if not account_id or not authorization or not cookie:
-        raise ValueError(f"auth_config.py 缺少 ACCOUNT_ID/AUTHORIZATION/COOKIE: {path}")
-    return account_id, authorization, cookie
 
 
 def extract_json_object(text: str) -> dict:
@@ -134,20 +117,11 @@ def resolve_worksheet_ids_from_snapshot(app_id: str) -> List[str]:
 # 数据拉取（仅 browser auth）
 # ---------------------------------------------------------------------------
 
-def fetch_worksheet_controls(worksheet_id: str, web_auth: tuple[str, str, str]) -> dict:
+def fetch_worksheet_controls(worksheet_id: str, auth_config_path: Path) -> dict:
     """拉取工作表字段与视图详情（使用 browser auth）。"""
-    account_id, authorization, cookie = web_auth
-    headers = {
-        "Accept": "application/json, text/plain, */*",
-        "Content-Type": "application/json",
-        "AccountId": account_id,
-        "Authorization": authorization,
-        "Cookie": cookie,
-        "X-Requested-With": "XMLHttpRequest",
-        "Origin": "https://www.mingdao.com",
-        "Referer": "https://www.mingdao.com/",
-    }
-    resp = requests.post(GET_CONTROLS_URL, headers=headers, json={"worksheetId": worksheet_id}, timeout=30)
+    resp = auth_retry.hap_web_post(GET_CONTROLS_URL, auth_config_path,
+                                   referer="https://www.mingdao.com/",
+                                   json={"worksheetId": worksheet_id}, timeout=30)
     data = resp.json()
     # 兼容两层包装
     wrapped = data.get("data", {})
@@ -160,48 +134,28 @@ def fetch_worksheet_controls(worksheet_id: str, web_auth: tuple[str, str, str]) 
     return payload
 
 
-def resolve_app_uuid_from_ws(ws_id: str, web_auth: tuple[str, str, str]) -> str:
+def resolve_app_uuid_from_ws(ws_id: str, auth_config_path: Path) -> str:
     """通过 worksheetId 解析 UUID 格式的 appId（用于调用 GetWorksheetViews）。"""
     import re
     if re.match(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
                 ws_id.lower()):
         return ws_id  # already UUID
-    account_id, authorization, cookie = web_auth
-    headers = {
-        "Accept": "application/json, text/plain, */*",
-        "Content-Type": "application/json",
-        "AccountId": account_id,
-        "Authorization": authorization,
-        "Cookie": cookie,
-        "X-Requested-With": "XMLHttpRequest",
-        "Origin": "https://www.mingdao.com",
-        "Referer": "https://www.mingdao.com/",
-    }
-    resp = requests.post(GET_WORKSHEET_INFO_URL, headers=headers,
-                         json={"worksheetId": ws_id}, timeout=15)
+    resp = auth_retry.hap_web_post(GET_WORKSHEET_INFO_URL, auth_config_path,
+                                   referer="https://www.mingdao.com/",
+                                   json={"worksheetId": ws_id}, timeout=15)
     data = resp.json().get("data", {})
     return str(data.get("appId", "")).strip()
 
 
 def fetch_worksheet_views(worksheet_id: str, app_uuid: str,
-                          web_auth: tuple[str, str, str]) -> List[dict]:
+                          auth_config_path: Path) -> List[dict]:
     """拉取工作表的视图列表（需要 UUID 格式的 appId）。"""
     if not app_uuid:
         return []
-    account_id, authorization, cookie = web_auth
-    headers = {
-        "Accept": "application/json, text/plain, */*",
-        "Content-Type": "application/json",
-        "AccountId": account_id,
-        "Authorization": authorization,
-        "Cookie": cookie,
-        "X-Requested-With": "XMLHttpRequest",
-        "Origin": "https://www.mingdao.com",
-        "Referer": "https://www.mingdao.com/",
-    }
-    resp = requests.post(GET_VIEWS_URL, headers=headers,
-                         json={"worksheetId": worksheet_id, "appId": app_uuid},
-                         timeout=15)
+    resp = auth_retry.hap_web_post(GET_VIEWS_URL, auth_config_path,
+                                   referer="https://www.mingdao.com/",
+                                   json={"worksheetId": worksheet_id, "appId": app_uuid},
+                                   timeout=15)
     raw = resp.json()
     views_raw = raw.get("data", []) or []
     result = []
@@ -536,7 +490,7 @@ def main() -> None:
 
     app_id = args.app_id.strip()
     app_name = args.app_name.strip() or app_id
-    web_auth = load_web_auth(Path(args.auth_config).expanduser().resolve())
+    auth_config_path = Path(args.auth_config).expanduser().resolve()
     api_key = load_gemini_api_key(Path(args.config).expanduser().resolve())
 
     # 解析 views_json（如果提供）
@@ -570,13 +524,13 @@ def main() -> None:
         worksheets_info = []
         worksheets_by_id = {}
         # 解析 UUID 格式 appId（用于获取视图，GetWorksheetViews 需要 UUID appId）
-        app_uuid = resolve_app_uuid_from_ws(ws_ids[0], web_auth) if ws_ids else ""
+        app_uuid = resolve_app_uuid_from_ws(ws_ids[0], auth_config_path) if ws_ids else ""
         for ws_id in ws_ids:
-            payload = fetch_worksheet_controls(ws_id, web_auth)
+            payload = fetch_worksheet_controls(ws_id, auth_config_path)
             ws_name = str(payload.get("worksheetName", ws_id)).strip()
             controls = simplify_controls(payload.get("controls", []))
             # 优先从 GetWorksheetViews 获取真实视图（需 UUID appId）
-            views = fetch_worksheet_views(ws_id, app_uuid, web_auth)
+            views = fetch_worksheet_views(ws_id, app_uuid, auth_config_path)
             if not views:
                 views = extract_views_from_payload(payload)
             if not views and preset_views:

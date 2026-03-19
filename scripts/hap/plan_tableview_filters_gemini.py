@@ -11,7 +11,6 @@
 """
 
 import argparse
-import importlib.util
 import json
 import re
 import time
@@ -21,6 +20,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import requests
+import auth_retry
 from google import genai
 from google.genai import types
 from script_locator import resolve_script
@@ -105,22 +105,6 @@ def load_gemini_api_key(path: Path) -> str:
     if not api_key:
         raise ValueError(f"Gemini 配置缺少 api_key: {path}")
     return api_key
-
-
-def load_web_auth(path: Path) -> tuple[str, str, str]:
-    if not path.exists():
-        raise FileNotFoundError(f"缺少认证配置: {path}")
-    spec = importlib.util.spec_from_file_location("auth_config_runtime", str(path))
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"无法加载认证文件: {path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    account_id = str(getattr(module, "ACCOUNT_ID", "")).strip()
-    authorization = str(getattr(module, "AUTHORIZATION", "")).strip()
-    cookie = str(getattr(module, "COOKIE", "")).strip()
-    if not account_id or not authorization or not cookie:
-        raise ValueError(f"auth_config.py 缺少 ACCOUNT_ID/AUTHORIZATION/COOKIE: {path}")
-    return account_id, authorization, cookie
 
 
 def resolve_view_create_result_json(value: str) -> Path:
@@ -221,19 +205,12 @@ def fetch_worksheets(app_key: str, sign: str) -> List[dict]:
     return worksheets
 
 
-def fetch_controls(worksheet_id: str, web_auth: tuple[str, str, str]) -> dict:
-    account_id, authorization, cookie = web_auth
-    headers = {
-        "Accept": "application/json, text/plain, */*",
-        "Content-Type": "application/json",
-        "AccountId": account_id,
-        "Authorization": authorization,
-        "Cookie": cookie,
-        "X-Requested-With": "XMLHttpRequest",
-        "Origin": "https://www.mingdao.com",
-        "Referer": f"https://www.mingdao.com/worksheet/field/edit?sourceId={worksheet_id}",
-    }
-    resp = requests.post(GET_CONTROLS_URL, headers=headers, json={"worksheetId": worksheet_id}, timeout=30)
+def fetch_controls(worksheet_id: str, auth_config_path: Path) -> dict:
+    resp = auth_retry.hap_web_post(
+        GET_CONTROLS_URL, auth_config_path,
+        referer=f"https://www.mingdao.com/worksheet/field/edit?sourceId={worksheet_id}",
+        json={"worksheetId": worksheet_id}, timeout=30,
+    )
     data = resp.json()
     wrapped = data.get("data", {})
     if isinstance(wrapped, dict) and isinstance(wrapped.get("data"), dict):
@@ -632,7 +609,7 @@ def main() -> None:
 
     api_key = load_gemini_api_key(Path(args.config).expanduser().resolve())
     client = genai.Client(api_key=api_key)
-    web_auth = load_web_auth(Path(args.auth_config).expanduser().resolve())
+    auth_config_path = Path(args.auth_config).expanduser().resolve()
 
     app_rows = load_app_auth_rows()
     apps = []
@@ -691,7 +668,7 @@ def main() -> None:
             continue
 
         def _fetch_controls(ws):
-            detail = fetch_controls(ws["workSheetId"], web_auth)
+            detail = fetch_controls(ws["workSheetId"], auth_config_path)
             return ws, [simplify_field(f) for f in detail.get("fields", []) if isinstance(f, dict)]
 
         with ThreadPoolExecutor(max_workers=min(8, len(ws_with_targets))) as ex:

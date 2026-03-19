@@ -85,7 +85,8 @@ def step_gemini(force=False):
     dst = CRED_DIR / "gemini_auth.json"
     existing = _load_json_safe(dst)
     old_key = existing.get("api_key", "")
-    old_model = existing.get("model", "gemini-2.5-pro")
+    # 默认始终使用 gemini-2.5-flash（推荐，速度更快）
+    default_model = "gemini-2.5-flash"
 
     if dst.exists() and not force:
         return
@@ -98,7 +99,8 @@ def step_gemini(force=False):
     else:
         key = ask("   请输入你的 Gemini API Key")
 
-    model = ask("   请输入 Gemini 模型名称", default=old_model)
+    print(f"   推荐模型: gemini-2.5-flash（更快）或 gemini-2.5-pro（更强）")
+    model = ask("   Gemini 模型名称", default=default_model)
 
     data = {
         "api_key": key or "YOUR_GEMINI_API_KEY",
@@ -121,12 +123,12 @@ def step_org_auth(force=False):
     print("   快捷地址: https://www.mingdao.com/admin/integrationothers/<你的组织ID>")
 
     # 定义字段：(json_key, 显示名, 提示文字, 是否敏感, 是否必填)
+    # group_ids 不在此处询问，由 step_group_init() 通过下拉选择写入
     fields = [
         ("app_key",    "app_key",    None, True,  True),
         ("secret_key", "secret_key", None, True,  True),
         ("project_id", "project_id", "获取 project_id: 组织管理 → 组织 → 组织信息 → 编号（ID）", False, True),
         ("owner_id",   "owner_id",   "获取 owner_id: 点击群聊中个人头像，地址栏中 https://www.mingdao.com/user_xxx 的 xxx 部分", False, True),
-        ("group_ids",  "group_ids",  "获取 group_ids: 在明道云中点击某个应用分组，地址栏中 groupId=xxx 的 xxx 部分（可选，留空不指定分组）", False, False),
     ]
 
     # 如果已有配置，先展示当前值
@@ -155,13 +157,13 @@ def step_org_auth(force=False):
         else:
             results[key] = ask(f"   {name}", default=default)
 
-    # 写入
+    # 写入（group_ids 保留已有值，由 step_group_init 下拉选择后覆盖）
     data = {}
     data["app_key"] = results["app_key"] or "YOUR_HAP_APP_KEY"
     data["secret_key"] = results["secret_key"] or "YOUR_HAP_SECRET_KEY"
     data["project_id"] = results["project_id"] or "YOUR_HAP_PROJECT_ID"
     data["owner_id"] = results["owner_id"] or "YOUR_HAP_OWNER_ID"
-    data["group_ids"] = results["group_ids"] or ""
+    data["group_ids"] = existing.get("group_ids", "")
     dst.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"   ✔ 已写入 {dst.name}")
 
@@ -241,7 +243,7 @@ def _read_all_config() -> dict:
     # Gemini
     gemini = _load_json_safe(CRED_DIR / "gemini_auth.json")
     result["gemini_api_key"] = gemini.get("api_key", "")
-    result["gemini_model"] = gemini.get("model", "gemini-2.5-pro")
+    result["gemini_model"] = gemini.get("model", "gemini-2.5-flash")
 
     # 组织密钥
     org = _load_json_safe(CRED_DIR / "organization_auth.json")
@@ -265,6 +267,14 @@ def _read_all_config() -> dict:
         result["password"] = ""
 
     return result
+
+
+def _sync_group_id_to_org_auth(group_id: str) -> None:
+    """将选中的分组 ID 同步写入 organization_auth.json 的 group_ids 字段。"""
+    org_dst = CRED_DIR / "organization_auth.json"
+    data = _load_json_safe(org_dst)
+    data["group_ids"] = group_id
+    org_dst.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
 def step_group_init(force=False):
@@ -302,7 +312,9 @@ def step_group_init(force=False):
             try:
                 from create_group import create_group
                 new_group = create_group(new_name)
-                save_local_group_id(new_group["groupId"])
+                selected_group_id = new_group["groupId"]
+                save_local_group_id(selected_group_id)
+                _sync_group_id_to_org_auth(selected_group_id)
                 print(f"   ✔ 分组已创建并选中: {new_name}")
             except Exception as e:
                 print(f"   ❌ 创建分组失败: {e}")
@@ -310,7 +322,9 @@ def step_group_init(force=False):
         try:
             idx = int(choice) - 1
             if 0 <= idx < len(groups):
-                save_local_group_id(groups[idx]["groupId"])
+                selected_group_id = groups[idx]["groupId"]
+                save_local_group_id(selected_group_id)
+                _sync_group_id_to_org_auth(selected_group_id)
                 print(f"   ✔ 已选中分组: {groups[idx]['name']}")
         except (ValueError, IndexError):
             print("   ⚠️  无效选择。")

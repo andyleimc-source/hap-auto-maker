@@ -18,7 +18,7 @@ from typing import Tuple
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 GEMINI_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "gemini_auth.json"
-DEFAULT_MODEL = "gemini-2.5-pro"
+DEFAULT_MODEL = "gemini-2.5-flash"
 
 def load_gemini_config(config_path: Path = GEMINI_CONFIG_PATH) -> Tuple[str, str]:
     """

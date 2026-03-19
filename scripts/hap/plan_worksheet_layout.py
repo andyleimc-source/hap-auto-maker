@@ -6,9 +6,9 @@
 """
 
 import argparse
-import importlib.util
 import json
 import re
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -18,9 +18,14 @@ NETWORK_MAX_RETRIES = 3
 NETWORK_RETRY_DELAY = 5
 
 import requests
+
+CURRENT_DIR = Path(__file__).resolve().parent
+if str(CURRENT_DIR) not in sys.path:
+    sys.path.insert(0, str(CURRENT_DIR))
+
+import auth_retry
 from google import genai
 from google.genai import types
-from script_locator import resolve_script
 from gemini_utils import load_gemini_config
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -90,20 +95,6 @@ def extract_json(text: str) -> dict:
 def sanitize_name(name: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_-]+", "_", name).strip("_") or "app"
 
-
-def load_web_auth() -> Tuple[str, str, str]:
-    if not AUTH_CONFIG_PATH.exists():
-        raise FileNotFoundError(f"缺少认证配置: {AUTH_CONFIG_PATH}")
-    spec = importlib.util.spec_from_file_location("auth_config_runtime", str(AUTH_CONFIG_PATH))
-    module = importlib.util.module_from_spec(spec)
-    assert spec and spec.loader
-    spec.loader.exec_module(module)
-    account_id = str(getattr(module, "ACCOUNT_ID", "")).strip()
-    authorization = str(getattr(module, "AUTHORIZATION", "")).strip()
-    cookie = str(getattr(module, "COOKIE", "")).strip()
-    if not account_id or not authorization or not cookie:
-        raise ValueError(f"auth_config.py 缺少 ACCOUNT_ID/AUTHORIZATION/COOKIE: {AUTH_CONFIG_PATH}")
-    return account_id, authorization, cookie
 
 
 def load_app_auth_rows() -> List[dict]:
@@ -243,19 +234,8 @@ def fetch_worksheets(app_key: str, sign: str) -> List[dict]:
     return worksheets
 
 
-def fetch_controls(worksheet_id: str, web_auth: Tuple[str, str, str]) -> dict:
-    account_id, authorization, cookie = web_auth
-    headers = {
-        "Accept": "application/json, text/plain, */*",
-        "Content-Type": "application/json",
-        "AccountId": account_id,
-        "Authorization": authorization,
-        "Cookie": cookie,
-        "X-Requested-With": "XMLHttpRequest",
-        "Origin": "https://www.mingdao.com",
-        "Referer": f"https://www.mingdao.com/worksheet/field/edit?sourceId={worksheet_id}",
-    }
-    resp = requests.post(GET_CONTROLS_URL, headers=headers, json={"worksheetId": worksheet_id}, timeout=30)
+def fetch_controls(worksheet_id: str) -> dict:
+    resp = auth_retry.hap_web_post(GET_CONTROLS_URL, AUTH_CONFIG_PATH, json={"worksheetId": worksheet_id}, timeout=30)
     data = resp.json()
 
     # 兼容结构：{"data":{"code":1,"data":{...}},"state":1}
@@ -420,7 +400,6 @@ def main() -> None:
     sign = picked["sign"]
     auth_path = picked["authPath"]
 
-    web_auth = load_web_auth()
     worksheets = fetch_worksheets(app_key=app_key, sign=sign)
     if not worksheets:
         raise RuntimeError(f"应用下没有工作表: {app_name} ({app_id})")
@@ -429,7 +408,7 @@ def main() -> None:
     total_fields = 0
     for ws in worksheets:
         ws_id = ws["workSheetId"]
-        ws_controls = fetch_controls(ws_id, web_auth=web_auth)
+        ws_controls = fetch_controls(ws_id)
         fields = []
         for ctrl in ws_controls["controls"]:
             if not isinstance(ctrl, dict):

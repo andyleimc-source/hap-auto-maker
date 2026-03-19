@@ -12,7 +12,6 @@
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 import subprocess
 import sys
@@ -20,7 +19,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, List, Optional
 
-import requests
+import auth_retry
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 CURRENT_DIR = Path(__file__).resolve().parent
@@ -30,7 +29,7 @@ PAGE_CREATE_DIR = OUTPUT_ROOT / "page_create_results"
 LOG_DIR = BASE_DIR / "data" / "logs"
 AUTH_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "auth_config.py"
 GEMINI_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "gemini_auth.json"
-DEFAULT_MODEL = "gemini-2.5-pro"
+DEFAULT_MODEL = "gemini-2.5-flash"
 
 ADD_WORKSHEET_URL = "https://www.mingdao.com/api/AppManagement/AddWorkSheet"
 SAVE_PAGE_URL = "https://api.mingdao.com/report/custom/savePage"
@@ -79,22 +78,6 @@ def write_json(path: Path, payload: Any) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def load_web_auth(path: Path) -> tuple[str, str, str]:
-    if not path.exists():
-        raise FileNotFoundError(f"缺少认证配置: {path}")
-    spec = importlib.util.spec_from_file_location("auth_config_runtime", str(path))
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"无法加载认证文件: {path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    account_id = str(getattr(module, "ACCOUNT_ID", "")).strip()
-    authorization = str(getattr(module, "AUTHORIZATION", "")).strip()
-    cookie = str(getattr(module, "COOKIE", "")).strip()
-    if not account_id or not authorization or not cookie:
-        raise ValueError(f"auth_config.py 缺少 ACCOUNT_ID/AUTHORIZATION/COOKIE")
-    return account_id, authorization, cookie
-
-
 def resolve_plan_path(value: str) -> Path:
     if value:
         p = Path(value).expanduser()
@@ -120,26 +103,10 @@ def resolve_plan_path(value: str) -> Path:
 # API 调用
 # ---------------------------------------------------------------------------
 
-def build_headers(web_auth: tuple[str, str, str], content_type: str = "application/json") -> dict:
-    account_id, authorization, cookie = web_auth
-    return {
-        "Accept": "application/json, text/plain, */*",
-        "Accept-Language": "zh-CN,zh;q=0.9",
-        "AccountId": account_id,
-        "Authorization": authorization,
-        "Content-Type": content_type,
-        "Cookie": cookie,
-        "Origin": "https://www.mingdao.com",
-        "Referer": "https://www.mingdao.com/",
-        "X-Requested-With": "XMLHttpRequest",
-    }
-
-
 def create_page(app_id: str, app_section_id: str, project_id: str,
                 page_name: str, icon: str, icon_color: str,
-                web_auth: tuple[str, str, str]) -> str:
+                auth_config_path: Path) -> str:
     """调用 AddWorkSheet 创建自定义 Page，返回 pageId。"""
-    account_id, authorization, cookie = web_auth
     icon_url = f"https://fp1.mingdaoyun.cn/customIcon/{icon}.svg"
     body = {
         "appId": app_id,
@@ -153,18 +120,7 @@ def create_page(app_id: str, app_section_id: str, project_id: str,
         "type": 1,        # 1 = 自定义页
         "createType": 0,
     }
-    # AddWorkSheet 使用 accountid + cookie（不需要 Authorization 头）
-    headers = {
-        "Accept": "application/json, text/plain, */*",
-        "Accept-Language": "zh-CN,zh;q=0.9",
-        "AccountId": account_id,
-        "Content-Type": "application/json",
-        "Cookie": cookie,
-        "Origin": "https://www.mingdao.com",
-        "Referer": "https://www.mingdao.com/",
-        "X-Requested-With": "XMLHttpRequest",
-    }
-    resp = requests.post(ADD_WORKSHEET_URL, headers=headers, json=body, timeout=30)
+    resp = auth_retry.hap_web_post(ADD_WORKSHEET_URL, auth_config_path, json=body, timeout=30)
     resp.raise_for_status()
     data = resp.json()
     # 响应格式: {"data": {"pageId": "..."}, "state": 1}
@@ -177,18 +133,8 @@ def create_page(app_id: str, app_section_id: str, project_id: str,
     return page_id
 
 
-def initialize_page(page_id: str, web_auth: tuple[str, str, str]) -> None:
+def initialize_page(page_id: str, auth_config_path: Path) -> None:
     """用 savePage（version=0, components=[]）初始化空白 Page。"""
-    account_id, authorization, cookie = web_auth
-    headers = {
-        "Accept": "application/json, text/plain, */*",
-        "Authorization": authorization,
-        "Cookie": cookie,
-        "Content-Type": "application/json",
-        "Origin": "https://www.mingdao.com",
-        "Referer": "https://www.mingdao.com/",
-        "X-Requested-With": "XMLHttpRequest",
-    }
     body = {
         "appId": page_id,
         "version": 0,
@@ -214,7 +160,7 @@ def initialize_page(page_id: str, web_auth: tuple[str, str, str]) -> None:
             "webNewCols": 48,
         },
     }
-    resp = requests.post(SAVE_PAGE_URL, headers=headers, json=body, timeout=30)
+    resp = auth_retry.hap_web_post(SAVE_PAGE_URL, auth_config_path, json=body, timeout=30)
     resp.raise_for_status()
     data = resp.json()
     is_ok = data.get("status") == 1 or data.get("success") is True
@@ -303,8 +249,8 @@ def main() -> None:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     log = Logger(LOG_DIR / f"create_pages_{app_id}_{ts}.log")
 
-    web_auth = load_web_auth(Path(args.auth_config).expanduser().resolve())
-    auth_config = str(Path(args.auth_config).expanduser().resolve())
+    auth_config_path = Path(args.auth_config).expanduser().resolve()
+    auth_config = str(auth_config_path)
     gemini_config = str(Path(args.config).expanduser().resolve())
 
     log.log(f"应用: {app_name} ({app_id})")
@@ -346,7 +292,7 @@ def main() -> None:
         try:
             log.log(f"  [A] 创建 Page...")
             page_id = create_page(app_id, app_section_id, project_id,
-                                  page_name, icon, icon_color, web_auth)
+                                  page_name, icon, icon_color, auth_config_path)
             log.log(f"  [A] OK  pageId={page_id}")
             page_result["pageId"] = page_id
         except Exception as exc:
@@ -359,7 +305,7 @@ def main() -> None:
         # Step B: 初始化空白 Page
         try:
             log.log(f"  [B] 初始化 Page...")
-            initialize_page(page_id, web_auth)
+            initialize_page(page_id, auth_config_path)
             log.log(f"  [B] OK")
         except Exception as exc:
             log.log(f"  [B] 警告（初始化失败，继续创建图表）: {exc}")

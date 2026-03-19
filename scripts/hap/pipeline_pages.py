@@ -28,7 +28,7 @@ OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 PAGE_PLAN_DIR = OUTPUT_ROOT / "page_plans"
 PAGE_CREATE_DIR = OUTPUT_ROOT / "page_create_results"
 
-DEFAULT_MODEL = "gemini-2.5-pro"
+DEFAULT_MODEL = "gemini-2.5-flash"
 DEFAULT_GEMINI_CONFIG = BASE_DIR / "config" / "credentials" / "gemini_auth.json"
 DEFAULT_AUTH_CONFIG = BASE_DIR / "config" / "credentials" / "auth_config.py"
 

@@ -19,7 +19,7 @@ NETWORK_RETRY_DELAY = 5  # seconds
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 CONFIG_PATH = BASE_DIR / "config" / "credentials" / "gemini_auth.json"
-DEFAULT_MODEL = "gemini-2.5-pro"
+DEFAULT_MODEL = "gemini-2.5-flash"
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 WORKSHEET_PLAN_DIR = OUTPUT_ROOT / "worksheet_plans"
 MAX_PLAN_RETRIES = 3

@@ -24,7 +24,7 @@ ICON_JSON_PATH = BASE_DIR / "data" / "assets" / "icons" / "icon.json"
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 WORKSHEET_INVENTORY_DIR = OUTPUT_ROOT / "worksheet_inventory"
 ICON_MATCH_DIR = OUTPUT_ROOT / "worksheet_icon_match_plans"
-DEFAULT_MODEL = "gemini-2.5-pro"
+DEFAULT_MODEL = "gemini-2.5-flash"
 
 
 def load_json(path: Path) -> dict:

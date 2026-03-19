@@ -11,10 +11,8 @@
 """
 
 import argparse
-import importlib.util
 import json
 import os
-import subprocess
 import sys
 from pathlib import Path
 from typing import Optional
@@ -36,8 +34,7 @@ CURRENT_DIR = Path(__file__).resolve().parent
 if str(CURRENT_DIR) not in sys.path:
     sys.path.insert(0, str(CURRENT_DIR))
 
-from script_locator import resolve_script
-REFRESH_AUTH_SCRIPT = resolve_script("refresh_auth.py")
+import auth_retry
 
 HAP_BASE = "https://api.mingdao.com"
 APP_INFO_URL = f"{HAP_BASE}/v3/app"
@@ -90,42 +87,6 @@ def hap_headers(app_key: str, sign: str) -> dict:
     }
 
 
-# ---------- browser auth（仅删除接口需要）----------
-
-def refresh_web_auth(headless: bool) -> None:
-    cmd = [sys.executable, str(REFRESH_AUTH_SCRIPT)]
-    if headless:
-        cmd.append("--headless")
-    proc = subprocess.run(cmd, check=False, env=_clean_env())
-    if proc.returncode != 0:
-        raise RuntimeError(f"refresh_auth 执行失败，退出码: {proc.returncode}")
-
-def load_auth_config(path: Path) -> dict:
-    if not path.exists():
-        raise FileNotFoundError(f"认证文件不存在: {path}")
-    spec = importlib.util.spec_from_file_location("auth_config_runtime", str(path))
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"无法加载认证文件: {path}")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    account_id = str(getattr(mod, "ACCOUNT_ID", "")).strip()
-    authorization = str(getattr(mod, "AUTHORIZATION", "")).strip()
-    cookie = str(getattr(mod, "COOKIE", "")).strip()
-    if not account_id or not authorization or not cookie:
-        raise ValueError(f"auth_config.py 缺少 ACCOUNT_ID/AUTHORIZATION/COOKIE: {path}")
-    return {"accountId": account_id, "authorization": authorization, "cookie": cookie}
-
-
-def browser_headers(auth: dict) -> dict:
-    return {
-        "accept": "application/json, text/plain, */*",
-        "accountid": auth["accountId"],
-        "authorization": auth["authorization"],
-        "content-type": "application/json",
-        "cookie": auth["cookie"],
-        "x-requested-with": "XMLHttpRequest",
-    }
-
 
 # ---------- HAP v3: 获取工作表列表 ----------
 
@@ -167,16 +128,14 @@ def fetch_views(worksheet_id: str, app_key: str, sign: str) -> list[dict]:
 
 # ---------- 删除视图（私有 web 接口）----------
 
-def delete_view(app_id: str, worksheet_id: str, view_id: str, hdrs: dict) -> bool:
+def delete_view(app_id: str, worksheet_id: str, view_id: str, auth_config_path: Path) -> bool:
     payload = {
         "appId": app_id,
         "viewId": view_id,
         "worksheetId": worksheet_id,
         "status": 9,
     }
-    resp = requests.post(DELETE_VIEW_URL, headers=hdrs, json=payload, timeout=30, proxies={})
-    if resp.status_code == 401:
-        raise RuntimeError("认证失败（401），请更新 auth_config.py 中的 AUTHORIZATION/COOKIE")
+    resp = auth_retry.hap_web_post(DELETE_VIEW_URL, auth_config_path, json=payload, timeout=30, proxies={})
     data = resp.json()
     return bool(data.get("data"))
 
@@ -202,11 +161,10 @@ def main() -> None:
     sign = str(hap_auth.get("sign", "")).strip()
 
     # 浏览器认证（仅删除用）
+    auth_config_path = Path(args.auth_config).expanduser().resolve()
     if args.refresh_auth:
         print("正在刷新浏览器认证...")
-        refresh_web_auth(headless=args.headless)
-    b_auth = load_auth_config(Path(args.auth_config).expanduser().resolve())
-    del_headers = browser_headers(b_auth)
+        auth_retry.refresh_auth(auth_config_path, headless=args.headless)
 
     # 获取所有工作表
     print(f"正在获取应用 {app_id} 的工作表列表...")
@@ -234,7 +192,7 @@ def main() -> None:
             if args.dry_run:
                 print(f"[预览] 工作表《{ws_name}》({ws_id}) → 视图「{view_name}」({view_id}) 待删除")
             else:
-                ok = delete_view(app_id=app_id, worksheet_id=ws_id, view_id=view_id, hdrs=del_headers)
+                ok = delete_view(app_id=app_id, worksheet_id=ws_id, view_id=view_id, auth_config_path=auth_config_path)
                 status = "成功" if ok else "失败"
                 print(f"[{status}] 工作表《{ws_name}》({ws_id}) → 视图「{view_name}」({view_id})")
                 if ok:

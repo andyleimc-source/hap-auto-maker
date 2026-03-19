@@ -6,7 +6,6 @@ HAP 造数共享工具。
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import re
 from datetime import datetime
@@ -15,6 +14,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 from gemini_utils import load_gemini_config
+
+import auth_retry
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
@@ -207,20 +208,7 @@ def load_gemini_api_key(config_path: Path = GEMINI_CONFIG_PATH) -> str:
     return api_key
 
 
-def load_web_auth(path: Path = AUTH_CONFIG_PATH) -> tuple[str, str, str]:
-    if not path.exists():
-        raise FileNotFoundError(f"缺少认证配置: {path}")
-    spec = importlib.util.spec_from_file_location("auth_config_runtime", str(path))
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"无法加载认证文件: {path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    account_id = str(getattr(module, "ACCOUNT_ID", "")).strip()
-    authorization = str(getattr(module, "AUTHORIZATION", "")).strip()
-    cookie = str(getattr(module, "COOKIE", "")).strip()
-    if not account_id or not authorization or not cookie:
-        raise ValueError(f"auth_config.py 缺少 ACCOUNT_ID/AUTHORIZATION/COOKIE: {path}")
-    return account_id, authorization, cookie
+from auth_retry import load_web_auth  # re-exported for backward compatibility
 
 
 def extract_json_object(text: str) -> dict:
@@ -429,19 +417,14 @@ def fetch_app_worksheets(base_url: str, app_key: str, sign: str) -> Tuple[dict, 
     return app_meta, worksheets
 
 
-def fetch_worksheet_controls(worksheet_id: str, web_auth: tuple[str, str, str]) -> dict:
-    account_id, authorization, cookie = web_auth
-    headers = {
-        "Accept": "application/json, text/plain, */*",
-        "Content-Type": "application/json",
-        "AccountId": account_id,
-        "Authorization": authorization,
-        "Cookie": cookie,
-        "X-Requested-With": "XMLHttpRequest",
-        "Origin": "https://www.mingdao.com",
-        "Referer": f"https://www.mingdao.com/worksheet/field/edit?sourceId={worksheet_id}",
-    }
-    resp = requests.post(GET_CONTROLS_URL, headers=headers, json={"worksheetId": worksheet_id}, timeout=30)
+def fetch_worksheet_controls(worksheet_id: str, web_auth: tuple[str, str, str], auth_config_path: Path = AUTH_CONFIG_PATH) -> dict:
+    resp = auth_retry.hap_web_post(
+        GET_CONTROLS_URL,
+        auth_config_path,
+        referer=f"https://www.mingdao.com/worksheet/field/edit?sourceId={worksheet_id}",
+        json={"worksheetId": worksheet_id},
+        timeout=30,
+    )
     try:
         data = resp.json()
     except Exception as exc:
@@ -970,6 +953,7 @@ def add_worksheet_row_web(
     worksheet_id: str,
     record: dict,
     field_meta_map: Dict[str, dict],
+    auth_config_path: Path = AUTH_CONFIG_PATH,
 ) -> dict:
     payload = {
         "appId": app_id,
@@ -977,8 +961,13 @@ def add_worksheet_row_web(
         "viewId": "",
         "receiveControls": build_web_receive_controls(record, field_meta_map),
     }
-    headers = build_web_headers(account_id, authorization, cookie, app_id, worksheet_id)
-    resp = requests.post(ADD_WORKSHEET_ROW_URL, headers=headers, json=payload, timeout=30)
+    resp = auth_retry.hap_web_post(
+        ADD_WORKSHEET_ROW_URL,
+        auth_config_path,
+        referer=f"https://www.mingdao.com/app/{app_id}/{worksheet_id}",
+        json=payload,
+        timeout=30,
+    )
     try:
         data = resp.json()
     except Exception as exc:

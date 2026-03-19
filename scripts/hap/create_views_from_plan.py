@@ -5,13 +5,17 @@
 """
 
 import argparse
-import importlib.util
 import json
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import requests
+CURRENT_DIR = Path(__file__).resolve().parent
+if str(CURRENT_DIR) not in sys.path:
+    sys.path.insert(0, str(CURRENT_DIR))
+
+import auth_retry
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
@@ -57,21 +61,6 @@ def resolve_plan_json(value: str) -> Path:
         raise FileNotFoundError(f"未找到规划文件（目录: {VIEW_PLAN_DIR}）")
     return p.resolve()
 
-
-def load_auth_config(path: Path) -> dict:
-    if not path.exists():
-        raise FileNotFoundError(f"认证文件不存在: {path}")
-    spec = importlib.util.spec_from_file_location("auth_config_runtime", str(path))
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"无法加载认证文件: {path}")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    account_id = str(getattr(mod, "ACCOUNT_ID", "")).strip()
-    authorization = str(getattr(mod, "AUTHORIZATION", "")).strip()
-    cookie = str(getattr(mod, "COOKIE", "")).strip()
-    if not account_id or not authorization or not cookie:
-        raise ValueError(f"auth_config.py 缺少 ACCOUNT_ID/AUTHORIZATION/COOKIE: {path}")
-    return {"accountId": account_id, "authorization": authorization, "cookie": cookie}
 
 
 def normalize_advanced_setting(view_type: str, value: Any) -> dict:
@@ -222,35 +211,21 @@ def build_update_payload(app_id: str, worksheet_id: str, view_id: str, update: d
     return payload
 
 
-def build_web_headers(auth: dict, app_id: str, worksheet_id: str, view_id: str = "") -> dict:
+def post_web_api(url: str, payload: dict, auth_config_path: Path, app_id: str, worksheet_id: str, view_id: str = "") -> dict:
     referer = f"https://www.mingdao.com/app/{app_id}/{worksheet_id}"
     if view_id:
         referer = f"{referer}/{view_id}"
-    return {
-        "Accept": "application/json, text/plain, */*",
-        "Content-Type": "application/json",
-        "accountid": auth["accountId"],
-        "Authorization": auth["authorization"],
-        "Cookie": auth["cookie"],
-        "Origin": "https://www.mingdao.com",
-        "Referer": referer,
-        "X-Requested-With": "XMLHttpRequest",
-    }
-
-
-def post_web_api(url: str, payload: dict, auth: dict, app_id: str, worksheet_id: str, view_id: str = "") -> dict:
-    headers = build_web_headers(auth, app_id=app_id, worksheet_id=worksheet_id, view_id=view_id)
-    resp = requests.post(url, headers=headers, json=payload, timeout=30)
+    resp = auth_retry.hap_web_post(url, auth_config_path, referer=referer, json=payload, timeout=30)
     try:
         return resp.json()
     except Exception:
         return {"status_code": resp.status_code, "text": resp.text}
 
 
-def save_view(payload: dict, auth: dict, app_id: str, worksheet_id: str, dry_run: bool) -> dict:
+def save_view(payload: dict, auth_config_path: Path, app_id: str, worksheet_id: str, dry_run: bool) -> dict:
     if dry_run:
         return {"dry_run": True, "payload": payload}
-    return post_web_api(SAVE_VIEW_URL, payload, auth, app_id=app_id, worksheet_id=worksheet_id)
+    return post_web_api(SAVE_VIEW_URL, payload, auth_config_path, app_id=app_id, worksheet_id=worksheet_id)
 
 
 def main() -> None:
@@ -265,7 +240,7 @@ def main() -> None:
 
     plan_path = resolve_plan_json(args.plan_json)
     plan = load_json(plan_path)
-    auth = load_auth_config(Path(args.auth_config).expanduser().resolve())
+    auth_config_path = Path(args.auth_config).expanduser().resolve()
 
     wanted_app_ids = {x.strip() for x in str(args.app_ids).split(",") if x.strip()}
     wanted_ws_ids = {x.strip() for x in str(args.worksheet_ids).split(",") if x.strip()}
@@ -324,7 +299,7 @@ def main() -> None:
                 if not isinstance(view, dict):
                     continue
                 create_payload = build_create_payload(app_id, ws_id, view)
-                create_resp = save_view(create_payload, auth, app_id, ws_id, args.dry_run)
+                create_resp = save_view(create_payload, auth_config_path, app_id, ws_id, args.dry_run)
 
                 view_result = {
                     "name": create_payload["name"],
@@ -359,7 +334,7 @@ def main() -> None:
                         if skip_reason:
                             view_result["updates"].append({"payload": upd_payload, "skipped": True, "reason": skip_reason})
                             continue
-                        upd_resp = save_view(upd_payload, auth, app_id, ws_id, args.dry_run)
+                        upd_resp = save_view(upd_payload, auth_config_path, app_id, ws_id, args.dry_run)
                         view_result["updates"].append({"payload": upd_payload, "response": upd_resp})
                         result["summary"]["updateCallCount"] += 1
                         if not args.dry_run:

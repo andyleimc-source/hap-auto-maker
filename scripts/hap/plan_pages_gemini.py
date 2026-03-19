@@ -13,7 +13,6 @@
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 import sys
 import time
@@ -21,7 +20,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import requests
+import auth_retry
 from google import genai
 from google.genai import types
 
@@ -31,7 +30,7 @@ PAGE_PLAN_DIR = OUTPUT_ROOT / "page_plans"
 LOG_DIR = BASE_DIR / "data" / "logs"
 GEMINI_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "gemini_auth.json"
 AUTH_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "auth_config.py"
-DEFAULT_MODEL = "gemini-2.5-pro"
+DEFAULT_MODEL = "gemini-2.5-flash"
 
 GET_APP_URL = "https://www.mingdao.com/api/HomeApp/GetApp"
 GET_WORKSHEET_INFO_URL = "https://www.mingdao.com/api/Worksheet/GetWorksheetInfo"
@@ -103,22 +102,6 @@ def load_gemini_api_key(config_path: Path) -> str:
     return api_key
 
 
-def load_web_auth(path: Path) -> tuple[str, str, str]:
-    if not path.exists():
-        raise FileNotFoundError(f"缺少认证配置: {path}")
-    spec = importlib.util.spec_from_file_location("auth_config_runtime", str(path))
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"无法加载认证文件: {path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    account_id = str(getattr(module, "ACCOUNT_ID", "")).strip()
-    authorization = str(getattr(module, "AUTHORIZATION", "")).strip()
-    cookie = str(getattr(module, "COOKIE", "")).strip()
-    if not account_id or not authorization or not cookie:
-        raise ValueError(f"auth_config.py 缺少 ACCOUNT_ID/AUTHORIZATION/COOKIE: {path}")
-    return account_id, authorization, cookie
-
-
 def extract_json_object(text: str) -> dict:
     text = (text or "").strip()
     if not text:
@@ -146,21 +129,11 @@ def extract_json_object(text: str) -> dict:
 # 数据拉取
 # ---------------------------------------------------------------------------
 
-def resolve_app_uuid(ws_id: str, web_auth: tuple[str, str, str]) -> tuple[str, str, str, str]:
+def resolve_app_uuid(ws_id: str, auth_config_path: Path) -> tuple[str, str, str, str]:
     """通过 worksheetId 查询 UUID 格式的 appId、appName、appSectionId、projectId。"""
-    account_id, authorization, cookie = web_auth
-    headers = {
-        "Accept": "application/json, text/plain, */*",
-        "Content-Type": "application/json",
-        "AccountId": account_id,
-        "Authorization": authorization,
-        "Cookie": cookie,
-        "X-Requested-With": "XMLHttpRequest",
-        "Origin": "https://www.mingdao.com",
-        "Referer": "https://www.mingdao.com/",
-    }
-    resp = requests.post(GET_WORKSHEET_INFO_URL, headers=headers,
-                         json={"worksheetId": ws_id}, timeout=30)
+    resp = auth_retry.hap_web_post(GET_WORKSHEET_INFO_URL, auth_config_path,
+                                   referer="https://www.mingdao.com/",
+                                   json={"worksheetId": ws_id}, timeout=30)
     resp.raise_for_status()
     data = resp.json().get("data", {})
     app_uuid = str(data.get("appId", "")).strip()
@@ -179,7 +152,7 @@ def is_uuid(value: str) -> bool:
                          value.lower()))
 
 
-def fetch_app_info(app_id: str, web_auth: tuple[str, str, str]) -> dict:
+def fetch_app_info(app_id: str, auth_config_path: Path) -> dict:
     """获取应用结构：projectId, appSectionId, 工作表列表。
 
     app_id 可以是 UUID 格式（直接调用 GetApp）或 hex 工作表 ID（先解析出 UUID）。
@@ -187,21 +160,11 @@ def fetch_app_info(app_id: str, web_auth: tuple[str, str, str]) -> dict:
     # 若不是 UUID 格式，先通过 GetWorksheetInfo 解析真实 appId
     resolved_app_uuid = app_id
     if not is_uuid(app_id):
-        resolved_app_uuid, _name, _section, _proj = resolve_app_uuid(app_id, web_auth)
+        resolved_app_uuid, _name, _section, _proj = resolve_app_uuid(app_id, auth_config_path)
 
-    account_id, authorization, cookie = web_auth
-    headers = {
-        "Accept": "application/json, text/plain, */*",
-        "Content-Type": "application/json",
-        "AccountId": account_id,
-        "Authorization": authorization,
-        "Cookie": cookie,
-        "X-Requested-With": "XMLHttpRequest",
-        "Origin": "https://www.mingdao.com",
-        "Referer": "https://www.mingdao.com/",
-    }
-    resp = requests.post(GET_APP_URL, headers=headers,
-                         json={"appId": resolved_app_uuid, "getSection": True}, timeout=30)
+    resp = auth_retry.hap_web_post(GET_APP_URL, auth_config_path,
+                                   referer="https://www.mingdao.com/",
+                                   json={"appId": resolved_app_uuid, "getSection": True}, timeout=30)
     resp.raise_for_status()
     data = resp.json()
     app_data = data.get("data", {})
@@ -234,20 +197,10 @@ def fetch_app_info(app_id: str, web_auth: tuple[str, str, str]) -> dict:
     }
 
 
-def fetch_worksheet_controls(worksheet_id: str, web_auth: tuple[str, str, str]) -> dict:
-    account_id, authorization, cookie = web_auth
-    headers = {
-        "Accept": "application/json, text/plain, */*",
-        "Content-Type": "application/json",
-        "AccountId": account_id,
-        "Authorization": authorization,
-        "Cookie": cookie,
-        "X-Requested-With": "XMLHttpRequest",
-        "Origin": "https://www.mingdao.com",
-        "Referer": "https://www.mingdao.com/",
-    }
-    resp = requests.post(GET_CONTROLS_URL, headers=headers,
-                         json={"worksheetId": worksheet_id}, timeout=30)
+def fetch_worksheet_controls(worksheet_id: str, auth_config_path: Path) -> dict:
+    resp = auth_retry.hap_web_post(GET_CONTROLS_URL, auth_config_path,
+                                   referer="https://www.mingdao.com/",
+                                   json={"worksheetId": worksheet_id}, timeout=30)
     data = resp.json()
     wrapped = data.get("data", {})
     if isinstance(wrapped, dict) and isinstance(wrapped.get("data"), dict):
@@ -410,12 +363,12 @@ def main() -> None:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     log = Logger(LOG_DIR / f"plan_pages_{app_id}_{ts}.log")
 
-    web_auth = load_web_auth(Path(args.auth_config).expanduser().resolve())
+    auth_config_path = Path(args.auth_config).expanduser().resolve()
     api_key = load_gemini_api_key(Path(args.config).expanduser().resolve())
 
     # Step 1: 获取应用结构
     log.log(f"[1/3] 拉取应用结构: {app_id}")
-    app_info = fetch_app_info(app_id, web_auth)
+    app_info = fetch_app_info(app_id, auth_config_path)
     app_name = app_info["appName"]
     log.log(f"  应用名称: {app_name}")
     log.log(f"  projectId: {app_info['projectId']}")
@@ -436,7 +389,7 @@ def main() -> None:
         ws_id = ws["worksheetId"]
         ws_name = ws["worksheetName"]
         try:
-            payload = fetch_worksheet_controls(ws_id, web_auth)
+            payload = fetch_worksheet_controls(ws_id, auth_config_path)
             fields = simplify_controls(payload.get("controls", []))
             log.log(f"  - {ws_name} ({ws_id}): {len(fields)} 个字段")
             worksheets_detail.append({

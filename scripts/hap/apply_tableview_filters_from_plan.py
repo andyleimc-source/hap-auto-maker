@@ -7,13 +7,17 @@
 """
 
 import argparse
-import importlib.util
 import json
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import requests
+CURRENT_DIR = Path(__file__).resolve().parent
+if str(CURRENT_DIR) not in sys.path:
+    sys.path.insert(0, str(CURRENT_DIR))
+
+import auth_retry
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
@@ -62,21 +66,6 @@ def resolve_plan_json(value: str) -> Path:
     return p.resolve()
 
 
-def load_auth_config(path: Path) -> dict:
-    if not path.exists():
-        raise FileNotFoundError(f"认证文件不存在: {path}")
-    spec = importlib.util.spec_from_file_location("auth_config_runtime", str(path))
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"无法加载认证文件: {path}")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    account_id = str(getattr(mod, "ACCOUNT_ID", "")).strip()
-    authorization = str(getattr(mod, "AUTHORIZATION", "")).strip()
-    cookie = str(getattr(mod, "COOKIE", "")).strip()
-    if not account_id or not authorization or not cookie:
-        raise ValueError(f"auth_config.py 缺少 ACCOUNT_ID/AUTHORIZATION/COOKIE: {path}")
-    return {"accountId": account_id, "authorization": authorization, "cookie": cookie}
-
 
 def to_adv_str_dict(value: Any) -> dict:
     if not isinstance(value, dict):
@@ -94,20 +83,11 @@ def to_adv_str_dict(value: Any) -> dict:
     return out
 
 
-def save_view(payload: dict, auth: dict, app_id: str, worksheet_id: str, view_id: str, dry_run: bool) -> dict:
+def save_view(payload: dict, auth_config_path: Path, app_id: str, worksheet_id: str, view_id: str, dry_run: bool) -> dict:
     if dry_run:
         return {"dry_run": True, "payload": payload}
-    headers = {
-        "Accept": "application/json, text/plain, */*",
-        "Content-Type": "application/json",
-        "accountid": auth["accountId"],
-        "Authorization": auth["authorization"],
-        "Cookie": auth["cookie"],
-        "Origin": "https://www.mingdao.com",
-        "Referer": f"https://www.mingdao.com/app/{app_id}/{worksheet_id}/{view_id}",
-        "X-Requested-With": "XMLHttpRequest",
-    }
-    resp = requests.post(SAVE_VIEW_URL, headers=headers, json=payload, timeout=30)
+    referer = f"https://www.mingdao.com/app/{app_id}/{worksheet_id}/{view_id}"
+    resp = auth_retry.hap_web_post(SAVE_VIEW_URL, auth_config_path, referer=referer, json=payload, timeout=30)
     try:
         return resp.json()
     except Exception:
@@ -127,7 +107,7 @@ def main() -> None:
 
     plan_path = resolve_plan_json(args.plan_json)
     plan = load_json(plan_path)
-    auth = load_auth_config(Path(args.auth_config).expanduser().resolve())
+    auth_config_path = Path(args.auth_config).expanduser().resolve()
 
     wanted_app_ids = {x.strip() for x in str(args.app_ids).split(",") if x.strip()}
     wanted_ws_ids = {x.strip() for x in str(args.worksheet_ids).split(",") if x.strip()}
@@ -213,7 +193,7 @@ def main() -> None:
                         "advancedSetting": to_adv_str_dict(vp.get("navAdvancedSetting")),
                         "editAdKeys": vp.get("navEditAdKeys") if isinstance(vp.get("navEditAdKeys"), list) else [],
                     }
-                    resp = save_view(payload, auth, app_id, ws_id, view_id, args.dry_run)
+                    resp = save_view(payload, auth_config_path, app_id, ws_id, view_id, args.dry_run)
                     ok = bool(args.dry_run) or (isinstance(resp, dict) and int(resp.get("state", 0) or 0) == 1)
                     view_result["navApply"] = {"payload": payload, "response": resp, "success": ok}
                     if ok:
@@ -236,7 +216,7 @@ def main() -> None:
                         "advancedSetting": to_adv_str_dict(vp.get("fastAdvancedSetting")),
                         "editAdKeys": vp.get("fastEditAdKeys") if isinstance(vp.get("fastEditAdKeys"), list) else [],
                     }
-                    resp = save_view(payload, auth, app_id, ws_id, view_id, args.dry_run)
+                    resp = save_view(payload, auth_config_path, app_id, ws_id, view_id, args.dry_run)
                     ok = bool(args.dry_run) or (isinstance(resp, dict) and int(resp.get("state", 0) or 0) == 1)
                     view_result["fastApply"] = {"payload": payload, "response": resp, "success": ok}
                     if ok:

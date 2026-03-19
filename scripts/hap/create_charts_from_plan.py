@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 import secrets
 import uuid
@@ -15,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import requests
+import auth_retry
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
@@ -42,22 +41,6 @@ def load_json(path: Path) -> dict:
 def write_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-def load_web_auth(path: Path) -> tuple[str, str, str]:
-    if not path.exists():
-        raise FileNotFoundError(f"缺少认证配置: {path}")
-    spec = importlib.util.spec_from_file_location("auth_config_runtime", str(path))
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"无法加载认证文件: {path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    account_id = str(getattr(module, "ACCOUNT_ID", "")).strip()
-    authorization = str(getattr(module, "AUTHORIZATION", "")).strip()
-    cookie = str(getattr(module, "COOKIE", "")).strip()
-    if not account_id or not authorization or not cookie:
-        raise ValueError(f"auth_config.py 缺少 ACCOUNT_ID/AUTHORIZATION/COOKIE: {path}")
-    return account_id, authorization, cookie
 
 
 def resolve_plan_path(value: str) -> Path:
@@ -280,19 +263,8 @@ def build_report_body(chart: dict, app_id: str) -> dict:
 # API 调用
 # ---------------------------------------------------------------------------
 
-def save_report_config(body: dict, web_auth: tuple[str, str, str]) -> dict:
-    account_id, authorization, cookie = web_auth
-    headers = {
-        "Accept": "application/json, text/plain, */*",
-        "Accept-Language": "zh-CN,zh;q=0.9",
-        "Authorization": authorization,
-        "Content-Type": "application/json",
-        "Cookie": cookie,
-        "Origin": "https://www.mingdao.com",
-        "Referer": "https://www.mingdao.com/",
-        "X-Requested-With": "XMLHttpRequest",
-    }
-    resp = requests.post(SAVE_REPORT_URL, headers=headers, json=body, timeout=30)
+def save_report_config(body: dict, auth_config_path: Path) -> dict:
+    resp = auth_retry.hap_web_post(SAVE_REPORT_URL, auth_config_path, json=body, timeout=30)
     resp.raise_for_status()
     return resp.json()
 
@@ -300,16 +272,9 @@ def save_report_config(body: dict, web_auth: tuple[str, str, str]) -> dict:
 GET_PAGE_URL = "https://api.mingdao.com/report/custom/getPage"
 
 
-def get_page(page_id: str, web_auth: tuple[str, str, str]) -> dict:
+def get_page(page_id: str, auth_config_path: Path) -> dict:
     """GET 当前 page 的版本号和现有 components。"""
-    account_id, authorization, cookie = web_auth
-    headers = {
-        "Accept": "application/json, text/plain, */*",
-        "Authorization": authorization,
-        "Cookie": cookie,
-        "X-Requested-With": "XMLHttpRequest",
-    }
-    resp = requests.get(f"{GET_PAGE_URL}?appId={page_id}", headers=headers, timeout=30)
+    resp = auth_retry.hap_web_get(f"{GET_PAGE_URL}?appId={page_id}", auth_config_path, timeout=30)
     resp.raise_for_status()
     data = resp.json()
     if data.get("status") != 1:
@@ -360,18 +325,7 @@ def build_page_components(results: List[dict], app_id: str, existing_components:
     return existing_components + new_components
 
 
-def save_page(page_id: str, components: List[dict], version: int, web_auth: tuple[str, str, str]) -> dict:
-    account_id, authorization, cookie = web_auth
-    headers = {
-        "Accept": "application/json, text/plain, */*",
-        "Accept-Language": "zh-CN,zh;q=0.9",
-        "Authorization": authorization,
-        "Content-Type": "application/json",
-        "Cookie": cookie,
-        "Origin": "https://www.mingdao.com",
-        "Referer": "https://www.mingdao.com/",
-        "X-Requested-With": "XMLHttpRequest",
-    }
+def save_page(page_id: str, components: List[dict], version: int, auth_config_path: Path) -> dict:
     body = {
         "appId": page_id,
         "version": version,
@@ -398,7 +352,7 @@ def save_page(page_id: str, components: List[dict], version: int, web_auth: tupl
             "orightWebCols": 48,
         },
     }
-    resp = requests.post(SAVE_PAGE_URL, headers=headers, json=body, timeout=30)
+    resp = auth_retry.hap_web_post(SAVE_PAGE_URL, auth_config_path, json=body, timeout=30)
     resp.raise_for_status()
     return resp.json()
 
@@ -427,7 +381,7 @@ def main() -> None:
     if not app_id:
         raise ValueError("规划文件缺少 appId")
 
-    web_auth = load_web_auth(Path(args.auth_config).expanduser().resolve())
+    auth_config_path = Path(args.auth_config).expanduser().resolve()
 
     print(f"应用: {app_name} ({app_id})")
     print(f"规划文件: {plan_path}")
@@ -448,7 +402,7 @@ def main() -> None:
             continue
 
         try:
-            resp_data = save_report_config(body, web_auth)
+            resp_data = save_report_config(body, auth_config_path)
             report_id = ""
             if isinstance(resp_data, dict):
                 data_field = resp_data.get("data", {})
@@ -511,7 +465,7 @@ def main() -> None:
         print(f"\n[savePage] 将 {success} 个图表布局到 page: {page_id}")
         try:
             # 1. 先 GET 当前 page，获取真实 version 和已有 components
-            current_page = get_page(page_id, web_auth)
+            current_page = get_page(page_id, auth_config_path)
             current_version = int(current_page.get("version", 1))
             existing_components = current_page.get("components", []) or []
             print(f"  当前 page version={current_version}，已有 {len(existing_components)} 个组件")
@@ -520,7 +474,7 @@ def main() -> None:
             all_components = build_page_components(results, app_id, existing_components)
 
             # 3. savePage
-            page_resp = save_page(page_id, all_components, current_version, web_auth)
+            page_resp = save_page(page_id, all_components, current_version, auth_config_path)
             page_ok = (
                 page_resp.get("success") is True
                 or page_resp.get("status") == 1
