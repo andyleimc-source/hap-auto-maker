@@ -7,19 +7,21 @@
 import argparse
 import json
 import re
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from google import genai
-from google.genai import types
-
 NETWORK_MAX_RETRIES = 3
 NETWORK_RETRY_DELAY = 5
 
 BASE_DIR = Path(__file__).resolve().parents[2]
-CONFIG_PATH = BASE_DIR / "config" / "credentials" / "gemini_auth.json"
+sys.path.insert(0, str(BASE_DIR / "scripts" / "hap"))
+
+from ai_utils import AI_CONFIG_PATH, create_generation_config, get_ai_client, load_ai_config
+
+CONFIG_PATH = AI_CONFIG_PATH
 ICON_JSON_PATH = BASE_DIR / "data" / "assets" / "icons" / "icon.json"
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 APP_INVENTORY_DIR = OUTPUT_ROOT / "app_inventory"
@@ -53,14 +55,6 @@ def resolve_app_inventory_json(value: str) -> Path:
     if not p:
         raise FileNotFoundError(f"未找到应用清单，请传 --app-json（目录: {APP_INVENTORY_DIR}）")
     return p.resolve()
-
-
-def load_api_key(config_path: Path) -> str:
-    data = load_json(config_path)
-    api_key = str(data.get("api_key", "")).strip()
-    if not api_key:
-        raise ValueError(f"配置缺少 api_key: {config_path}")
-    return api_key
 
 
 def collect_icon_names(node) -> list[str]:
@@ -161,15 +155,19 @@ icon 库（fileName）：
 3) 不要输出 markdown，不要输出额外文本。
 """.strip()
 
-    api_key = load_api_key(Path(args.config).expanduser().resolve())
-    client = genai.Client(api_key=api_key)
+    ai_config = load_ai_config(Path(args.config).expanduser().resolve())
+    client = get_ai_client(ai_config)
     response = None
     for net_try in range(1, NETWORK_MAX_RETRIES + 1):
         try:
             response = client.models.generate_content(
                 model=args.model,
                 contents=prompt,
-                config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0.2),
+                config=create_generation_config(
+                    ai_config,
+                    response_mime_type="application/json",
+                    temperature=0.2,
+                ),
             )
             break
         except Exception as e:

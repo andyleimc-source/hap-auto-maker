@@ -12,8 +12,7 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
-from google import genai
-from google.genai import types
+from ai_utils import create_generation_config, get_ai_client, load_ai_config
 from script_locator import resolve_script
 from gemini_utils import load_gemini_config
 
@@ -197,10 +196,11 @@ def main() -> None:
 
     config_path = Path(args.config).expanduser().resolve() if args.config else None
     if GEN_API_KEY:
-        api_key = GEN_API_KEY
+        ai_config = load_ai_config()
     else:
-        api_key = load_gemini_api_key(config_path) if config_path else load_gemini_api_key()
-    client = genai.Client(api_key=api_key)
+        load_gemini_api_key(config_path) if config_path else load_gemini_api_key()
+        ai_config = load_ai_config(config_path) if config_path else load_ai_config()
+    client = get_ai_client(ai_config)
 
     feedback_history: List[dict] = []
     current_proposals: List[dict] = []
@@ -217,7 +217,8 @@ def main() -> None:
                 resp = client.models.generate_content(
                     model=args.model,
                     contents=prompt,
-                    config=types.GenerateContentConfig(
+                    config=create_generation_config(
+                        ai_config,
                         response_mime_type="application/json",
                         temperature=1.0,
                     ),

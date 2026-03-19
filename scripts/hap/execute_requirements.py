@@ -28,8 +28,8 @@ CURRENT_DIR = Path(__file__).resolve().parent
 if str(CURRENT_DIR) not in sys.path:
     sys.path.insert(0, str(CURRENT_DIR))
 
+from ai_utils import AI_CONFIG_PATH, load_ai_config
 from script_locator import resolve_script
-from gemini_utils import load_gemini_config
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
@@ -37,7 +37,7 @@ EXECUTION_RUN_DIR = OUTPUT_ROOT / "execution_runs"
 APP_AUTH_DIR = OUTPUT_ROOT / "app_authorizations"
 WORKSHEET_PLAN_DIR = OUTPUT_ROOT / "worksheet_plans"
 
-CONFIG_GEMINI = BASE_DIR / "config" / "credentials" / "gemini_auth.json"
+CONFIG_GEMINI = AI_CONFIG_PATH
 CONFIG_ORG = BASE_DIR / "config" / "credentials" / "organization_auth.json"
 CONFIG_WEB_AUTH = BASE_DIR / "config" / "credentials" / "auth_config.py"
 
@@ -77,9 +77,10 @@ def now_iso() -> str:
 
 # 加载全局配置
 try:
-    _, GEN_MODEL = load_gemini_config()
+    _AI_CONFIG = load_ai_config()
+    GEN_MODEL = _AI_CONFIG.get("model", "gemini-2.5-flash")
 except Exception:
-    GEN_MODEL = "gemini-2.5-pro"
+    GEN_MODEL = "gemini-2.5-flash"
 
 DEFAULT_MODEL = GEN_MODEL
 
@@ -164,7 +165,7 @@ def normalize_spec(raw: dict) -> dict:
 
     roles = spec.get("roles") if isinstance(spec.get("roles"), dict) else {}
     roles.setdefault("enabled", True)
-    roles.setdefault("model", "gemini-2.5-flash")
+    roles.setdefault("model", DEFAULT_MODEL)
     roles.setdefault("skip_existing", True)
     roles.setdefault("video_mode", "skip")
     spec["roles"] = roles
@@ -183,14 +184,14 @@ def normalize_spec(raw: dict) -> dict:
 
     chatbots = spec.get("chatbots") if isinstance(spec.get("chatbots"), dict) else {}
     chatbots.setdefault("enabled", True)
-    chatbots.setdefault("model", "gemini-2.5-flash")
+    chatbots.setdefault("model", DEFAULT_MODEL)
     chatbots.setdefault("auto", True)
     chatbots.setdefault("dry_run", False)
     spec["chatbots"] = chatbots
 
     workflows = spec.get("workflows") if isinstance(spec.get("workflows"), dict) else {}
     workflows.setdefault("enabled", True)
-    workflows.setdefault("model", "gemini-2.5-flash")
+    workflows.setdefault("model", DEFAULT_MODEL)
     workflows.setdefault("thinking", "none")
     workflows.setdefault("no_publish", False)
     workflows.setdefault("skip_analysis", False)
@@ -330,7 +331,7 @@ def step_selected(step_id: int, step_key: str, selected: set) -> bool:
 
 
 def required_configs(spec: dict) -> List[Tuple[Path, str]]:
-    out = [(CONFIG_GEMINI, "Gemini 配置"), (CONFIG_ORG, "组织认证配置")]
+    out = [(CONFIG_GEMINI, "AI 配置"), (CONFIG_ORG, "组织认证配置")]
     ws = spec["worksheets"]
     views = spec["views"]
     view_filters = spec["view_filters"]

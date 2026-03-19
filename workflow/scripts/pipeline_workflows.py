@@ -44,6 +44,7 @@ from workflow_io import persist
 
 # 引入共享的健壮 JSON 解析工具
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts" / "hap"))
+from ai_utils import AI_CONFIG_PATH, create_generation_config, get_ai_client, load_ai_config  # type: ignore
 from gemini_utils import parse_gemini_json  # type: ignore
 
 
@@ -51,7 +52,7 @@ from gemini_utils import parse_gemini_json  # type: ignore
 
 _PROJECT_ROOT     = Path(__file__).resolve().parents[2]
 _APP_AUTH_DIR     = _PROJECT_ROOT / "data" / "outputs" / "app_authorizations"
-_GEMINI_AUTH_JSON = _PROJECT_ROOT / "config" / "credentials" / "gemini_auth.json"
+_GEMINI_AUTH_JSON = AI_CONFIG_PATH
 
 _FIELD_TYPE_MAP = {
     2: "文本", 3: "电话", 4: "证件号", 5: "Email", 6: "数字",
@@ -329,12 +330,12 @@ def build_analysis_prompt(app_structure: dict) -> str:
 }}"""
 
 
-def analyze_relationships(app_structure: dict, api_key: str, model: str) -> dict:
+def analyze_relationships(app_structure: dict, ai_config: dict, model: str) -> dict:
     """调用 Gemini 分析各工作表的业务关联关系（轻量调用，不开 thinking）。"""
     print("[gemini] 第1步：分析业务关联关系...", file=sys.stderr)
     prompt = build_analysis_prompt(app_structure)
     try:
-        result = call_gemini(prompt, api_key, model, thinking="none")
+        result = call_gemini(prompt, ai_config, model, thinking="none")
         flows = result.get("cross_table_flows", [])
         summary = result.get("app_summary", "")
         print(f"[gemini] 业务分析完成：{summary}", file=sys.stderr)
@@ -635,48 +636,25 @@ _THINKING_BUDGETS: dict[str, int] = {
 _MAX_JSON_RETRIES = 2  # JSON 解析失败时最多重试 Gemini 调用的次数
 
 
-def _call_gemini_once(prompt: str, api_key: str, model: str, thinking: str) -> str:
-    """发起一次 Gemini API 调用，返回原始文本。"""
-    try:
-        from google import genai as _genai          # type: ignore
-        from google.genai import types as _gtypes   # type: ignore
-
-        client = _genai.Client(api_key=api_key)
-        config_kwargs: dict = {"response_mime_type": "application/json"}
-        if thinking != "none":
-            budget = _THINKING_BUDGETS.get(thinking, 8192)
-            try:
-                config_kwargs["thinking_config"] = _gtypes.ThinkingConfig(thinking_budget=budget)
-            except (AttributeError, TypeError):
-                pass
-
-        print(f"[gemini] 正在生成工作流规划（google-genai，model={model}，thinking={thinking}）...", file=sys.stderr)
-        resp = client.models.generate_content(
-            model=model,
-            contents=prompt,
-            config=_gtypes.GenerateContentConfig(**config_kwargs),
-        )
-        return resp.text
-
-    except ImportError:
-        try:
-            import google.generativeai as genai_old  # type: ignore
-        except ImportError:
-            raise RuntimeError(
-                "缺少依赖，请安装：\n  pip install google-genai\n  或  pip install google-generativeai"
-            )
-        genai_old.configure(api_key=api_key)
-        gm = genai_old.GenerativeModel(
-            model,
-            generation_config=genai_old.types.GenerationConfig(
-                response_mime_type="application/json",
-            ),
-        )
-        print(f"[gemini] 正在生成工作流规划（google-generativeai，model={model}）...", file=sys.stderr)
-        return gm.generate_content(prompt).text
+def _call_gemini_once(prompt: str, ai_config: dict, model: str, thinking: str) -> str:
+    """发起一次 AI API 调用，返回原始文本。"""
+    budget = None if thinking == "none" else _THINKING_BUDGETS.get(thinking, 8192)
+    client = get_ai_client(ai_config)
+    provider = ai_config.get("provider", "gemini")
+    print(f"[ai] 正在生成工作流规划（provider={provider}，model={model}，thinking={thinking}）...", file=sys.stderr)
+    resp = client.models.generate_content(
+        model=model,
+        contents=prompt,
+        config=create_generation_config(
+            ai_config,
+            response_mime_type="application/json",
+            thinking_budget=budget,
+        ),
+    )
+    return resp.text
 
 
-def call_gemini(prompt: str, api_key: str, model: str, thinking: str = "none") -> dict:
+def call_gemini(prompt: str, ai_config: dict, model: str, thinking: str = "none") -> dict:
     """
     调用 Gemini API 生成工作流规划 JSON。
     JSON 解析失败时自动重试（最多 _MAX_JSON_RETRIES 次）。
@@ -689,7 +667,7 @@ def call_gemini(prompt: str, api_key: str, model: str, thinking: str = "none") -
     last_exc: Exception = RuntimeError("未知错误")
     for attempt in range(1, _MAX_JSON_RETRIES + 2):  # 1 次正常 + 最多 _MAX_JSON_RETRIES 次重试
         try:
-            raw = _call_gemini_once(prompt, api_key, model, thinking)
+            raw = _call_gemini_once(prompt, ai_config, model, thinking)
             print(f"[gemini] 响应长度 {len(raw)} 字符", file=sys.stderr)
             return parse_gemini_json(raw)
         except (ValueError, Exception) as exc:
@@ -739,18 +717,19 @@ def main() -> int:
         return 1
     print(f"[step 1/3] ✓ 应用：{app_structure['app_name']}，共 {ws_count} 个工作表", file=sys.stderr)
 
-    # 3. 获取 Gemini Key
-    gemini_key = args.gemini_key or os.environ.get("GEMINI_API_KEY", "").strip()
-    if not gemini_key and _GEMINI_AUTH_JSON.exists():
-        try:
-            gemini_key = json.loads(_GEMINI_AUTH_JSON.read_text(encoding="utf-8")).get("api_key", "").strip()
-            if gemini_key:
-                print(f"[auth] Gemini Key 来源：{_GEMINI_AUTH_JSON.name}", file=sys.stderr)
-        except Exception:
-            pass
-    if not gemini_key:
+    # 3. 获取 AI 配置
+    try:
+        ai_config = load_ai_config(_GEMINI_AUTH_JSON)
+    except Exception:
+        ai_config = {}
+    cli_key = args.gemini_key or os.environ.get("GEMINI_API_KEY", "").strip()
+    if cli_key:
+        ai_config = dict(ai_config or {})
+        ai_config["provider"] = ai_config.get("provider", "gemini")
+        ai_config["api_key"] = cli_key
+    if not ai_config.get("api_key", ""):
         msg = (
-            "缺少 Gemini API Key。\n"
+            "缺少 AI API Key。\n"
             "  方式1：export GEMINI_API_KEY=your_key\n"
             "  方式2：--gemini-key your_key\n"
             f"  方式3：在 {_GEMINI_AUTH_JSON} 中设置 api_key 字段"
@@ -763,7 +742,7 @@ def main() -> int:
     relationships: dict = {}
     if not args.skip_analysis:
         print(f"\n[step 2/4] 业务关系预分析（--skip-analysis 可跳过）...", file=sys.stderr)
-        relationships = analyze_relationships(app_structure, gemini_key, args.model)
+        relationships = analyze_relationships(app_structure, ai_config, args.model)
     else:
         print(f"\n[step 2/4] 跳过业务关系预分析（--skip-analysis）", file=sys.stderr)
 
@@ -771,7 +750,7 @@ def main() -> int:
     print(f"\n[step 3/4] 调用 Gemini 生成工作流规划（model={args.model}，thinking={args.thinking}）...", file=sys.stderr)
     try:
         gemini_result = call_gemini(
-            build_prompt(app_structure, relationships), gemini_key, args.model, args.thinking
+            build_prompt(app_structure, relationships), ai_config, args.model, args.thinking
         )
     except Exception as exc:
         print(f"Error: Gemini 调用失败：{exc}", file=sys.stderr)

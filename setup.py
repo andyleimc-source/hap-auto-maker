@@ -8,8 +8,10 @@ HAP Auto 一键初始化脚本
 用法：
     python3 setup.py            # 首次初始化（已有配置自动跳过）
     python3 setup.py --force    # 强制重新初始化（显示当前值，回车保留，输入新值覆盖）
+    python3 setup.py --show     # 查看当前配置，并可按提示修改 AI 配置
 """
 
+import argparse
 import json
 import subprocess
 import sys
@@ -17,6 +19,15 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 CRED_DIR = BASE_DIR / "config" / "credentials"
+sys.path.insert(0, str(BASE_DIR / "scripts" / "hap"))
+
+from ai_utils import (
+    AI_CONFIG_PATH,
+    DEFAULT_DEEPSEEK_BASE_URL,
+    default_model_for_provider,
+    load_ai_config,
+    mask_secret,
+)
 
 # 占位符列表，匹配到这些值视为"未填写"
 _PLACEHOLDERS = {
@@ -26,6 +37,8 @@ _PLACEHOLDERS = {
     "YOUR_HAP_OWNER_ID",
     "YOUR_GEMINI_API_KEY",
     "YOUR_GEMINI_MODEL",
+    "YOUR_DEEPSEEK_API_KEY",
+    "YOUR_DEEPSEEK_MODEL",
     "your-account@example.com",
     "your-password",
     "OPTIONAL_PRECOMPUTED_SIGN",
@@ -75,38 +88,74 @@ def step_install_deps():
     """安装 Python 依赖 + Playwright 浏览器"""
     print("\n📦 [1/4] 安装 Python 依赖...")
     subprocess.check_call([sys.executable, "-m", "pip", "install", "-q",
-                           "requests", "google-genai", "playwright", "prompt-toolkit"])
+                           "requests", "google-genai", "openai", "playwright", "prompt-toolkit"])
     print("🌐 安装 Playwright Chromium...")
     subprocess.check_call([sys.executable, "-m", "playwright", "install", "chromium"])
 
 
-def step_gemini(force=False):
-    """配置 Gemini API Key"""
-    dst = CRED_DIR / "gemini_auth.json"
-    existing = _load_json_safe(dst)
-    old_key = existing.get("api_key", "")
-    # 默认始终使用 gemini-2.5-flash（推荐，速度更快）
-    default_model = "gemini-2.5-flash"
+def _write_ai_config(data: dict) -> None:
+    AI_CONFIG_PATH.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    if data.get("provider") == "gemini":
+        legacy = {
+            "api_key": data.get("api_key", ""),
+            "model": data.get("model", default_model_for_provider("gemini")),
+        }
+        (CRED_DIR / "gemini_auth.json").write_text(
+            json.dumps(legacy, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
 
+
+def _load_existing_ai_config() -> dict:
+    try:
+        return load_ai_config()
+    except Exception:
+        return {}
+
+
+def step_ai(force=False):
+    """配置统一 AI 平台"""
+    dst = AI_CONFIG_PATH
+    existing = _load_existing_ai_config()
     if dst.exists() and not force:
         return
 
-    print("\n🔑 [2/4] 配置 Gemini API & Model")
-    print("   获取地址: https://aistudio.google.com/apikey")
+    old_provider = existing.get("provider", "gemini")
+    old_key = existing.get("api_key", "")
+    old_model = existing.get("model", default_model_for_provider(old_provider))
+    old_base_url = existing.get("base_url", "")
 
-    if old_key and old_key not in _PLACEHOLDERS:
-        key = ask(f"   Gemini API Key [{_mask(old_key)}]") or old_key
+    print("\n🔑 [2/4] 配置 AI 平台")
+    print("   1. Gemini")
+    print("      获取地址: https://aistudio.google.com/apikey")
+    print("   2. DeepSeek")
+    print("      获取地址: https://platform.deepseek.com/api_keys")
+
+    provider_default = "1" if old_provider == "gemini" else "2"
+    provider_choice = ask("   请选择 AI 平台（1=Gemini, 2=DeepSeek）", default=provider_default)
+    provider = "deepseek" if provider_choice == "2" else "gemini"
+    default_model = old_model if provider == old_provider and old_model else default_model_for_provider(provider)
+
+    if old_key and old_key not in _PLACEHOLDERS and provider == old_provider:
+        key = ask(f"   {provider.title()} API Key [{_mask(old_key)}]") or old_key
     else:
-        key = ask("   请输入你的 Gemini API Key")
+        key = ask(f"   请输入 {provider.title()} API Key")
 
-    print(f"   推荐模型: gemini-2.5-flash（更快）或 gemini-2.5-pro（更强）")
-    model = ask("   Gemini 模型名称", default=default_model)
+    if provider == "gemini":
+        print("   推荐模型: gemini-2.5-flash（更快）或 gemini-2.5-pro（更强）")
+        base_url = ""
+    else:
+        print("   推荐模型: deepseek-chat（通用）")
+        base_url = old_base_url or DEFAULT_DEEPSEEK_BASE_URL
 
+    model = ask("   模型名称", default=default_model)
     data = {
-        "api_key": key or "YOUR_GEMINI_API_KEY",
-        "model": model or "YOUR_GEMINI_MODEL"
+        "provider": provider,
+        "api_key": key or ("YOUR_GEMINI_API_KEY" if provider == "gemini" else "YOUR_DEEPSEEK_API_KEY"),
+        "model": model or default_model_for_provider(provider),
+        "base_url": base_url,
     }
-    dst.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    _write_ai_config(data)
     print(f"   ✔ 已写入 {dst.name}")
 
 
@@ -240,10 +289,11 @@ def _read_all_config() -> dict:
     import re as _re
     result = {}
 
-    # Gemini
-    gemini = _load_json_safe(CRED_DIR / "gemini_auth.json")
-    result["gemini_api_key"] = gemini.get("api_key", "")
-    result["gemini_model"] = gemini.get("model", "gemini-2.5-flash")
+    ai = _load_existing_ai_config()
+    result["ai_provider"] = ai.get("provider", "gemini")
+    result["ai_api_key"] = ai.get("api_key", "")
+    result["ai_model"] = ai.get("model", default_model_for_provider(result["ai_provider"]))
+    result["ai_base_url"] = ai.get("base_url", "")
 
     # 组织密钥
     org = _load_json_safe(CRED_DIR / "organization_auth.json")
@@ -337,9 +387,11 @@ def show_config():
     print("📋 HAP Auto 当前完整配置")
     print("=" * 60)
 
-    print("\n[Gemini AI]")
-    print(f"   API Key:   {_mask(conf['gemini_api_key'])}")
-    print(f"   Model:     {conf['gemini_model']}")
+    print("\n[AI]")
+    print(f"   Provider:  {conf['ai_provider']}")
+    print(f"   API Key:   {mask_secret(conf['ai_api_key'])}")
+    print(f"   Model:     {conf['ai_model']}")
+    print(f"   Base URL:  {conf['ai_base_url'] or '(默认)'}")
 
     print("\n[HAP Organization]")
     print(f"   AppKey:    {_mask(conf['app_key'])}")
@@ -353,16 +405,28 @@ def show_config():
     print(f"   Password:  {_mask(conf['password'])}")
 
     print("\n" + "=" * 60)
-    print("提示：如需修改，请运行 python3 setup.py --force")
+    print("提示：可运行 python3 setup.py --force 重新初始化全部配置")
     print("=" * 60 + "\n")
+
+    if sys.stdin.isatty():
+        choice = ask("是否立即修改 AI 配置？(y/N)", default="N").strip().lower()
+        if choice in {"y", "yes"}:
+            step_ai(force=True)
+            print("\nAI 配置已更新，最新结果如下：")
+            refreshed = _read_all_config()
+            print(f"   Provider:  {refreshed['ai_provider']}")
+            print(f"   API Key:   {mask_secret(refreshed['ai_api_key'])}")
+            print(f"   Model:     {refreshed['ai_model']}")
+            print(f"   Base URL:  {refreshed['ai_base_url'] or '(默认)'}")
 
 
 def main():
-    # 参数处理
-    force = "--force" in sys.argv
-    show = "--show" in sys.argv
+    parser = argparse.ArgumentParser(description="HAP Auto 初始化与配置工具")
+    parser.add_argument("--force", action="store_true", help="强制重跑初始化步骤")
+    parser.add_argument("--show", action="store_true", help="查看当前配置，并可修改 AI 配置")
+    args = parser.parse_args()
 
-    if show:
+    if args.show:
         show_config()
         return
 
@@ -372,10 +436,10 @@ def main():
 
     try:
         step_install_deps()
-        step_gemini(force)
-        step_org_auth(force)
-        step_login_and_auth(force)
-        step_group_init(force)
+        step_ai(args.force)
+        step_org_auth(args.force)
+        step_login_and_auth(args.force)
+        step_group_init(args.force)
 
         print("\n" + "✨" * 20)
         print("  所有配置已完成！")

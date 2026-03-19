@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
+from ai_utils import AI_CONFIG_PATH, load_ai_config
 from gemini_utils import load_gemini_config
 
 import auth_retry
@@ -34,7 +35,7 @@ APP_RECORD_CLEAR_DIR = OUTPUT_ROOT / "app_record_clear_results"
 MOCK_RUN_DIR = OUTPUT_ROOT / "mock_data_runs"
 MOCK_LOG_DIR = OUTPUT_ROOT / "mock_data_logs"
 WORKSHEET_LAYOUT_APPLY_DIR = OUTPUT_ROOT / "worksheet_layout_apply_results"
-GEMINI_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "gemini_auth.json"
+GEMINI_CONFIG_PATH = AI_CONFIG_PATH
 AUTH_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "auth_config.py"
 DEFAULT_BASE_URL = "https://api.mingdao.com"
 APP_INFO_URL = "/v3/app"
@@ -201,10 +202,10 @@ def append_log(log_path: Path, event: str, **payload: Any) -> None:
 def load_gemini_api_key(config_path: Path = GEMINI_CONFIG_PATH) -> str:
     if GEN_API_KEY:
         return GEN_API_KEY
-    data = load_json(config_path)
+    data = load_ai_config(config_path)
     api_key = str(data.get("api_key", "")).strip()
     if not api_key:
-        raise ValueError(f"Gemini 配置缺少 api_key: {config_path}")
+        raise ValueError(f"AI 配置缺少 api_key: {config_path}")
     return api_key
 
 

@@ -16,8 +16,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from google import genai
-from google.genai import types
+from ai_utils import create_generation_config, get_ai_client, load_ai_config
 from script_locator import resolve_script
 from gemini_utils import load_gemini_config
 
@@ -48,14 +47,15 @@ except Exception:
     GEN_MODEL = "gemini-2.5-pro"
 
 
-def generate_with_retry(client: genai.Client, model: str, prompt: str, retries: int) -> Any:
+def generate_with_retry(client, model: str, prompt: str, retries: int, ai_config: dict) -> Any:
     last_exc: Optional[Exception] = None
     for attempt in range(1, max(1, retries) + 1):
         try:
             return client.models.generate_content(
                 model=model,
                 contents=prompt,
-                config=types.GenerateContentConfig(
+                config=create_generation_config(
+                    ai_config,
                     response_mime_type="application/json",
                     temperature=0.2,
                 ),
@@ -409,8 +409,9 @@ def main() -> None:
     if GEN_API_KEY:
         api_key = GEN_API_KEY
     else:
-        api_key = load_gemini_api_key(Path(args.config).expanduser().resolve())
-    client = genai.Client(api_key=api_key)
+        load_gemini_api_key(Path(args.config).expanduser().resolve())
+    ai_config = load_ai_config(Path(args.config).expanduser().resolve())
+    client = get_ai_client(ai_config)
     base_prompt = build_prompt(snapshot)
     append_log(
         log_path,
@@ -426,7 +427,7 @@ def main() -> None:
         prompt = base_prompt
         if last_error:
             prompt = base_prompt + f"\n\n# 上次输出验证失败（第 {val_attempt - 1} 次）\n错误信息：{last_error}\n请仔细检查并修正后重新输出。"
-        response = generate_with_retry(client, args.model, prompt, args.gemini_retries)
+        response = generate_with_retry(client, args.model, prompt, args.gemini_retries, ai_config)
         append_log(
             log_path,
             "gemini_response_received",

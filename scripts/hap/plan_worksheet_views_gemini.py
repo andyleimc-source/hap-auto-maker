@@ -19,8 +19,7 @@ from typing import Any, Dict, List, Optional
 
 import requests
 import auth_retry
-from google import genai
-from google.genai import types
+from ai_utils import AI_CONFIG_PATH, create_generation_config, get_ai_client, load_ai_config
 from script_locator import resolve_script
 from gemini_utils import load_gemini_config
 
@@ -28,7 +27,7 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 APP_AUTH_DIR = OUTPUT_ROOT / "app_authorizations"
 VIEW_PLAN_DIR = OUTPUT_ROOT / "view_plans"
-GEMINI_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "gemini_auth.json"
+GEMINI_CONFIG_PATH = AI_CONFIG_PATH
 AUTH_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "auth_config.py"
 # 加载全局配置
 try:
@@ -38,6 +37,7 @@ except Exception:
     GEN_MODEL = "gemini-2.5-pro"
 
 DEFAULT_MODEL = GEN_MODEL
+CURRENT_AI_CONFIG: Dict[str, str] = {"provider": "gemini", "api_key": "", "model": DEFAULT_MODEL, "base_url": ""}
 
 APP_INFO_URL = "https://api.mingdao.com/v3/app"
 GET_CONTROLS_URL = "https://www.mingdao.com/api/Worksheet/GetWorksheetControls"
@@ -98,10 +98,10 @@ def sanitize_name(name: str) -> str:
 def load_gemini_api_key(config_path: Path) -> str:
     if GEN_API_KEY:
         return GEN_API_KEY
-    data = load_json(config_path)
+    data = load_ai_config(config_path)
     api_key = str(data.get("api_key", "")).strip()
     if not api_key:
-        raise ValueError(f"Gemini 配置缺少 api_key: {config_path}")
+        raise ValueError(f"AI 配置缺少 api_key: {config_path}")
     return api_key
 
 
@@ -468,7 +468,11 @@ def plan_views_batch(
                 resp = client.models.generate_content(
                     model=model,
                     contents=prompt,
-                    config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0.2),
+                    config=create_generation_config(
+                        CURRENT_AI_CONFIG,
+                        response_mime_type="application/json",
+                        temperature=0.2,
+                    ),
                 )
                 break
             except Exception as exc:
@@ -513,7 +517,7 @@ def plan_views_batch(
     return results
 
 
-def plan_views_for_worksheet(client: genai.Client, model: str, app_name: str, worksheet: dict, fields: List[dict]) -> dict:
+def plan_views_for_worksheet(client, model: str, app_name: str, worksheet: dict, fields: List[dict]) -> dict:
     base_prompt = build_prompt(app_name, worksheet["workSheetName"], worksheet["workSheetId"], fields)
     validation_retries = 3
     views = None
@@ -528,7 +532,11 @@ def plan_views_for_worksheet(client: genai.Client, model: str, app_name: str, wo
                 resp = client.models.generate_content(
                     model=model,
                     contents=prompt,
-                    config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0.2),
+                    config=create_generation_config(
+                        CURRENT_AI_CONFIG,
+                        response_mime_type="application/json",
+                        temperature=0.2,
+                    ),
                 )
                 break
             except Exception as exc:
@@ -573,8 +581,10 @@ def main() -> None:
     parser.add_argument("--output", default="", help="输出 JSON 文件路径")
     args = parser.parse_args()
 
-    api_key = load_gemini_api_key(Path(args.config).expanduser().resolve())
-    client = genai.Client(api_key=api_key)
+    global CURRENT_AI_CONFIG
+    load_gemini_api_key(Path(args.config).expanduser().resolve())
+    CURRENT_AI_CONFIG = load_ai_config(Path(args.config).expanduser().resolve())
+    client = get_ai_client(CURRENT_AI_CONFIG)
     auth_config_path = Path(args.auth_config).expanduser().resolve()
 
     app_rows = load_app_auth_rows()

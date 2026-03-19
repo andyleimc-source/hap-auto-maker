@@ -24,15 +24,14 @@ if str(CURRENT_DIR) not in sys.path:
     sys.path.insert(0, str(CURRENT_DIR))
 
 import auth_retry
-from google import genai
-from google.genai import types
+from ai_utils import AI_CONFIG_PATH, create_generation_config, get_ai_client, load_ai_config
 from gemini_utils import load_gemini_config
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 APP_AUTH_DIR = OUTPUT_ROOT / "app_authorizations"
 LAYOUT_PLAN_DIR = OUTPUT_ROOT / "worksheet_layout_plans"
-GEMINI_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "gemini_auth.json"
+GEMINI_CONFIG_PATH = AI_CONFIG_PATH
 AUTH_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "auth_config.py"
 
 # 加载全局配置
@@ -62,10 +61,10 @@ def load_json(path: Path) -> dict:
 def load_api_key() -> str:
     if GEN_API_KEY:
         return GEN_API_KEY
-    data = load_json(GEMINI_CONFIG_PATH)
+    data = load_ai_config(GEMINI_CONFIG_PATH)
     api_key = str(data.get("api_key", "")).strip()
     if not api_key:
-        raise ValueError(f"Gemini 配置缺少 api_key: {GEMINI_CONFIG_PATH}")
+        raise ValueError(f"AI 配置缺少 api_key: {GEMINI_CONFIG_PATH}")
     return api_key
 
 
@@ -441,14 +440,19 @@ def main() -> None:
         )
 
     prompt = build_prompt(app_name=app_name, worksheet_brief=worksheet_brief, requirements=args.requirements.strip())
-    client = genai.Client(api_key=load_api_key())
+    ai_config = load_ai_config(GEMINI_CONFIG_PATH)
+    client = get_ai_client(ai_config)
     response = None
     for net_try in range(1, NETWORK_MAX_RETRIES + 1):
         try:
             response = client.models.generate_content(
                 model=args.model,
                 contents=prompt,
-                config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0.2),
+                config=create_generation_config(
+                    ai_config,
+                    response_mime_type="application/json",
+                    temperature=0.2,
+                ),
             )
             break
         except Exception as e:

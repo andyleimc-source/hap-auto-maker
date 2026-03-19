@@ -21,8 +21,7 @@ from typing import Any, Dict, List, Optional
 
 import requests
 import auth_retry
-from google import genai
-from google.genai import types
+from ai_utils import AI_CONFIG_PATH, create_generation_config, get_ai_client, load_ai_config
 from script_locator import resolve_script
 from gemini_utils import load_gemini_config
 
@@ -31,7 +30,7 @@ OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 APP_AUTH_DIR = OUTPUT_ROOT / "app_authorizations"
 PLAN_DIR = OUTPUT_ROOT / "tableview_filter_plans"
 VIEW_CREATE_RESULT_DIR = OUTPUT_ROOT / "view_create_results"
-GEMINI_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "gemini_auth.json"
+GEMINI_CONFIG_PATH = AI_CONFIG_PATH
 AUTH_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "auth_config.py"
 # 加载全局配置
 try:
@@ -100,10 +99,10 @@ def choose_indexes(prompt: str, items_count: int) -> Optional[List[int]]:
 def load_gemini_api_key(path: Path) -> str:
     if GEN_API_KEY:
         return GEN_API_KEY
-    data = load_json(path)
+    data = load_ai_config(path)
     api_key = str(data.get("api_key", "")).strip()
     if not api_key:
-        raise ValueError(f"Gemini 配置缺少 api_key: {path}")
+        raise ValueError(f"AI 配置缺少 api_key: {path}")
     return api_key
 
 
@@ -424,14 +423,18 @@ def build_batch_filter_prompt(app_name: str, worksheets_data: List[dict]) -> str
 9) 输出必须为合法 JSON，worksheets 数组长度必须等于 {count}。""".strip()
 
 
-def generate_with_retry(client: genai.Client, model: str, prompt: str, retries: int) -> Any:
+def generate_with_retry(client, model: str, prompt: str, retries: int, ai_config: dict) -> Any:
     last_exc: Optional[Exception] = None
     for attempt in range(1, max(1, retries) + 1):
         try:
             return client.models.generate_content(
                 model=model,
                 contents=prompt,
-                config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0.2),
+                config=create_generation_config(
+                    ai_config,
+                    response_mime_type="application/json",
+                    temperature=0.2,
+                ),
             )
         except Exception as exc:
             last_exc = exc
@@ -607,8 +610,9 @@ def main() -> None:
     parser.add_argument("--gemini-retries", type=int, default=DEFAULT_GEMINI_RETRIES, help="Gemini 请求失败时的重试次数")
     args = parser.parse_args()
 
-    api_key = load_gemini_api_key(Path(args.config).expanduser().resolve())
-    client = genai.Client(api_key=api_key)
+    load_gemini_api_key(Path(args.config).expanduser().resolve())
+    ai_config = load_ai_config(Path(args.config).expanduser().resolve())
+    client = get_ai_client(ai_config)
     auth_config_path = Path(args.auth_config).expanduser().resolve()
 
     app_rows = load_app_auth_rows()
@@ -695,7 +699,7 @@ def main() -> None:
         # 一次 Gemini 批量调用
         print(f"  调用 Gemini 批量规划 {len(worksheets_batch)} 个工作表筛选...")
         batch_prompt = build_batch_filter_prompt(app["appName"], worksheets_batch)
-        resp = generate_with_retry(client, args.model, batch_prompt, args.gemini_retries)
+        resp = generate_with_retry(client, args.model, batch_prompt, args.gemini_retries, ai_config)
         parsed = extract_json(resp.text or "")
 
         # 解析批量结果

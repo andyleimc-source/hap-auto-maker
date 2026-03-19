@@ -7,32 +7,24 @@
 import argparse
 import json
 import re
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
-
-from google import genai
-from google.genai import types
 
 NETWORK_MAX_RETRIES = 3
 NETWORK_RETRY_DELAY = 5  # seconds
 
 BASE_DIR = Path(__file__).resolve().parents[2]
-CONFIG_PATH = BASE_DIR / "config" / "credentials" / "gemini_auth.json"
+sys.path.insert(0, str(BASE_DIR / "scripts" / "hap"))
+
+from ai_utils import AI_CONFIG_PATH, create_generation_config, get_ai_client, load_ai_config
+
+CONFIG_PATH = AI_CONFIG_PATH
 DEFAULT_MODEL = "gemini-2.5-flash"
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 WORKSHEET_PLAN_DIR = OUTPUT_ROOT / "worksheet_plans"
 MAX_PLAN_RETRIES = 3
-
-
-def load_api_key(config_path: Path) -> str:
-    if not config_path.exists():
-        raise FileNotFoundError(f"缺少配置文件: {config_path}")
-    data = json.loads(config_path.read_text(encoding="utf-8"))
-    api_key = data.get("api_key", "").strip()
-    if not api_key:
-        raise ValueError(f"配置缺少 api_key: {config_path}")
-    return api_key
 
 
 def sanitize_name(name: str) -> str:
@@ -147,8 +139,8 @@ def main() -> None:
     parser.add_argument("--max-retries", type=int, default=MAX_PLAN_RETRIES, help="规划校验失败后的最大重试次数")
     args = parser.parse_args()
 
-    api_key = load_api_key(Path(args.config).expanduser().resolve())
-    client = genai.Client(api_key=api_key)
+    ai_config = load_ai_config(Path(args.config).expanduser().resolve())
+    client = get_ai_client(ai_config)
 
     prompt = build_prompt(args.app_name, args.business_context, args.requirements)
     plan = None
@@ -167,7 +159,8 @@ def main() -> None:
                 response = client.models.generate_content(
                     model=args.model,
                     contents=current_prompt,
-                    config=types.GenerateContentConfig(
+                    config=create_generation_config(
+                        ai_config,
                         response_mime_type="application/json",
                         temperature=0.2,
                     ),

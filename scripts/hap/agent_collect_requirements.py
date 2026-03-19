@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-终端需求对话 Agent（Gemini）：
+终端需求对话 Agent（AI）：
 1) 多轮对话收集需求
 2) 输入"开始运行"触发需求冻结、生成 JSON 并自动执行
 3) 支持 /show 查看摘要、/exit 退出
@@ -19,10 +19,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from google import genai
-from google.genai import types
-
-from gemini_utils import load_gemini_config
+from ai_utils import create_generation_config, get_ai_client, load_ai_config
 
 CURRENT_DIR = Path(__file__).resolve().parent
 if str(CURRENT_DIR) not in sys.path:
@@ -87,9 +84,12 @@ OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 SPEC_DIR = OUTPUT_ROOT / "requirement_specs"
 # 加载全局配置
 try:
-    GEN_API_KEY, GEN_MODEL = load_gemini_config()
+    AI_CONFIG = load_ai_config()
+    GEN_API_KEY = AI_CONFIG.get("api_key", "")
+    GEN_MODEL = AI_CONFIG.get("model", "gemini-2.5-flash")
 except Exception:
-    GEN_API_KEY, GEN_MODEL = "", "gemini-2.5-pro"
+    AI_CONFIG = {"provider": "gemini", "api_key": "", "model": "gemini-2.5-flash", "base_url": ""}
+    GEN_API_KEY, GEN_MODEL = "", "gemini-2.5-flash"
 
 # 用户指定优先模型；若不可用则自动回退到已验证可用模型
 DEFAULT_MODEL = GEN_MODEL
@@ -165,15 +165,13 @@ def extract_json(text: str) -> dict:
     raise ValueError(f"Gemini 未返回可解析 JSON:\n{text}")
 
 
-def make_config(response_mime_type: str, temperature: float, seed: Optional[int]) -> types.GenerateContentConfig:
-    kwargs = {"response_mime_type": response_mime_type, "temperature": temperature}
-    if seed is not None:
-        kwargs["seed"] = seed
-    try:
-        return types.GenerateContentConfig(**kwargs)
-    except TypeError:
-        kwargs.pop("seed", None)
-        return types.GenerateContentConfig(**kwargs)
+def make_config(response_mime_type: str, temperature: float, seed: Optional[int]):
+    return create_generation_config(
+        AI_CONFIG,
+        response_mime_type=response_mime_type,
+        temperature=temperature,
+        seed=seed,
+    )
 
 
 def read_user_input(prompt_text: str) -> str:
@@ -232,7 +230,7 @@ def print_wrapped(prefix: str, text: str) -> None:
         print(f"{align}{ln}")
 
 
-def create_chat_with_fallback(client: genai.Client, model: str, temperature: float, seed: Optional[int]):
+def create_chat_with_fallback(client, model: str, temperature: float, seed: Optional[int]):
     tried = [model] + [m for m in FALLBACK_MODELS if m != model]
     last_exc: Optional[Exception] = None
     for idx, m in enumerate(tried):
@@ -250,12 +248,7 @@ def create_chat_with_fallback(client: genai.Client, model: str, temperature: flo
     raise RuntimeError("无法创建 Gemini Chat 会话")
 
 
-def generate_with_fallback(
-    client: genai.Client,
-    model: str,
-    contents: str,
-    config: types.GenerateContentConfig,
-):
+def generate_with_fallback(client, model: str, contents: str, config):
     tried = [model] + [m for m in FALLBACK_MODELS if m != model]
     last_exc: Optional[Exception] = None
     for idx, m in enumerate(tried):
@@ -502,11 +495,11 @@ def print_transcript_summary(transcript: List[Dict[str, str]]) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="终端需求对话 Agent（Gemini）")
-    parser.add_argument("--model", default=DEFAULT_MODEL, help="Gemini 模型名")
+    parser = argparse.ArgumentParser(description="终端需求对话 Agent（AI）")
+    parser.add_argument("--model", default=DEFAULT_MODEL, help="AI 模型名")
     parser.add_argument("--output", default="", help="输出 JSON 路径（默认自动命名）")
     parser.add_argument("--max-turns", type=int, default=0, help="最大对话轮数（0 表示不限制）")
-    parser.add_argument("--temperature", type=float, default=0.2, help="Gemini 温度")
+    parser.add_argument("--temperature", type=float, default=0.2, help="AI 温度")
     parser.add_argument("--seed", type=int, default=None, help="可选随机种子")
     parser.add_argument("--no-auto-execute", action="store_true", help="「开始运行」后不自动执行 execute_requirements.py")
     parser.add_argument("--execute-dry-run", action="store_true", help="「开始运行」自动执行时，以 dry-run 模式运行")
@@ -514,8 +507,7 @@ def main() -> None:
     parser.add_argument("--continue-on-error", action="store_true", help="「开始运行」自动执行时，执行器遇错继续")
     args = parser.parse_args()
 
-    api_key = GEN_API_KEY
-    client = genai.Client(api_key=api_key)
+    client = get_ai_client(AI_CONFIG)
     output_path = Path(args.output).expanduser().resolve() if args.output else None
     chat, actual_model = create_chat_with_fallback(client, args.model, args.temperature, args.seed)
     if readline is not None:

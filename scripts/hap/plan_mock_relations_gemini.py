@@ -16,8 +16,7 @@ from typing import Any, Dict, List, Optional
 NETWORK_MAX_RETRIES = 3
 NETWORK_RETRY_DELAY = 5
 
-from google import genai
-from google.genai import types
+from ai_utils import create_generation_config, get_ai_client, load_ai_config
 from script_locator import resolve_script
 from gemini_utils import load_gemini_config
 
@@ -297,8 +296,9 @@ def main() -> None:
     if GEN_API_KEY:
         api_key = GEN_API_KEY
     else:
-        api_key = load_gemini_api_key(Path(args.config).expanduser().resolve())
-    client = genai.Client(api_key=api_key)
+        load_gemini_api_key(Path(args.config).expanduser().resolve())
+    ai_config = load_ai_config(Path(args.config).expanduser().resolve())
+    client = get_ai_client(ai_config)
 
     base_prompt = build_prompt(snapshot, write_result)
     validation_retries = 3
@@ -314,7 +314,8 @@ def main() -> None:
                 response = client.models.generate_content(
                     model=args.model,
                     contents=prompt,
-                    config=types.GenerateContentConfig(
+                    config=create_generation_config(
+                        ai_config,
                         response_mime_type="application/json",
                         temperature=0.2,
                     ),

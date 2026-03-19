@@ -23,14 +23,13 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import auth_retry
-from google import genai
-from google.genai import types
+from ai_utils import AI_CONFIG_PATH, create_generation_config, get_ai_client, load_ai_config
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 CHART_PLAN_DIR = OUTPUT_ROOT / "chart_plans"
 MOCK_SCHEMA_DIR = OUTPUT_ROOT / "mock_data_schema_snapshots"
-GEMINI_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "gemini_auth.json"
+GEMINI_CONFIG_PATH = AI_CONFIG_PATH
 AUTH_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "auth_config.py"
 DEFAULT_MODEL = "gemini-2.5-flash"
 
@@ -59,10 +58,10 @@ def write_json(path: Path, payload: dict) -> None:
 
 
 def load_gemini_api_key(config_path: Path) -> str:
-    data = load_json(config_path)
+    data = load_ai_config(config_path)
     api_key = str(data.get("api_key", "")).strip()
     if not api_key:
-        raise ValueError(f"Gemini 配置缺少 api_key: {config_path}")
+        raise ValueError(f"AI 配置缺少 api_key: {config_path}")
     return api_key
 
 
@@ -308,14 +307,15 @@ def build_prompt(app_id: str, app_name: str, worksheets_info: List[dict]) -> str
 """.strip()
 
 
-def generate_with_retry(client: genai.Client, model: str, prompt: str, retries: int = 4) -> Any:
+def generate_with_retry(client, model: str, prompt: str, ai_config: dict, retries: int = 4) -> Any:
     last_exc: Optional[Exception] = None
     for attempt in range(1, max(1, retries) + 1):
         try:
             return client.models.generate_content(
                 model=model,
                 contents=prompt,
-                config=types.GenerateContentConfig(
+                config=create_generation_config(
+                    ai_config,
                     response_mime_type="application/json",
                     temperature=0.3,
                 ),
@@ -491,7 +491,8 @@ def main() -> None:
     app_id = args.app_id.strip()
     app_name = args.app_name.strip() or app_id
     auth_config_path = Path(args.auth_config).expanduser().resolve()
-    api_key = load_gemini_api_key(Path(args.config).expanduser().resolve())
+    load_gemini_api_key(Path(args.config).expanduser().resolve())
+    ai_config = load_ai_config(Path(args.config).expanduser().resolve())
 
     # 解析 views_json（如果提供）
     preset_views: List[dict] = []
@@ -548,7 +549,7 @@ def main() -> None:
     # Gemini 规划
     step = "1/1" if use_system_fields_only else "3/3"
     print(f"[{step}] 调用 Gemini 规划图表（模型: {args.model}）...")
-    client = genai.Client(api_key=api_key)
+    client = get_ai_client(ai_config)
 
     if use_system_fields_only:
         prompt = build_prompt_system_only(app_id, app_name, preset_views)
@@ -563,7 +564,7 @@ def main() -> None:
         p = prompt
         if last_error:
             p = prompt + f"\n\n# 上次验证失败（第 {val_attempt - 1} 次）\n错误信息：{last_error}\n请修正后重新输出。"
-        response = generate_with_retry(client, args.model, p, args.gemini_retries)
+        response = generate_with_retry(client, args.model, p, ai_config, args.gemini_retries)
         raw = extract_json_object(response.text or "")
         try:
             validated = validate_fn(raw, worksheets_by_id)
