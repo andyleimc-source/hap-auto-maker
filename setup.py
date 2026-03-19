@@ -84,6 +84,50 @@ def _display_val(val: str, sensitive: bool = False) -> str:
     return _mask(val) if sensitive else val
 
 
+def _looks_like_prompt_artifact(val: str) -> bool:
+    """识别误写入配置文件的交互提示文本，避免作为默认值继续回显。"""
+    text = str(val or "").strip()
+    if not text:
+        return False
+    markers = (
+        "请选择 AI 平台",
+        "Deepseek API Key",
+        "Gemini API Key",
+        "获取地址:",
+        "1. Gemini",
+        "2. DeepSeek",
+        "[2]: 2",
+    )
+    return any(marker in text for marker in markers)
+
+
+def _ask_with_validator(prompt: str, default: str = "", validator=None, error_message: str = "输入无效，请重试。") -> str:
+    """带校验的输入；校验失败时提示并重新输入。"""
+    while True:
+        val = ask(prompt, default=default)
+        if validator is None or validator(val):
+            return val
+        print(f"   ⚠ {error_message}")
+
+
+def _is_non_artifact_text(val: str) -> bool:
+    text = str(val or "").strip()
+    return bool(text) and not _looks_like_prompt_artifact(text)
+
+
+def _is_valid_ai_key(provider: str, val: str) -> bool:
+    text = str(val or "").strip()
+    if not text or _looks_like_prompt_artifact(text):
+        return False
+    if provider == "deepseek":
+        return text.startswith("sk-")
+    return len(text) >= 16
+
+
+def _is_valid_ai_model_choice(choice: str, model_options: dict) -> bool:
+    return str(choice or "").strip() in model_options
+
+
 def step_install_deps():
     """安装 Python 依赖 + Playwright 浏览器"""
     print("\n📦 [1/4] 安装 Python 依赖...")
@@ -132,23 +176,56 @@ def step_ai(force=False):
     print("      获取地址: https://platform.deepseek.com/api_keys")
 
     provider_default = "1" if old_provider == "gemini" else "2"
-    provider_choice = ask("   请选择 AI 平台（1=Gemini, 2=DeepSeek）", default=provider_default)
+    provider_choice = _ask_with_validator(
+        "   请选择 AI 平台（1=Gemini, 2=DeepSeek）",
+        default=provider_default,
+        validator=lambda x: x in {"1", "2"},
+        error_message="请输入 1 或 2。",
+    )
     provider = "deepseek" if provider_choice == "2" else "gemini"
     default_model = old_model if provider == old_provider and old_model else default_model_for_provider(provider)
 
     if old_key and old_key not in _PLACEHOLDERS and provider == old_provider:
-        key = ask(f"   {provider.title()} API Key [{_mask(old_key)}]") or old_key
+        key = _ask_with_validator(
+            f"   {provider.title()} API Key [{_mask(old_key)}]",
+            validator=lambda x: _is_valid_ai_key(provider, x) or (x == "" and _is_valid_ai_key(provider, old_key)),
+            error_message="API Key 格式不正确，或输入内容看起来像提示文本。",
+        ) or old_key
     else:
-        key = ask(f"   请输入 {provider.title()} API Key")
+        key = _ask_with_validator(
+            f"   请输入 {provider.title()} API Key",
+            validator=lambda x: _is_valid_ai_key(provider, x),
+            error_message="API Key 格式不正确，或输入内容看起来像提示文本。",
+        )
 
     if provider == "gemini":
-        print("   推荐模型: gemini-2.5-flash（更快）或 gemini-2.5-pro（更强）")
+        model_options = {
+            "1": ("gemini-2.5-flash", "响应更快，适合日常生成"),
+            "2": ("gemini-2.5-pro", "能力更强，适合复杂任务"),
+        }
         base_url = ""
     else:
-        print("   推荐模型: deepseek-chat（通用）")
+        model_options = {
+            "1": ("deepseek-chat", "通用对话模型，速度更快，适合大多数场景"),
+            "2": ("deepseek-reasoner", "推理模型，适合复杂分析、多步推导"),
+        }
         base_url = old_base_url or DEFAULT_DEEPSEEK_BASE_URL
 
-    model = ask("   模型名称", default=default_model)
+    print("   请选择模型:")
+    for option, (model_name, description) in model_options.items():
+        print(f"      {option}. {model_name}：{description}")
+
+    default_model_choice = next(
+        (option for option, (model_name, _) in model_options.items() if model_name == default_model),
+        "1",
+    )
+    model_choice = _ask_with_validator(
+        "   请输入模型序号",
+        default=default_model_choice,
+        validator=lambda x: _is_valid_ai_model_choice(x, model_options),
+        error_message="请输入上面列出的模型序号。",
+    )
+    model = model_options[model_choice][0]
     data = {
         "provider": provider,
         "api_key": key or ("YOUR_GEMINI_API_KEY" if provider == "gemini" else "YOUR_DEEPSEEK_API_KEY"),
@@ -181,10 +258,15 @@ def step_org_auth(force=False):
     ]
 
     # 如果已有配置，先展示当前值
-    if existing and any(existing.get(f[0], "") not in ("", *_PLACEHOLDERS) for f in fields):
+    valid_existing = {
+        key: ("" if _looks_like_prompt_artifact(existing.get(key, "")) else existing.get(key, ""))
+        for key, *_ in fields
+    }
+
+    if valid_existing and any(valid_existing.get(f[0], "") not in ("", *_PLACEHOLDERS) for f in fields):
         print("\n   📋 当前配置：")
         for key, name, _, sensitive, _ in fields:
-            val = existing.get(key, "")
+            val = valid_existing.get(key, "")
             print(f"      {name:12s} = {_display_val(val, sensitive)}")
         print("   （直接回车保留当前值，输入新值则覆盖）\n")
 
@@ -192,19 +274,28 @@ def step_org_auth(force=False):
     for key, name, hint, sensitive, required in fields:
         if hint:
             print(f"\n   {hint}")
-        old_val = existing.get(key, "")
+        old_val = valid_existing.get(key, "")
         # 占位符不作为默认值展示
         default = old_val if old_val and old_val not in _PLACEHOLDERS else ""
         if default and sensitive:
             # 敏感字段显示脱敏值作为提示
-            raw_input = ask(f"   {name} [{_mask(default)}]")
+            raw_input = _ask_with_validator(
+                f"   {name} [{_mask(default)}]",
+                validator=lambda x: x == "" or _is_non_artifact_text(x),
+                error_message="输入内容看起来像提示文本，请重新输入真实值；直接回车可保留当前值。",
+            )
             # 同 show_config: 空字符串回车保留，'-' 清空
             if raw_input == "" and old_val and old_val not in _PLACEHOLDERS:
-                results[key] = old_val 
+                results[key] = old_val
             else:
                 results[key] = raw_input
         else:
-            results[key] = ask(f"   {name}", default=default)
+            results[key] = _ask_with_validator(
+                f"   {name}",
+                default=default,
+                validator=lambda x: (bool(str(x or "").strip()) and not _looks_like_prompt_artifact(x)) or (default and x == default),
+                error_message="输入内容看起来像提示文本，或为空，请重新输入真实值。",
+            )
 
     # 写入（group_ids 保留已有值，由 step_group_init 下拉选择后覆盖）
     data = {}
