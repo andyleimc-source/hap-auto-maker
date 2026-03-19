@@ -188,6 +188,12 @@ def refresh(headless: bool = False) -> None:
                 account_id = c["value"]
                 break
 
+        if not account_id:
+            for h in reversed(headers_log):
+                if "accountid" in h:
+                    account_id = h["accountid"]
+                    break
+
         authorization = extract_authorization(headers_log)
 
         # 如果 headers_log 没捕获到，尝试从 localStorage 取
