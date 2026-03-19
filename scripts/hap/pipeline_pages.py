@@ -103,7 +103,7 @@ def main() -> None:
             "--auth-config", auth_config,
             "--output", plan_output,
         ]
-        run_cmd(cmd_plan, "Step 1/2 规划自定义分析页（Gemini）")
+        run_cmd(cmd_plan, "Step 1/2 规划自定义分析页（AI）")
     else:
         print("\n[跳过 Step 1/2]：使用已有规划文件")
 

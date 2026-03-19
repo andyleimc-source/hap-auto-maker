@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 一键执行工作表布局流程：
-1) 规划字段布局（Gemini）
+1) 规划字段布局（AI）
 2) 应用字段布局（SaveWorksheetControls）
 """
 

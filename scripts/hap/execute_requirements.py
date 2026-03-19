@@ -790,7 +790,7 @@ def main() -> None:
     def run_step_11() -> bool:
         if not workflows.get("enabled", True):
             with steps_lock:
-                steps_report.append({"step_id": 11, "step_key": "workflows_plan", "title": "规划工作流（Gemini）", "skipped": True, "reason": "disabled_by_spec"})
+                steps_report.append({"step_id": 11, "step_key": "workflows_plan", "title": "规划工作流（AI）", "skipped": True, "reason": "disabled_by_spec"})
             return True
         WORKFLOW_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         cmd11 = [
@@ -802,7 +802,7 @@ def main() -> None:
         ]
         if workflows.get("skip_analysis", False):
             cmd11.append("--skip-analysis")
-        ok11 = execute_step(11, "workflows_plan", "规划工作流（Gemini）", cmd11, uses_gemini=True)
+        ok11 = execute_step(11, "workflows_plan", "规划工作流（AI）", cmd11, uses_gemini=True)
         if ok11:
             context["workflow_plan_json"] = str(workflow_plan_output)
         return ok11
@@ -837,7 +837,7 @@ def main() -> None:
             "--output", str(page_plan_output),
         ]
         elapsed_total = time.time() - pipeline_start
-        print(f"  ▶ Step 14a/ 14  规划统计图表页（Gemini）  [{elapsed_total:.0f}s]", flush=True)
+        print(f"  ▶ Step 14a/ 14  规划统计图表页（AI）  [{elapsed_total:.0f}s]", flush=True)
         step_start = time.time()
         with GEMINI_SEMAPHORE:
             result = run_cmd(cmd14a, dry_run=execution_dry_run, verbose=args.verbose)
@@ -845,7 +845,7 @@ def main() -> None:
         duration = time.time() - step_start
         elapsed_total = time.time() - pipeline_start
         status = "✓" if ok_14a else "✗"
-        print(f"  {status} Step 14a/ 14  规划统计图表页（Gemini）  ({duration:.0f}s, 总计 {elapsed_total:.0f}s)", flush=True)
+        print(f"  {status} Step 14a/ 14  规划统计图表页（AI）  ({duration:.0f}s, 总计 {elapsed_total:.0f}s)", flush=True)
         if not ok_14a:
             err = str(result.get("stderr", "") or "").strip()
             if err:

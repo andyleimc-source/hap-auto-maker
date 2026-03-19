@@ -357,9 +357,50 @@ def validate_plan(raw: dict, snapshot: dict) -> Dict[str, Any]:
 
     normalized_plan_items.sort(key=lambda item: (item["order"], item["worksheetName"]))
     bundle_items.sort(key=lambda item: (item["order"], item["worksheetName"]))
-    if len(normalized_plan_items) != len(snapshot.get("worksheetTiers", [])):
-        missing = sorted(set(tier_by_id) - {item["worksheetId"] for item in normalized_plan_items})
-        raise ValueError(f"Gemini 返回缺少工作表规划: {missing}")
+    
+    # 容错处理：如果某些工作表缺失，自动补全最基础的占位记录，不报错中断。
+    missing = sorted(set(tier_by_id) - {item["worksheetId"] for item in normalized_plan_items})
+    if missing:
+        print(f"[警告] 模型返回缺少以下工作表的规划，将自动生成占位记录: {missing}")
+        for mid in missing:
+            tinfo = tier_by_id[mid]
+            sws = next(x for x in snapshot["worksheets"] if x["worksheetId"] == mid)
+            placeholder_summary = f"{sws['worksheetName']} 自动生成的示例"
+            
+            # 找到标题字段或第一个可写字段
+            title_field = next((f for f in sws.get("writableFields", []) if f.get("isTitle")), sws.get("writableFields", [None])[0])
+            p_values = {}
+            if title_field:
+                p_values[title_field["fieldId"]] = placeholder_summary
+            
+            normalized_plan_items.append({
+                "worksheetId": mid,
+                "worksheetName": sws["worksheetName"],
+                "tier": tinfo["tier"],
+                "order": tinfo["order"],
+                "recordCount": 1,
+                "reason": "auto_fallback_missing_plan",
+                "writableFields": [f["fieldId"] for f in sws.get("writableFields", [])],
+                "skippedFields": sws.get("skippedFields", []),
+            })
+            bundle_items.append({
+                "worksheetId": mid,
+                "worksheetName": sws["worksheetName"],
+                "tier": tinfo["tier"],
+                "order": tinfo["order"],
+                "recordCount": 1,
+                "reason": "auto_fallback_missing_plan",
+                "fieldMetas": sws.get("fields", []),
+                "writableFieldMetas": sws.get("writableFields", []),
+                "records": [{
+                    "mockRecordKey": f"{mid}-001",
+                    "recordSummary": placeholder_summary,
+                    "valuesByFieldId": p_values
+                }]
+            })
+        normalized_plan_items.sort(key=lambda item: (item["order"], item["worksheetName"]))
+        bundle_items.sort(key=lambda item: (item["order"], item["worksheetName"]))
+
     return {
         "plan": {
             "schemaVersion": "mock_data_plan_v1",

@@ -350,7 +350,7 @@ def build_spec_prompt(transcript: List[Dict[str, str]]) -> str:
   }},
   "app": {{
     "target_mode": "create_new",
-    "name": "应用名称",
+    "name": "由AI根据对话提取的应用名称",
     "group_ids": "{_load_org_group_ids()}",
     "icon_mode": "gemini_match",
     "color_mode": "random",
@@ -397,7 +397,7 @@ def build_spec_prompt(transcript: List[Dict[str, str]]) -> str:
 
 规则：
 1) 缺失项按上述默认值补齐。
-2) app.name 若未明确，给出合理占位名：CRM自动化应用。
+2) app.name 若未明确，给出合理占位名：由对话提取的应用名称。
 3) 不要新增未定义顶层字段。
 4) 若对话中未明确提到导航布局，固定 app.navi_style.pcNaviStyle=1。
 5) 若对话中未明确提到主题色，固定 app.color_mode=random。
@@ -416,7 +416,8 @@ def normalize_spec(raw: dict) -> dict:
 
     app = spec.get("app") if isinstance(spec.get("app"), dict) else {}
     app.setdefault("target_mode", "create_new")
-    app.setdefault("name", "智能自动化应用")
+    app.setdefault("name", "自动化应用")
+
     app.setdefault("group_ids", _load_org_group_ids())
     app.setdefault("icon_mode", "gemini_match")
     app.setdefault("color_mode", "random")

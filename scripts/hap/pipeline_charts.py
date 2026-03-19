@@ -84,7 +84,7 @@ def main() -> None:
             cmd_plan.extend(["--app-name", args.app_name.strip()])
         if args.views_json.strip():
             cmd_plan.extend(["--views-json", args.views_json.strip()])
-        run_cmd(cmd_plan, "Step 1/2 规划图表（Gemini）")
+        run_cmd(cmd_plan, "Step 1/2 规划图表（AI）")
     else:
         print("\n[跳过 Step 1/2]：使用已有规划文件")
 
