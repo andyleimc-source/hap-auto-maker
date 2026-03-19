@@ -39,7 +39,7 @@ try:
     GEN_API_KEY, GEN_MODEL = load_gemini_config()
 except Exception:
     GEN_API_KEY = ""
-    GEN_MODEL = "gemini-2.5-pro"
+    GEN_MODEL = "gemini-2.5-flash"
 
 APP_INFO_URL = "https://api.mingdao.com/v3/app"
 GET_CONTROLS_URL = "https://www.mingdao.com/api/Worksheet/GetWorksheetControls"

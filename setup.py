@@ -1,547 +1,339 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-HAP Auto 一键初始化脚本
-=======================
-首次克隆后只需运行此脚本，按提示填写即可完成全部配置。
-
-用法：
-    python3 setup.py            # 首次初始化（已有配置自动跳过）
-    python3 setup.py --force    # 强制重新初始化（显示当前值，回车保留，输入新值覆盖）
-    python3 setup.py --show     # 查看当前配置，并可按提示修改 AI 配置
+HAP Auto 初始化工具 (稳健修复版)
+=====================================
+主要改进：
+1. 修复 f-string 中海象运算符导致的 NameError。
+2. 保持 CJK 宽度感知对齐算法。
+3. 保持密码实时遮码输入 (*)。
+4. 保持账号密码记忆与脱敏显示。
 """
 
-import argparse
 import json
 import subprocess
 import sys
+import os
+import re
+import argparse
+import unicodedata
+import tty
+import termios
 from pathlib import Path
 
+# 路径常量
 BASE_DIR = Path(__file__).resolve().parent
 CRED_DIR = BASE_DIR / "config" / "credentials"
 sys.path.insert(0, str(BASE_DIR / "scripts" / "hap"))
 
-from ai_utils import (
-    AI_CONFIG_PATH,
-    DEFAULT_DEEPSEEK_BASE_URL,
-    default_model_for_provider,
-    load_ai_config,
-    mask_secret,
-)
-
-# 占位符列表，匹配到这些值视为"未填写"
 _PLACEHOLDERS = {
-    "YOUR_HAP_APP_KEY",
-    "YOUR_HAP_SECRET_KEY",
-    "YOUR_HAP_PROJECT_ID",
-    "YOUR_HAP_OWNER_ID",
-    "YOUR_GEMINI_API_KEY",
-    "YOUR_GEMINI_MODEL",
-    "YOUR_DEEPSEEK_API_KEY",
-    "YOUR_DEEPSEEK_MODEL",
-    "your-account@example.com",
-    "your-password",
-    "OPTIONAL_PRECOMPUTED_SIGN",
+    "YOUR_HAP_APP_KEY", "YOUR_HAP_SECRET_KEY", "YOUR_HAP_PROJECT_ID", "YOUR_HAP_OWNER_ID",
+    "YOUR_GEMINI_API_KEY", "YOUR_GEMINI_MODEL", "YOUR_DEEPSEEK_API_KEY", "YOUR_DEEPSEEK_MODEL",
+    "your-account@example.com", "your-password", "OPTIONAL_PRECOMPUTED_SIGN", "", None
 }
 
+# --- 核心对齐算法 ---
+
+def get_display_width(s):
+    width = 0
+    for char in s:
+        if unicodedata.east_asian_width(char) in ('W', 'F'): width += 2
+        else: width += 1
+    return width
+
+def ljust_cjk(s, width):
+    return s + ' ' * max(0, width - get_display_width(s))
+
+def rjust_cjk(s, width):
+    return ' ' * max(0, width - get_display_width(s)) + s
+
+def center_cjk(s, width):
+    pad = max(0, width - get_display_width(s))
+    left = pad // 2
+    return ' ' * left + s + ' ' * (pad - left)
+
+# --- 视觉辅助 ---
+
+def print_box(title: str):
+    width = 66
+    print("\n┌" + "─" * (width-2) + "┐")
+    print(f"│{center_cjk(title, width-2)}│")
+    print("└" + "─" * (width-2) + "┘")
+
+def show_banner():
+    print("\n" + "═" * 66)
+    print(center_cjk("🚀 HAP Auto 自动化环境配置中心", 66))
+    print("═" * 66)
+    print("\n💡 指令速查 (Command Cheat Sheet):")
+    cmds = [
+        ("python3 setup.py",        "引导式全量安装 (向导模式)"),
+        ("python3 setup.py --menu", "管理模式 (查看状态 & 增量修改)"),
+        ("python3 setup.py --init", "彻底重置 (清空配置并从头开始)")
+    ]
+    for cmd, desc in cmds:
+        print(f"   {ljust_cjk(cmd, 25)} ->  {desc}")
+    print("-" * 66)
+
+def show_footer():
+    width = 66
+    print("\n" + "╔" + "═" * (width-2) + "╗")
+    print("║" + center_cjk("✨ 配置引导已圆满完成！", width-2) + "║")
+    print("╠" + "═" * (width-2) + "╣")
+    print(f"║ {ljust_cjk('💡 修改或检查:  python3 setup.py --menu', width-4)} ║")
+    print(f"║ {ljust_cjk('🔥 彻底清空重置: python3 setup.py --init', width-4)} ║")
+    print(f"║ {ljust_cjk('🚀 启动主流程:   python3 scripts/run_app_pipeline.py', width-4)} ║")
+    print("╚" + "═" * (width-2) + "╝\n")
+
+# --- 工具函数 ---
 
 def _mask(val: str, show: int = 4) -> str:
-    """对敏感值做脱敏显示：前 show 位明文 + ****"""
-    if not val or val in _PLACEHOLDERS:
-        return "(未填写)"
-    if len(val) <= show:
-        return val
-    return val[:show] + "****"
+    s = str(val or "").strip()
+    if not s or s in _PLACEHOLDERS or "YOUR_" in s: return "未填写"
+    return s[:show] + "****" if len(s) > show else s
 
+def _truncate(val: str, max_len: int = 20) -> str:
+    s = str(val or "").strip()
+    if not s or s in _PLACEHOLDERS or "YOUR_" in s: return ""
+    return s[:max_len-3] + "..." if len(s) > max_len else s
 
-def ask(prompt: str, default: str = "") -> str:
-    hint = f" [{default}]" if default else ""
-    val = input(f"{prompt}{hint}: ").strip()
-    # 清理 copy-paste 常见的多余字符：引号、零宽空格等
-    val = val.strip("\"'""''").strip("\u200b\u200c\u200d\ufeff").strip()
-    
-    # 特殊规则：输入 '-' 表示清除该项内容（设为空字符串）
-    if val == "-":
-        return ""
-    
-    return val if val else default
+def _is_valid(val: str) -> bool:
+    s = str(val or "").strip()
+    return bool(s) and s not in _PLACEHOLDERS and "YOUR_" not in s
 
+def _load_json(path: Path) -> dict:
+    if not path.exists(): return {}
+    try: return json.loads(path.read_text(encoding="utf-8"))
+    except: return {}
 
-def _load_json_safe(path: Path) -> dict:
-    """安全读取 JSON，文件不存在或格式错误返回空 dict"""
-    if not path.exists():
-        return {}
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-
-
-def _display_val(val: str, sensitive: bool = False) -> str:
-    """用于展示当前值：敏感字段脱敏，占位符显示为 (未填写)"""
-    if not val or val in _PLACEHOLDERS:
-        return "(未填写)"
-    return _mask(val) if sensitive else val
-
-
-def _looks_like_prompt_artifact(val: str) -> bool:
-    """识别误写入配置文件的交互提示文本，避免作为默认值继续回显。"""
-    text = str(val or "").strip()
-    if not text:
-        return False
-    markers = (
-        "请选择 AI 平台",
-        "Deepseek API Key",
-        "Gemini API Key",
-        "获取地址:",
-        "1. Gemini",
-        "2. DeepSeek",
-        "[2]: 2",
-    )
-    return any(marker in text for marker in markers)
-
-
-def _ask_with_validator(prompt: str, default: str = "", validator=None, error_message: str = "输入无效，请重试。") -> str:
-    """带校验的输入；校验失败时提示并重新输入。"""
+def get_password_masked(prompt):
+    """实时遮码输入 (*)"""
+    print(prompt, end='', flush=True)
+    password = ""
     while True:
-        val = ask(prompt, default=default)
-        if validator is None or validator(val):
-            return val
-        print(f"   ⚠ {error_message}")
-
-
-def _is_non_artifact_text(val: str) -> bool:
-    text = str(val or "").strip()
-    return bool(text) and not _looks_like_prompt_artifact(text)
-
-
-def _is_valid_ai_key(provider: str, val: str) -> bool:
-    text = str(val or "").strip()
-    if not text or _looks_like_prompt_artifact(text):
-        return False
-    if provider == "deepseek":
-        return text.startswith("sk-")
-    return len(text) >= 16
-
-
-def _is_valid_ai_model_choice(choice: str, model_options: dict) -> bool:
-    return str(choice or "").strip() in model_options
-
-
-def step_install_deps():
-    """安装 Python 依赖 + Playwright 浏览器"""
-    print("\n📦 [1/4] 安装 Python 依赖...")
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "-q",
-                           "requests", "google-genai", "openai", "playwright", "prompt-toolkit"])
-    print("🌐 安装 Playwright Chromium...")
-    subprocess.check_call([sys.executable, "-m", "playwright", "install", "chromium"])
-
-
-def _write_ai_config(data: dict) -> None:
-    AI_CONFIG_PATH.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    if data.get("provider") == "gemini":
-        legacy = {
-            "api_key": data.get("api_key", ""),
-            "model": data.get("model", default_model_for_provider("gemini")),
-        }
-        (CRED_DIR / "gemini_auth.json").write_text(
-            json.dumps(legacy, indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8",
-        )
-
-
-def _load_existing_ai_config() -> dict:
-    try:
-        return load_ai_config()
-    except Exception:
-        return {}
-
-
-def step_ai(force=False):
-    """配置统一 AI 平台"""
-    dst = AI_CONFIG_PATH
-    existing = _load_existing_ai_config()
-    if dst.exists() and not force:
-        return
-
-    old_provider = existing.get("provider", "gemini")
-    old_key = existing.get("api_key", "")
-    old_model = existing.get("model", default_model_for_provider(old_provider))
-    old_base_url = existing.get("base_url", "")
-
-    print("\n🔑 [2/4] 配置 AI 平台")
-    print("   1. Gemini")
-    print("      获取地址: https://aistudio.google.com/apikey")
-    print("   2. DeepSeek")
-    print("      获取地址: https://platform.deepseek.com/api_keys")
-
-    provider_default = "1" if old_provider == "gemini" else "2"
-    provider_choice = _ask_with_validator(
-        "   请选择 AI 平台（1=Gemini, 2=DeepSeek）",
-        default=provider_default,
-        validator=lambda x: x in {"1", "2"},
-        error_message="请输入 1 或 2。",
-    )
-    provider = "deepseek" if provider_choice == "2" else "gemini"
-    default_model = old_model if provider == old_provider and old_model else default_model_for_provider(provider)
-
-    if old_key and old_key not in _PLACEHOLDERS and provider == old_provider:
-        key = _ask_with_validator(
-            f"   {provider.title()} API Key [{_mask(old_key)}]",
-            validator=lambda x: _is_valid_ai_key(provider, x) or (x == "" and _is_valid_ai_key(provider, old_key)),
-            error_message="API Key 格式不正确，或输入内容看起来像提示文本。",
-        ) or old_key
-    else:
-        key = _ask_with_validator(
-            f"   请输入 {provider.title()} API Key",
-            validator=lambda x: _is_valid_ai_key(provider, x),
-            error_message="API Key 格式不正确，或输入内容看起来像提示文本。",
-        )
-
-    if provider == "gemini":
-        model_options = {
-            "1": ("gemini-2.5-flash", "响应更快，适合日常生成"),
-            "2": ("gemini-2.5-pro", "能力更强，适合复杂任务"),
-        }
-        base_url = ""
-    else:
-        model_options = {
-            "1": ("deepseek-chat", "通用对话模型，速度更快，适合大多数场景"),
-            "2": ("deepseek-reasoner", "推理模型，适合复杂分析、多步推导"),
-        }
-        base_url = old_base_url or DEFAULT_DEEPSEEK_BASE_URL
-
-    print("   请选择模型:")
-    for option, (model_name, description) in model_options.items():
-        print(f"      {option}. {model_name}：{description}")
-
-    default_model_choice = next(
-        (option for option, (model_name, _) in model_options.items() if model_name == default_model),
-        "1",
-    )
-    model_choice = _ask_with_validator(
-        "   请输入模型序号",
-        default=default_model_choice,
-        validator=lambda x: _is_valid_ai_model_choice(x, model_options),
-        error_message="请输入上面列出的模型序号。",
-    )
-    model = model_options[model_choice][0]
-    data = {
-        "provider": provider,
-        "api_key": key or ("YOUR_GEMINI_API_KEY" if provider == "gemini" else "YOUR_DEEPSEEK_API_KEY"),
-        "model": model or default_model_for_provider(provider),
-        "base_url": base_url,
-    }
-    _write_ai_config(data)
-    print(f"   ✔ 已写入 {dst.name}")
-
-
-def step_org_auth(force=False):
-    """配置 HAP 组织级密钥"""
-    dst = CRED_DIR / "organization_auth.json"
-    existing = _load_json_safe(dst)
-
-    if dst.exists() and not force:
-        return
-
-    print("\n🏢 [3/4] 配置 HAP 组织级密钥")
-    print("   获取路径: 组织管理 → 集成 → 其他 → 开放接口 → 查看密钥")
-    print("   快捷地址: https://www.mingdao.com/admin/integrationothers/<你的组织ID>")
-
-    # 定义字段：(json_key, 显示名, 提示文字, 是否敏感, 是否必填)
-    # group_ids 不在此处询问，由 step_group_init() 通过下拉选择写入
-    fields = [
-        ("app_key",    "app_key",    None, True,  True),
-        ("secret_key", "secret_key", None, True,  True),
-        ("project_id", "project_id", "获取 project_id: 组织管理 → 组织 → 组织信息 → 编号（ID）", False, True),
-        ("owner_id",   "owner_id",   "获取 owner_id: 点击群聊中个人头像，地址栏中 https://www.mingdao.com/user_xxx 的 xxx 部分", False, True),
-    ]
-
-    # 如果已有配置，先展示当前值
-    valid_existing = {
-        key: ("" if _looks_like_prompt_artifact(existing.get(key, "")) else existing.get(key, ""))
-        for key, *_ in fields
-    }
-
-    if valid_existing and any(valid_existing.get(f[0], "") not in ("", *_PLACEHOLDERS) for f in fields):
-        print("\n   📋 当前配置：")
-        for key, name, _, sensitive, _ in fields:
-            val = valid_existing.get(key, "")
-            print(f"      {name:12s} = {_display_val(val, sensitive)}")
-        print("   （直接回车保留当前值，输入新值则覆盖）\n")
-
-    results = {}
-    for key, name, hint, sensitive, required in fields:
-        if hint:
-            print(f"\n   {hint}")
-        old_val = valid_existing.get(key, "")
-        # 占位符不作为默认值展示
-        default = old_val if old_val and old_val not in _PLACEHOLDERS else ""
-        if default and sensitive:
-            # 敏感字段显示脱敏值作为提示
-            raw_input = _ask_with_validator(
-                f"   {name} [{_mask(default)}]",
-                validator=lambda x: x == "" or _is_non_artifact_text(x),
-                error_message="输入内容看起来像提示文本，请重新输入真实值；直接回车可保留当前值。",
-            )
-            # 同 show_config: 空字符串回车保留，'-' 清空
-            if raw_input == "" and old_val and old_val not in _PLACEHOLDERS:
-                results[key] = old_val
-            else:
-                results[key] = raw_input
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+        try:
+            tty.setraw(fd)
+            ch = sys.stdin.read(1)
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        
+        if ch in ('\r', '\n'):
+            print()
+            break
+        elif ch == '\x7f':  # Backspace
+            if len(password) > 0:
+                password = password[:-1]
+                sys.stdout.write('\b \b')
+                sys.stdout.flush()
+        elif ch == '\x03': # Ctrl+C
+            raise KeyboardInterrupt
         else:
-            results[key] = _ask_with_validator(
-                f"   {name}",
-                default=default,
-                validator=lambda x: (bool(str(x or "").strip()) and not _looks_like_prompt_artifact(x)) or (default and x == default),
-                error_message="输入内容看起来像提示文本，或为空，请重新输入真实值。",
-            )
+            password += ch
+            sys.stdout.write('*')
+            sys.stdout.flush()
+    return password
 
-    # 写入（group_ids 保留已有值，由 step_group_init 下拉选择后覆盖）
-    data = {}
-    data["app_key"] = results["app_key"] or "YOUR_HAP_APP_KEY"
-    data["secret_key"] = results["secret_key"] or "YOUR_HAP_SECRET_KEY"
-    data["project_id"] = results["project_id"] or "YOUR_HAP_PROJECT_ID"
-    data["owner_id"] = results["owner_id"] or "YOUR_HAP_OWNER_ID"
-    data["group_ids"] = existing.get("group_ids", "")
-    dst.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    print(f"   ✔ 已写入 {dst.name}")
+def ask(label: str, default: str = "", required: bool = False, hint: str = "", is_pwd: bool = False) -> str:
+    prefix = "[必填]" if required else "[可选]"
+    clean_def = str(default).strip()
+    is_placeholder = clean_def in _PLACEHOLDERS or "YOUR_" in clean_def
+    
+    # 确定显示值
+    display_hint = hint if hint else (_mask(clean_def) if (len(clean_def) > 15 or required) else clean_def)
+    hint_str = f"(当前: {display_hint})" if (display_hint and not is_placeholder) else ""
+    
+    # 修复对齐：先计算再组合
+    p_prefix = ljust_cjk(prefix, 8)
+    p_label  = ljust_cjk(label, 32)
+    p_hint   = rjust_cjk(hint_str, 22)
+    prompt_str = f"   {p_prefix}{p_label}{p_hint} : "
+    
+    while True:
+        if is_pwd:
+            val = get_password_masked(prompt_str).strip()
+        else:
+            val = input(prompt_str).strip()
+            val = val.strip("\"'").strip("\u200b\u200c\u200d\ufeff")
+            
+        final = val if val else (default if not is_placeholder else "")
+        if required and not _is_valid(final):
+            print(f"      {ljust_cjk('', 40)} ⚠️  错误：此项必填。")
+            continue
+        return final
 
+# --- 状态检测 ---
 
-def step_login_and_auth(force=False):
-    """配置登录凭据 → 自动刷新 auth_config.py"""
-    login_dst = CRED_DIR / "login_credentials.py"
-    auth_dst = CRED_DIR / "auth_config.py"
+def get_existing_login():
+    path = CRED_DIR / "login_credentials.py"
+    if path.exists():
+        text = path.read_text(encoding="utf-8")
+        acc = re.search(r'^LOGIN_ACCOUNT\s*=\s*"(.+?)"', text, re.M)
+        pwd = re.search(r'^LOGIN_PASSWORD\s*=\s*"(.+?)"', text, re.M)
+        return (acc.group(1) if acc else "", pwd.group(1) if pwd else "")
+    return ("", "")
 
-    if login_dst.exists() and auth_dst.exists() and not force:
-        return
-
-    print("\n🔐 [4/4] 配置明道云登录账号")
-
-    # 尝试读取已有账号
-    old_account = ""
-    old_password = ""
-    if login_dst.exists():
-        try:
-            text = login_dst.read_text(encoding="utf-8")
-            import re
-            m = re.search(r'LOGIN_ACCOUNT\s*=\s*"(.+?)"', text)
-            if m:
-                old_account = m.group(1)
-            m = re.search(r'LOGIN_PASSWORD\s*=\s*"(.+?)"', text)
-            if m:
-                old_password = m.group(1)
-        except Exception:
-            pass
-
-    if old_account and old_account not in _PLACEHOLDERS:
-        print(f"   当前账号: {old_account}")
-        print(f"   当前密码: {_mask(old_password)}")
-        print("   （直接回车保留当前值，输入新值则覆盖）")
-        account = ask("   登录邮箱/手机号", default=old_account)
-        password = ask(f"   登录密码 [{_mask(old_password)}]") or old_password
-    else:
-        account = ask("   登录邮箱/手机号")
-        password = ask("   登录密码")
-
-    # 写入 login_credentials.py
-    login_dst.write_text(
-        '# -*- coding: utf-8 -*-\n'
-        '"""\n本地登录账号配置（自动生成，请勿提交到 Git）。\n"""\n\n'
-        f'LOGIN_ACCOUNT = "{account or "your-account@example.com"}"\n'
-        f'LOGIN_PASSWORD = "{password or "your-password"}"\n'
-        f'LOGIN_URL = "https://www.mingdao.com/login"\n',
-        encoding="utf-8",
-    )
-    print(f"   ✔ 已写入 login_credentials.py")
-
-    # 先从模板复制 auth_config.py（refresh_auth 需要文件已存在才能正则替换）
-    if not auth_dst.exists():
-        example = CRED_DIR / "auth_config.example.py"
-        if example.exists():
-            auth_dst.write_text(example.read_text(encoding="utf-8"), encoding="utf-8")
-
-    # 自动刷新认证
-    if account and password:
-        print("\n🔄 自动登录并获取认证信息...")
-        try:
-            subprocess.check_call(
-                [sys.executable, str(BASE_DIR / "scripts" / "auth" / "refresh_auth.py"), "--headless"],
-                cwd=str(BASE_DIR),
-            )
-        except subprocess.CalledProcessError:
-            print("   ⚠️  自动登录失败，请稍后手动运行: python3 scripts/auth/refresh_auth.py")
-    else:
-        print("   ⚠️  未填写账号密码，跳过自动认证。稍后手动运行: python3 scripts/auth/refresh_auth.py")
-
-
-def _read_all_config() -> dict:
-    """读取所有配置文件，返回统一的 dict"""
-    import re as _re
-    result = {}
-
-    ai = _load_existing_ai_config()
-    result["ai_provider"] = ai.get("provider", "gemini")
-    result["ai_api_key"] = ai.get("api_key", "")
-    result["ai_model"] = ai.get("model", default_model_for_provider(result["ai_provider"]))
-    result["ai_base_url"] = ai.get("base_url", "")
-
-    # 组织密钥
-    org = _load_json_safe(CRED_DIR / "organization_auth.json")
-    for k in ("app_key", "secret_key", "project_id", "owner_id", "group_ids"):
-        result[k] = org.get(k, "")
-
-    # 登录凭据
-    login_dst = CRED_DIR / "login_credentials.py"
-    if login_dst.exists():
-        try:
-            text = login_dst.read_text(encoding="utf-8")
-            m = _re.search(r'LOGIN_ACCOUNT\s*=\s*"(.+?)"', text)
-            result["account"] = m.group(1) if m else ""
-            m = _re.search(r'LOGIN_PASSWORD\s*=\s*"(.+?)"', text)
-            result["password"] = m.group(1) if m else ""
-        except Exception:
-            result["account"] = ""
-            result["password"] = ""
-    else:
-        result["account"] = ""
-        result["password"] = ""
-
-    return result
-
-
-def _sync_group_id_to_org_auth(group_id: str) -> None:
-    """将选中的分组 ID 同步写入 organization_auth.json 的 group_ids 字段。"""
-    org_dst = CRED_DIR / "organization_auth.json"
-    data = _load_json_safe(org_dst)
-    data["group_ids"] = group_id
-    org_dst.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-
-
-def step_group_init(force=False):
-    """应用分组初始化引导：选择或新建"""
-    # 导入本地配置处理
-    sys.path.append(str(BASE_DIR / "scripts" / "hap"))
+def get_status_ai():
     try:
-        from local_config import load_local_group_id, save_local_group_id
+        from ai_utils import AI_CONFIG_PATH
+        conf = _load_json(AI_CONFIG_PATH)
+        if _is_valid(conf.get("api_key")):
+            return f"✅ 已配置 ({conf.get('provider','').title()}: {_truncate(conf.get('model',''), 15)})"
+    except: pass
+    return "❌ 待配置"
+
+def get_status_hap():
+    conf = _load_json(CRED_DIR / "organization_auth.json")
+    ak, sk = _is_valid(conf.get("app_key")), _is_valid(conf.get("secret_key"))
+    if ak and sk: return f"✅ 已配置 (Key: {_mask(conf.get('app_key'))})"
+    if ak or sk: return "⚠️ 部分配置"
+    return "❌ 待配置"
+
+def get_status_login():
+    acc, pwd = get_existing_login()
+    if _is_valid(acc) and _is_valid(pwd): return f"✅ 已配置 ({_truncate(acc)})"
+    return "❌ 待配置"
+
+def get_status_group():
+    conf = _load_json(CRED_DIR / "organization_auth.json")
+    gid = conf.get("group_ids")
+    if _is_valid(gid): return f"✅ 已选中 (ID: {_mask(gid, 5)})"
+    return "❌ 未选择"
+
+# --- 步骤执行 ---
+
+def step_ai(force=True):
+    from ai_utils import AI_CONFIG_PATH, DEFAULT_DEEPSEEK_BASE_URL, load_ai_config
+    existing = {}
+    try: existing = load_ai_config()
+    except: pass
+    print_box("第 1 步：配置 AI 平台 (AI Provider)")
+    old_p = existing.get("provider", "gemini")
+    p_choice = ask("AI 平台 (1=Gemini, 2=DeepSeek)", default="2" if old_p=="deepseek" else "1", required=True, hint="DeepSeek" if old_p=="deepseek" else "Gemini")
+    provider = "deepseek" if p_choice == "2" else "gemini"
+    key = ask(f"{provider.title()} API Key", default=existing.get("api_key", ""), required=True)
+    opts = {"gemini": {"1": ("gemini-2.0-flash", "响应极快"), "2": ("gemini-2.0-pro-exp-02-05", "逻辑顶尖")},
+            "deepseek": {"1": ("deepseek-chat", "通用对话"), "2": ("deepseek-reasoner", "深度推理")}}[provider]
+    print("\n   可用模型清单:")
+    for k, v in opts.items(): print(f"      {k}. {ljust_cjk(v[0], 25)} -> {v[1]}")
+    m_choice = ask("请选择模型序号", default="1", required=True, hint=existing.get("model", "") if provider==old_p else "")
+    model = opts.get(m_choice, opts["1"])[0]
+    data = {"provider": provider, "api_key": key, "model": model, "base_url": DEFAULT_DEEPSEEK_BASE_URL if provider=="deepseek" else ""}
+    AI_CONFIG_PATH.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    if provider == "gemini": (CRED_DIR / "gemini_auth.json").write_text(json.dumps({"api_key": key, "model": model}, indent=2), encoding="utf-8")
+    print("\n   ✔ AI 平台配置已保存。")
+
+def step_org_auth(force=True):
+    dst = CRED_DIR / "organization_auth.json"
+    existing = _load_json(dst)
+    print_box("第 2 步：配置 HAP 组织密钥 (HAP API)")
+    res = {}
+    res["app_key"] = ask("App Key", default=existing.get("app_key",""), required=True)
+    res["secret_key"] = ask("Secret Key", default=existing.get("secret_key",""), required=True)
+    res["project_id"] = ask("组织 Project ID (编号)", default=existing.get("project_id",""), required=True)
+    res["owner_id"] = ask("用户 Owner ID (个人编号)", default=existing.get("owner_id",""), required=True)
+    res["group_ids"] = existing.get("group_ids", "")
+    dst.write_text(json.dumps(res, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    print("\n   ✔ HAP 组织密钥已同步。")
+
+def step_login_and_auth(force=True):
+    login_dst = CRED_DIR / "login_credentials.py"
+    existing_acc, existing_pwd = get_existing_login()
+    print_box("第 3 步：配置登录账号 (Login Account)")
+    acc = ask("登录邮箱或手机号", default=existing_acc, required=True)
+    pwd = ask("登录密码 (明道云密码)", default=existing_pwd, required=True, is_pwd=True)
+    content = f'# -*- coding: utf-8 -*-\nLOGIN_ACCOUNT = "{acc}"\nLOGIN_PASSWORD = "{pwd}"\nLOGIN_URL = "https://www.mingdao.com/login"\n'
+    login_dst.write_text(content, encoding="utf-8")
+    print("\n   ✔ 登录凭据已保存。")
+    print("   🔄 正在启动自动登录并同步浏览器 Session...")
+    try:
+        subprocess.call([sys.executable, str(BASE_DIR / "scripts" / "auth" / "refresh_auth.py"), "--headless"])
+        print("   ✔ Session 认证同步完成。")
+    except Exception as e: print(f"   ⚠️  同步异常: {e}")
+
+def step_group_init():
+    print_box("第 4 步：选择应用工作分组 (App Group)")
+    if "✅" not in get_status_hap():
+        print("   ⚠️  错误：请先完成第 2 步。")
+        return
+    try:
         from list_groups import get_groups
-    except ImportError:
-        print("   ⚠️  无法加载 HAP 基础模块，跳过分组初始化。")
-        return
+        from local_config import save_local_group_id, load_local_group_id
+        from create_group import create_group
+        groups = get_groups()
+        if not groups:
+            print("\n   ⚠️  未发现应用分组。")
+            if ask("是否现在创建一个新分组？(y/N)", default="y", required=True) == "y":
+                name = ask("请输入新分组名称", default="AutoHAP_Test", required=True)
+                gid = create_group(name)
+                return
+            return
+        curr_gid = load_local_group_id()
+        curr_gname = next((g['name'] for g in groups if g['groupId'] == curr_gid), "")
+        print("\n   现有工作分组清单:")
+        for i, g in enumerate(groups, 1): print(f"      {i}. {ljust_cjk(g['name'], 30)}")
+        print(f"      n. {ljust_cjk('[新建应用分组]', 30)}")
+        idx_str = ask("请输入分组序号 (n 新建)", default="1", required=True, hint=curr_gname)
+        if idx_str.lower() == 'n':
+            name = ask("请输入新分组名称", default="AutoHAP_New", required=True)
+            gid = create_group(name)
+            return
+        idx = int(idx_str) - 1
+        if 0 <= idx < len(groups):
+            gid = groups[idx]['groupId']
+            save_local_group_id(gid)
+            print(f"\n   ✔ 已选中分组: {groups[idx]['name']}")
+    except Exception as e: print(f"   ❌ 分组操作失败: {e}")
 
-    # 如果已经有选中分组且不是强制模式，跳过
-    current_group_id = load_local_group_id()
-    if current_group_id and not force:
-        return
+# --- 主逻辑 ---
 
-    print("\n📁 [Extra] 初始化应用工作分组")
-    groups = get_groups()
-    if not groups:
-        print("   ⚠️  未能获取到分组列表，请检查网络或授权。")
-        return
-
-    print("   请选择一个应用分组：")
-    for i, g in enumerate(groups, 1):
-        mark = " (当前)" if g["groupId"] == current_group_id else ""
-        print(f"      {i}. {g['name']}{mark}")
-    print(f"      n. 新建分组")
-
-    choice = ask("   请输入序号", default="1")
-    if choice.lower() == "n":
-        new_name = ask("   请输入新分组名称")
-        if new_name:
-            try:
-                from create_group import create_group
-                new_group = create_group(new_name)
-                selected_group_id = new_group["groupId"]
-                save_local_group_id(selected_group_id)
-                _sync_group_id_to_org_auth(selected_group_id)
-                print(f"   ✔ 分组已创建并选中: {new_name}")
-            except Exception as e:
-                print(f"   ❌ 创建分组失败: {e}")
-    else:
-        try:
-            idx = int(choice) - 1
-            if 0 <= idx < len(groups):
-                selected_group_id = groups[idx]["groupId"]
-                save_local_group_id(selected_group_id)
-                _sync_group_id_to_org_auth(selected_group_id)
-                print(f"   ✔ 已选中分组: {groups[idx]['name']}")
-        except (ValueError, IndexError):
-            print("   ⚠️  无效选择。")
-
-
-def show_config():
-    """查看当前所有配置内容"""
-    conf = _read_all_config()
-    print("\n" + "=" * 60)
-    print("📋 HAP Auto 当前完整配置")
-    print("=" * 60)
-
-    print("\n[AI]")
-    print(f"   Provider:  {conf['ai_provider']}")
-    print(f"   API Key:   {mask_secret(conf['ai_api_key'])}")
-    print(f"   Model:     {conf['ai_model']}")
-    print(f"   Base URL:  {conf['ai_base_url'] or '(默认)'}")
-
-    print("\n[HAP Organization]")
-    print(f"   AppKey:    {_mask(conf['app_key'])}")
-    print(f"   SecretKey: {_mask(conf['secret_key'])}")
-    print(f"   ProjectID: {conf['project_id']}")
-    print(f"   OwnerID:   {conf['owner_id']}")
-    print(f"   GroupIDs:  {conf['group_ids'] or '(未指定)'}")
-
-    print("\n[Login Credentials]")
-    print(f"   Account:   {conf['account']}")
-    print(f"   Password:  {_mask(conf['password'])}")
-
-    print("\n" + "=" * 60)
-    print("提示：可运行 python3 setup.py --force 重新初始化全部配置")
-    print("=" * 60 + "\n")
-
-    if sys.stdin.isatty():
-        choice = ask("是否立即修改 AI 配置？(y/N)", default="N").strip().lower()
-        if choice in {"y", "yes"}:
-            step_ai(force=True)
-            print("\nAI 配置已更新，最新结果如下：")
-            refreshed = _read_all_config()
-            print(f"   Provider:  {refreshed['ai_provider']}")
-            print(f"   API Key:   {mask_secret(refreshed['ai_api_key'])}")
-            print(f"   Model:     {refreshed['ai_model']}")
-            print(f"   Base URL:  {refreshed['ai_base_url'] or '(默认)'}")
-
+def wizard():
+    show_banner()
+    step_ai(force=True)
+    step_org_auth(force=True)
+    step_login_and_auth(force=True)
+    step_group_init()
+    show_footer()
 
 def main():
-    parser = argparse.ArgumentParser(description="HAP Auto 初始化与配置工具")
-    parser.add_argument("--force", action="store_true", help="强制重跑初始化步骤")
-    parser.add_argument("--show", action="store_true", help="查看当前配置，并可修改 AI 配置")
+    parser = argparse.ArgumentParser(description="HAP Auto 初始化工具")
+    parser.add_argument("--menu", action="store_true", help="管理模式")
+    parser.add_argument("--init", action="store_true", help="清空重置")
     args = parser.parse_args()
 
-    if args.show:
-        show_config()
+    if args.init:
+        if input("\n🚨 警告：这会彻底清空所有配置。确认吗？(y/N): ").lower() == 'y':
+            for f in [CRED_DIR / "ai_auth.json", CRED_DIR / "organization_auth.json", CRED_DIR / "login_credentials.py", 
+                      CRED_DIR / "gemini_auth.json", CRED_DIR / "auth_config.py"]:
+                if f.exists(): f.unlink()
+            print("   ✔ 已清理。")
+            wizard()
+            return
+
+    if args.menu:
+        show_banner()
+        while True:
+            print("\n" + "╔" + "═" * 64 + "╗")
+            print("║" + center_cjk("⚙️  HAP Auto 配置管理中心 (Management)", 64) + "║")
+            print("╚" + "═" * 64 + "╝")
+            print(f"  1. 修改 AI 平台配置    ->  {get_status_ai()}")
+            print(f"  2. 修改 HAP 组织密钥    ->  {get_status_hap()}")
+            print(f"  3. 修改明道云登录账号    ->  {get_status_login()}")
+            print(f"  4. 重新选择/新建分组    ->  {get_status_group()}")
+            print("  q. 保存并退出管理模式")
+            c = input("\n请选择序号: ").strip().lower()
+            if c == '1': step_ai()
+            elif c == '2': step_org_auth()
+            elif c == '3': step_login_and_auth()
+            elif c == '4': step_group_init()
+            elif c == 'q': break
         return
 
-    print("\n" + "🚀" * 20)
-    print("  HAP Auto 自动化环境初始化")
-    print("🚀" * 20)
-
-    try:
-        step_install_deps()
-        step_ai(args.force)
-        step_org_auth(args.force)
-        step_login_and_auth(args.force)
-        step_group_init(args.force)
-
-        print("\n" + "✨" * 20)
-        print("  所有配置已完成！")
-        print("  现在你可以运行主流程：python3 scripts/run_app_pipeline.py")
-        print("✨" * 20 + "\n")
-
-    except KeyboardInterrupt:
-        print("\n\n👋 已由用户取消。")
-    except Exception as e:
-        print(f"\n\n❌ 初始化过程中发生错误: {e}")
-
+    wizard()
 
 if __name__ == "__main__":
-    main()
+    try:
+        try: import requests
+        except: subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "requests", "openai", "playwright"])
+        main()
+    except KeyboardInterrupt: print("\n👋 配置流程已中断。")

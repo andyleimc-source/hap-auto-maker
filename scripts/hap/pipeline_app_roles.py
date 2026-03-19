@@ -47,7 +47,7 @@ APP_VIDEO_RUNS_DIR = OUTPUT_ROOT / "app_video_runs"
 try:
     _, GEN_MODEL = load_gemini_config()
 except Exception:
-    GEN_MODEL = "gemini-2.5-pro"
+    GEN_MODEL = "gemini-2.5-flash"
 
 DEFAULT_MODEL = GEN_MODEL
 VIDEO_MODE_SKIP = "skip"

@@ -51,7 +51,7 @@ ROW_UPDATE_URL = "/v3/app/worksheets/{worksheet_id}/rows/{row_id}"
 try:
     GEN_API_KEY, GEN_MODEL = load_gemini_config()
 except Exception:
-    GEN_API_KEY, GEN_MODEL = "", "gemini-2.5-pro"
+    GEN_API_KEY, GEN_MODEL = "", "gemini-2.5-flash"
 
 DEFAULT_GEMINI_MODEL = GEN_MODEL
 

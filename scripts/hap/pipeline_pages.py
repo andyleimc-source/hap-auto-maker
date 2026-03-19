@@ -53,7 +53,7 @@ def main() -> None:
   python pipeline_pages.py --app-id YOUR_APP_ID
 
   # 指定模型和应用名称
-  python pipeline_pages.py --app-id YOUR_APP_ID --app-name 图书馆管理系统 --model gemini-2.5-pro
+  python pipeline_pages.py --app-id YOUR_APP_ID --app-name 图书馆管理系统 --model gemini-2.5-flash
 
   # 跳过规划（使用已有最新规划文件直接创建）
   python pipeline_pages.py --app-id YOUR_APP_ID --skip-plan

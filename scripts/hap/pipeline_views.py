@@ -28,7 +28,7 @@ VIEW_CREATE_RESULT_DIR = OUTPUT_ROOT / "view_create_results"
 try:
     _, GEN_MODEL = load_gemini_config()
 except Exception:
-    GEN_MODEL = "gemini-2.5-pro"
+    GEN_MODEL = "gemini-2.5-flash"
 
 DEFAULT_MODEL = GEN_MODEL
 DEFAULT_GEMINI_CONFIG = BASE_DIR / "config" / "credentials" / "gemini_auth.json"

@@ -108,7 +108,7 @@ def ensure_scripts() -> None:
 try:
     _, GEN_MODEL = load_gemini_config()
 except Exception:
-    GEN_MODEL = "gemini-2.5-pro"
+    GEN_MODEL = "gemini-2.5-flash"
 
 DEFAULT_MODEL = GEN_MODEL
 

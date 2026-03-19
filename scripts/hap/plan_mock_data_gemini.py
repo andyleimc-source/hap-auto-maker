@@ -44,7 +44,7 @@ try:
     GEN_API_KEY, GEN_MODEL = load_gemini_config()
 except Exception:
     GEN_API_KEY = ""
-    GEN_MODEL = "gemini-2.5-pro"
+    GEN_MODEL = "gemini-2.5-flash"
 
 
 def generate_with_retry(client, model: str, prompt: str, retries: int, ai_config: dict) -> Any:

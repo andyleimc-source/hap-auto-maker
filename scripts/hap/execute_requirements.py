@@ -715,7 +715,7 @@ def main() -> None:
         cmd5 = [
             sys.executable, str(SCRIPT_PIPELINE_LAYOUT),
             "--app-id", app_id,
-            "--model", str(ws.get("model", "gemini-2.5-pro")),
+            "--model", str(ws.get("model", DEFAULT_MODEL)),
         ]
         layout_req = str(ws["layout"].get("requirements", "")).strip()
         if layout_req:

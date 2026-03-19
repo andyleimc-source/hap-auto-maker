@@ -363,7 +363,7 @@ def build_spec_prompt(transcript: List[Dict[str, str]]) -> str:
     "enabled": true,
     "business_context": "业务背景",
     "requirements": "工作表规划要求",
-    "model": "gemini-2.5-pro",
+    "model": "{DEFAULT_MODEL}",
     "icon_update": {{
       "enabled": true,
       "refresh_auth": false
@@ -376,18 +376,19 @@ def build_spec_prompt(transcript: List[Dict[str, str]]) -> str:
   }},
   "views": {{
     "enabled": true,
-    "model": "gemini-2.5-pro"
+    "model": "{DEFAULT_MODEL}"
   }},
   "view_filters": {{
     "enabled": true,
-    "model": "gemini-2.5-pro"
+    "model": "{DEFAULT_MODEL}"
   }},
   "mock_data": {{
     "enabled": true,
-    "model": "gemini-2.5-pro",
+    "model": "{DEFAULT_MODEL}",
     "dry_run": false,
     "trigger_workflow": false
   }},
+
   "execution": {{
     "fail_fast": true,
     "dry_run": false
@@ -462,7 +463,7 @@ def normalize_spec(raw: dict) -> dict:
 
     mock_data = spec.get("mock_data") if isinstance(spec.get("mock_data"), dict) else {}
     mock_data.setdefault("enabled", True)
-    mock_data.setdefault("model", ws.get("model", "gemini-2.5-pro"))
+    mock_data.setdefault("model", ws.get("model", DEFAULT_MODEL))
     mock_data.setdefault("dry_run", False)
     mock_data.setdefault("trigger_workflow", False)
     spec["mock_data"] = mock_data

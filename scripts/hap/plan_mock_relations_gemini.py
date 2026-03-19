@@ -43,7 +43,7 @@ try:
     GEN_API_KEY, GEN_MODEL = load_gemini_config()
 except Exception:
     GEN_API_KEY = ""
-    GEN_MODEL = "gemini-2.5-pro"
+    GEN_MODEL = "gemini-2.5-flash"
 
 def build_candidate_fields(snapshot: dict) -> List[dict]:
     pair_type_map: Dict[tuple, str] = {}
