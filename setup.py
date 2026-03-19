@@ -134,7 +134,7 @@ def get_password_masked(prompt):
             sys.stdout.flush()
     return password
 
-def ask(label: str, default: str = "", required: bool = False, hint: str = "", is_pwd: bool = False) -> str:
+def ask(label: str, default: str = "", required: bool = False, hint: str = "", is_pwd: bool = False, choices: list = None) -> str:
     prefix = "[必填]" if required else "[可选]"
     clean_def = str(default).strip()
     is_placeholder = clean_def in _PLACEHOLDERS or "YOUR_" in clean_def
@@ -157,9 +157,15 @@ def ask(label: str, default: str = "", required: bool = False, hint: str = "", i
             val = val.strip("\"'").strip("\u200b\u200c\u200d\ufeff")
             
         final = val if val else (default if not is_placeholder else "")
+        
         if required and not _is_valid(final):
             print(f"      {ljust_cjk('', 40)} ⚠️  错误：此项必填。")
             continue
+            
+        if choices and final not in choices:
+            print(f"      {ljust_cjk('', 40)} ⚠️  错误：无效输入，请从 {choices} 中选择。")
+            continue
+            
         return final
 
 # --- 状态检测 ---
@@ -209,14 +215,14 @@ def step_ai(force=True):
     except: pass
     print_box("第 1 步：配置 AI 平台 (AI Provider)")
     old_p = existing.get("provider", "gemini")
-    p_choice = ask("AI 平台 (1=Gemini, 2=DeepSeek)", default="2" if old_p=="deepseek" else "1", required=True, hint="DeepSeek" if old_p=="deepseek" else "Gemini")
+    p_choice = ask("AI 平台 (1=Gemini, 2=DeepSeek)", default="2" if old_p=="deepseek" else "1", required=True, hint="DeepSeek" if old_p=="deepseek" else "Gemini", choices=["1", "2"])
     provider = "deepseek" if p_choice == "2" else "gemini"
     key = ask(f"{provider.title()} API Key", default=existing.get("api_key", ""), required=True)
     opts = {"gemini": {"1": ("gemini-2.0-flash", "响应极快"), "2": ("gemini-2.0-pro-exp-02-05", "逻辑顶尖")},
             "deepseek": {"1": ("deepseek-chat", "通用对话"), "2": ("deepseek-reasoner", "深度推理")}}[provider]
     print("\n   可用模型清单:")
     for k, v in opts.items(): print(f"      {k}. {ljust_cjk(v[0], 25)} -> {v[1]}")
-    m_choice = ask("请选择模型序号", default="1", required=True, hint=existing.get("model", "") if provider==old_p else "")
+    m_choice = ask("请选择模型序号", default="1", required=True, hint=existing.get("model", "") if provider==old_p else "", choices=list(opts.keys()))
     model = opts.get(m_choice, opts["1"])[0]
     data = {"provider": provider, "api_key": key, "model": model, "base_url": DEFAULT_DEEPSEEK_BASE_URL if provider=="deepseek" else ""}
     AI_CONFIG_PATH.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -273,7 +279,11 @@ def step_group_init():
         print("\n   现有工作分组清单:")
         for i, g in enumerate(groups, 1): print(f"      {i}. {ljust_cjk(g['name'], 30)}")
         print(f"      n. {ljust_cjk('[新建应用分组]', 30)}")
-        idx_str = ask("请输入分组序号 (n 新建)", default="1", required=True, hint=curr_gname)
+        
+        valid_indices = [str(i) for i in range(1, len(groups) + 1)]
+        choice_list = valid_indices + ["n", "N"]
+        idx_str = ask("请输入分组序号 (n 新建)", default="1", required=True, hint=curr_gname, choices=choice_list)
+        
         if idx_str.lower() == 'n':
             name = ask("请输入新分组名称", default="AutoHAP_New", required=True)
             gid = create_group(name)

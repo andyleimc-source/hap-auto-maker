@@ -18,7 +18,15 @@ python3 setup.py
 python3 scripts/run_app_pipeline.py
 ```
 
-> 如需重新初始化配置，可执行 `python3 setup.py --force`。
+### ⚙️ 环境配置说明 (Setup Guide)
+
+执行 `python3 setup.py` 时，你可以使用以下参数来管理你的配置：
+
+- **`python3 setup.py`**: 引导式全量安装（向导模式）。初次使用或需要重新配置所有项时使用。
+- **`python3 setup.py --menu`**: 管理模式。允许你查看当前配置状态，并增量修改 AI 平台、HAP 密钥或登录账号，而无需重新运行完整流程。
+- **`python3 setup.py --init`**: 彻底重置。清空所有本地存储的配置（`config/credentials/` 下的文件），并重新开始引导。
+
+---
 
 ### AI 平台一键安装
 

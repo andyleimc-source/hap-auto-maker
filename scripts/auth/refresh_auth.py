@@ -52,7 +52,17 @@ def extract_authorization(headers_log: list[dict]) -> str:
 
 def update_auth_config(account_id: str, authorization: str, cookie: str) -> None:
     """将新的认证信息回写到 auth_config.py"""
-    content = AUTH_CONFIG_PATH.read_text(encoding="utf-8")
+    if not AUTH_CONFIG_PATH.exists():
+        content = (
+            "# -*- coding: utf-8 -*-\n"
+            "ACCOUNT_ID = \"\"\n"
+            "AUTHORIZATION = \"\"\n"
+            "COOKIE = (\n"
+            "    \"\"\n"
+            ")\n"
+        )
+    else:
+        content = AUTH_CONFIG_PATH.read_text(encoding="utf-8")
 
     # 替换 ACCOUNT_ID
     content = re.sub(
