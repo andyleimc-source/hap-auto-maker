@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from ai_utils import create_generation_config, get_ai_client, load_ai_config
+from ai_utils import create_generation_config, get_ai_client, load_ai_config, parse_ai_json
 from script_locator import resolve_script
 from gemini_utils import load_gemini_config
 
@@ -31,7 +31,6 @@ from mock_data_common import (
     append_log,
     choose_app,
     discover_authorized_apps,
-    extract_json_object,
     load_gemini_api_key,
     load_json,
     make_log_path,
@@ -455,9 +454,26 @@ def validate_repair_plan(raw: dict, states: List[dict], write_result: dict) -> d
                 }
             )
 
-        missing = sorted([f"{key[0]}::{key[1]}" for key in pending_map if key not in seen])
-        if missing:
-            raise ValueError(f"存在未覆盖的待修复关系: worksheetId={worksheet_id}, missing={missing}")
+        missing_items = sorted([f"{key[0]}::{key[1]}" for key in pending_map if key not in seen])
+        if missing_items:
+            # 容错：将缺失项自动补全到 unresolved
+            for key_str in missing_items:
+                row_id, field_id = key_str.split("::")
+                pending_item = pending_map[(row_id, field_id)]
+                unresolved.append(
+                    {
+                        "rowId": row_id,
+                        "mockRecordKey": pending_item["mockRecordKey"],
+                        "relationFieldId": field_id,
+                        "relationFieldName": pending_item["relationFieldName"],
+                        "targetWorksheetId": pending_item["targetWorksheetId"],
+                        "targetWorksheetName": pending_item["targetWorksheetName"],
+                        "pairType": pending_item["pairType"],
+                        "handlingMode": pending_item["handlingMode"],
+                        "required": pending_item["required"],
+                        "reason": "模型响应中缺失该项，自动补全为未解决",
+                    }
+                )
 
         total_updates += len(updates)
         total_unresolved += len(unresolved)
@@ -578,11 +594,58 @@ def main() -> None:
             load_gemini_api_key(Path(args.config).expanduser().resolve())
             ai_config = load_ai_config(Path(args.config).expanduser().resolve())
         client = get_ai_client(ai_config)
-        prompt = build_prompt(states, write_result)
-        append_log(log_path, "prompt_ready", promptLength=len(prompt), pendingCount=pending_count)
-        response = generate_with_retry(client, args.model, prompt, args.gemini_retries, ai_config)
-        append_log(log_path, "gemini_response_received", responseLength=len(response.text or ""))
-        raw = extract_json_object(response.text or "")
+        provider = ai_config.get("provider", "gemini")
+        
+        # 策略：如果 provider 是 deepseek 或待处理项较多，开启分片生成模式（逐个工作表处理）
+        use_sharding = (provider == "deepseek" and len(states) > 1) or pending_count > 50
+        
+        if use_sharding:
+            print(f"[策略] 开启分片分析模式 (provider={provider}, worksheets={len(states)}, pending={pending_count})...")
+            merged_worksheets = []
+            notes = [f"Sharded analysis mode: {now_iso()}"]
+            for state in states:
+                if not state["pendingItems"]:
+                    continue
+                print(f"  正在分析 [{state['worksheetName']}] 的关联一致性 (pending={len(state['pendingItems'])})...")
+                chunk_prompt = build_prompt([state], write_result)
+                append_log(log_path, "shard_prompt_ready", worksheetId=state["worksheetId"], promptLength=len(chunk_prompt))
+                resp = generate_with_retry(client, args.model, chunk_prompt, args.gemini_retries, ai_config)
+                append_log(log_path, "shard_response_received", worksheetId=state["worksheetId"], responseLength=len(resp.text or ""))
+                chunk_raw = parse_ai_json(resp.text or "")
+                
+                # 提取该工作表的结果
+                chunk_ws_list = chunk_raw.get("worksheets", [])
+                if chunk_ws_list and isinstance(chunk_ws_list, list):
+                    # 容错：有些模型可能只返回一个 object 而不是数组
+                    merged_worksheets.extend(chunk_ws_list)
+                    # 自动补全遗漏项
+                    # 我们会在 validate_repair_plan 层面做兜底，也可以在此处直接处理
+                else:
+                    # 如果 AI 返回结果为空，为该表构建一个全量 unresolved 占位
+                    print(f"  [警告] [{state['worksheetName']}] AI 返回结果为空或格式错误")
+                    merged_worksheets.append({
+                        "worksheetId": state["worksheetId"],
+                        "worksheetName": state["worksheetName"],
+                        "updates": [],
+                        "unresolved": [
+                            {
+                                "rowId": item["rowId"],
+                                "mockRecordKey": item["mockRecordKey"],
+                                "relationFieldId": item["relationFieldId"],
+                                "relationFieldName": item["relationFieldName"],
+                                "targetWorksheetId": item["targetWorksheetId"],
+                                "reason": "AI 响应格式解析失败，自动转为未解决"
+                            } for item in state["pendingItems"]
+                        ]
+                    })
+            raw = {"worksheets": merged_worksheets, "notes": notes}
+        else:
+            prompt = build_prompt(states, write_result)
+            append_log(log_path, "prompt_ready", promptLength=len(prompt), pendingCount=pending_count)
+            response = generate_with_retry(client, args.model, prompt, args.gemini_retries, ai_config)
+            append_log(log_path, "gemini_response_received", responseLength=len(response.text or ""))
+            raw = parse_ai_json(response.text or "")
+
         try:
             result = validate_repair_plan(raw, states, write_result)
         except Exception as exc:

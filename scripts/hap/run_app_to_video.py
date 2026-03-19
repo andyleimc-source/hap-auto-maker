@@ -258,6 +258,9 @@ def main() -> None:
             result1 = run_command(cmd1, cwd=BASE_DIR, interactive=True, stdin_text=stdin_text)
             result1["name"] = "agent_collect_requirements"
             tech_log["commands"].append(result1)
+            if result1["returncode"] == 130:
+                print("\n[信息] 用户取消了需求对话，正在退出。")
+                return
             if result1["returncode"] != 0:
                 raise RuntimeError("步骤1失败：需求采集或自动执行未成功完成。")
 

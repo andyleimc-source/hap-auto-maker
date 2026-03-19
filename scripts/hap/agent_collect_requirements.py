@@ -537,7 +537,7 @@ def main() -> None:
 
         if cmd == "/exit":
             print("已退出，不保存。")
-            return
+            sys.exit(130)  # 130 通常表示用户中断 (Ctrl+C)
         if cmd == "/show":
             print_transcript_summary(transcript)
             continue
