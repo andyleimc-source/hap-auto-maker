@@ -3,6 +3,52 @@
 基于 Gemini + HAP自动化应用搭建助手。
 通过自然语言对话，全自动完成：**创建应用 → 建立工作表及字段 → 配置视图 → 构造测试数据 → 生成智能机器人** 的完整开发工作流。
 
+## 🚀 快速开始
+
+### macOS
+
+- 操作系统：**macOS**
+- Python 环境：**Python 3.11 或 3.12**（低于 3.11 将导致运行失败！[点此下载 3.12 官方安装包](https://www.python.org/ftp/python/3.12.9/python-3.12.9-macos11.pkg)）
+- 权限说明：需提供一个具有**明道云组织管理员**权限的账号。
+
+```bash
+git clone https://github.com/andyleimc-source/hap-auto-maker.git
+cd hap-auto-maker
+python3 setup.py
+python3 scripts/run_app_pipeline.py
+```
+
+> 如需重新初始化配置，可执行 `python3 setup.py --force`。
+
+### Windows
+
+Windows 用户最稳的方案是：**安装 WSL2，并在 Ubuntu 终端中运行本项目**。这个项目当前主要按 macOS / 类 Unix 环境组织，`Python + Playwright + Chromium` 在 WSL2 里通常比原生 PowerShell 更稳定，也更接近作者的开发环境。
+
+先安装这些工具：
+- [WSL2 安装说明](https://learn.microsoft.com/windows/wsl/install)
+- [Ubuntu（Microsoft Store）](https://apps.microsoft.com/store/detail/ubuntu/9PDXGNCFSCZV)
+- [Git for Windows](https://git-scm.com/download/win)
+- [Python 3.12 for Windows](https://www.python.org/downloads/windows/)
+
+安装完成后，在 **管理员 PowerShell** 里先执行一次：
+
+```powershell
+wsl --install
+```
+
+重启电脑，打开 **Ubuntu**，然后执行下面这组完整命令：
+
+```bash
+sudo apt update
+sudo apt install -y git python3 python3-pip python3-venv
+git clone https://github.com/andyleimc-source/hap-auto-maker.git
+cd hap-auto-maker
+python3 setup.py
+python3 scripts/run_app_pipeline.py
+```
+
+初始化时按提示填写 `Gemini API Key`、明道云 OpenAPI 密钥、组织信息和管理员登录账号即可。如果登录认证卡住，可单独执行 `python3 scripts/auth/refresh_auth.py`。
+
 ## 🎬 核心特性
 - **对话即开发**：描述需求即可，AI 自动转换为明道云的建表结构与字段关联。
 - **真实数据生成**：根据表结构自动生成符合业务逻辑的测试数据。
@@ -45,223 +91,6 @@
 
 ---
 
-## 🚀 快速开始
-
-## 🪟 Windows 用户使用方法（最稳方案）
-
-如果你使用的是 **Windows**，最推荐、也最省心的方式是：
-
-> **在 Windows 里安装 WSL2，然后在 Ubuntu 终端中运行本项目。**
-
-这样做的原因很简单：
-- 本项目当前 README 主要按 **macOS** 编写。
-- 项目运行依赖 `Python + Playwright + Chromium`，在 **类 Linux 环境** 下更稳定，踩坑更少。
-- 对 Windows 新手来说，**WSL2 比原生 PowerShell 更稳、更接近作者的开发环境**。
-
-### 1. 你需要先安装的工具
-
-请按下面顺序安装：
-
-1. **WSL2**
-   - 微软官方安装说明：
-   - [https://learn.microsoft.com/windows/wsl/install](https://learn.microsoft.com/windows/wsl/install)
-
-2. **Ubuntu（在 WSL 中使用）**
-   - Microsoft Store 下载页：
-   - [https://apps.microsoft.com/store/detail/ubuntu/9PDXGNCFSCZV](https://apps.microsoft.com/store/detail/ubuntu/9PDXGNCFSCZV)
-
-3. **Git for Windows**
-   - 官方下载：
-   - [https://git-scm.com/download/win](https://git-scm.com/download/win)
-
-4. **Python 3.12**
-   - 官方下载页：
-   - [https://www.python.org/downloads/windows/](https://www.python.org/downloads/windows/)
-   - 推荐直接下载 **Python 3.12.x Windows installer (64-bit)**。
-
-### 2. 安装顺序（小白版）
-
-#### 第一步：安装 WSL2
-
-用管理员身份打开 **PowerShell**，执行：
-
-```powershell
-wsl --install
-```
-
-执行完成后，**重启电脑**。
-
-> 如果系统提示你已经安装过 WSL，可以跳过这一步。
-
-#### 第二步：安装 Ubuntu
-
-重启后，打开 **Microsoft Store**，搜索并安装 **Ubuntu**。
-
-安装完成后，打开 Ubuntu，系统会提示你创建：
-- 一个 Linux 用户名
-- 一个 Linux 密码
-
-这个用户名和密码是 **WSL 里的 Ubuntu 账号**，不是 GitHub 账号，也不是明道云账号。
-
-#### 第三步：确认 Ubuntu 能正常打开
-
-安装完成后，打开 **Ubuntu**，你应该能看到类似这样的命令行：
-
-```bash
-yourname@DESKTOP-XXXX:~$
-```
-
-后面所有命令，都建议在这个 **Ubuntu 窗口**里执行，不要在 Windows 的 CMD 里执行。
-
-### 3. 在 Ubuntu 里安装运行环境
-
-打开 Ubuntu，按顺序执行下面这些命令：
-
-```bash
-sudo apt update
-sudo apt install -y git python3 python3-pip python3-venv
-python3 --version
-git --version
-```
-
-如果你看到 Python 版本是 `3.11` 或 `3.12`，就可以继续。
-
-### 4. 拉取项目代码
-
-继续在 Ubuntu 里执行：
-
-```bash
-git clone https://github.com/andyleimc-source/hap-auto-maker.git
-cd hap-auto-maker
-```
-
-如果你想确认自己已经进入项目目录，可以执行：
-
-```bash
-pwd
-ls
-```
-
-### 5. 初始化项目
-
-在项目目录里执行：
-
-```bash
-python3 setup.py
-```
-
-这个命令会自动帮你做几件事：
-- 安装 Python 依赖
-- 安装 Playwright
-- 安装 Chromium 浏览器
-- 引导你填写项目运行所需的密钥和账号信息
-
-初始化时，终端会让你输入这些内容：
-- `Gemini API Key`
-- `app_key`
-- `secret_key`
-- `project_id`
-- `owner_id`
-- `group_ids`（可选）
-- 明道云管理员登录账号
-- 明道云管理员登录密码
-
-### 6. 初始化完成后启动项目
-
-执行：
-
-```bash
-python3 scripts/run_app_pipeline.py
-```
-
-然后按终端提示输入你的应用需求，最后输入：
-
-```text
-开始运行
-```
-
-程序就会开始自动创建应用、工作表、视图、Mock 数据和相关配置。
-
-### 7. Windows 用户完整命令清单
-
-如果你已经完成了 WSL2 和 Ubuntu 安装，那么从打开 Ubuntu 到启动项目，完整命令如下：
-
-```bash
-sudo apt update
-sudo apt install -y git python3 python3-pip python3-venv
-git clone https://github.com/andyleimc-source/hap-auto-maker.git
-cd hap-auto-maker
-python3 setup.py
-python3 scripts/run_app_pipeline.py
-```
-
-### 8. 常见问题
-
-#### Q1：为什么不推荐直接在 Windows PowerShell 里运行？
-
-可以尝试，但**不作为最稳方案推荐**。原因是这个项目当前主要按 macOS/类 Unix 环境组织和测试，Windows 原生命令行下更容易遇到：
-- Playwright 浏览器安装问题
-- Python 版本和路径问题
-- 浏览器自动登录认证问题
-
-#### Q2：`python3 setup.py` 卡住了怎么办？
-
-先看终端卡在哪一步：
-- 如果卡在依赖安装，通常是网络问题，重新执行一次即可。
-- 如果卡在浏览器登录，可能是明道云登录需要验证码、二次确认，或者网络访问异常。
-
-这时可以单独执行认证脚本：
-
-```bash
-python3 scripts/auth/refresh_auth.py
-```
-
-它会打开浏览器帮助你完成登录认证。
-
-#### Q3：以后更新项目怎么做？
-
-进入项目目录后执行：
-
-```bash
-cd ~/hap-auto-maker
-git pull
-python3 setup.py --force
-```
-
-#### Q4：如果我输错了密钥或者想换账号怎么办？
-
-重新执行：
-
-```bash
-python3 setup.py --force
-```
-
-这个命令会重新引导你填写配置。
-
-### 1. 前置检查
-- 操作系统：**macOS**
-- Python 环境：**Python 3.11 或 3.12**（低于 3.11 将导致运行失败！[点此下载 3.12 官方安装包](https://www.python.org/ftp/python/3.12.9/python-3.12.9-macos11.pkg)）
-- 权限说明：需提供一个具有**明道云组织管理员**权限的账号。
-
-### 2. 克隆与初始化
-```bash
-git clone https://github.com/andyleimc-source/hap-auto-maker.git
-cd hap-auto-maker
-
-# 运行一键初始化（自动安装依赖、引导配置密钥）
-python3 setup.py
-```
-> 💡 **小贴士**：未来如果需要更换账号或更新了项目，随时可以运行 `python3 setup.py --force` 重新初始化。
-
-### 3. 一键构建应用 ✨
-所有配置完成后，直接通过以下命令与 HAP Auto 对话并自动创建应用：
-```bash
-python3 scripts/run_app_pipeline.py
-```
-> 根据终端提示输入你的应用需求，最后输入「**开始运行**」，剩下的交给 AI 去完成！
-
----
-
 ## 🔑 密钥获取指南
 
 在运行 `setup.py` 时，需要填写以下信息。为了顺畅体验，建议提前准备：
@@ -283,4 +112,3 @@ python3 scripts/run_app_pipeline.py
 > **注意**：如果未来前端内部接口发生变动，可能会导致项目中部分自动化功能无法运行。遇到此情况时，可能需要重新调试或等待作者更新代码。
 
 **如有任何问题或交流需求，欢迎联系作者微信：`houbaole`**
-
