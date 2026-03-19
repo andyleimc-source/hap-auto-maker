@@ -5,10 +5,10 @@
 
 ## 🚀 快速开始
 
-### macOS
+### macOS / Linux
 
-- 操作系统：**macOS**
-- Python 环境：**Python 3.11 或 3.12**（低于 3.11 将导致运行失败！[点此下载 3.12 官方安装包](https://www.python.org/ftp/python/3.12.9/python-3.12.9-macos11.pkg)）
+- 操作系统：**macOS / Linux**
+- Python 环境：**Python 3.11 或 3.12**（低于 3.11 将导致运行失败！）
 - 权限说明：需提供一个具有**明道云组织管理员**权限的账号。
 
 ```bash
@@ -20,31 +20,32 @@ python3 scripts/run_app_pipeline.py
 
 > 如需重新初始化配置，可执行 `python3 setup.py --force`。
 
-### Windows
+### AI 平台一键安装
 
-Windows 用户最稳的方案是：**安装 WSL2，并在 Ubuntu 终端中运行本项目**。这个项目当前主要按 macOS / 类 Unix 环境组织，`Python + Playwright + Chromium` 在 WSL2 里通常比原生 PowerShell 更稳定，也更接近作者的开发环境。
+如果你使用的是 **Codex / Claude / Gemini / Trae** 这类带终端能力的 AI 编程平台，可直接在平台终端中粘贴以下命令完成安装与启动。
 
-先安装这些工具：
-- [WSL2 安装说明](https://learn.microsoft.com/windows/wsl/install)
-- [Ubuntu（Microsoft Store）](https://apps.microsoft.com/store/detail/ubuntu/9PDXGNCFSCZV)
-- [Git for Windows](https://git-scm.com/download/win)
-- [Python 3.12 for Windows](https://www.python.org/downloads/windows/)
-
-安装完成后，在 **管理员 PowerShell** 里先执行一次：
-
-```powershell
-wsl --install
-```
-
-重启电脑，打开 **Ubuntu**，然后执行下面这组完整命令：
+#### Codex
 
 ```bash
-sudo apt update
-sudo apt install -y git python3 python3-pip python3-venv
-git clone https://github.com/andyleimc-source/hap-auto-maker.git
-cd hap-auto-maker
-python3 setup.py
-python3 scripts/run_app_pipeline.py
+git clone https://github.com/andyleimc-source/hap-auto-maker.git && cd hap-auto-maker && python3 setup.py && python3 scripts/run_app_pipeline.py
+```
+
+#### Claude
+
+```bash
+git clone https://github.com/andyleimc-source/hap-auto-maker.git && cd hap-auto-maker && python3 setup.py && python3 scripts/run_app_pipeline.py
+```
+
+#### Gemini
+
+```bash
+git clone https://github.com/andyleimc-source/hap-auto-maker.git && cd hap-auto-maker && python3 setup.py && python3 scripts/run_app_pipeline.py
+```
+
+#### Trae
+
+```bash
+git clone https://github.com/andyleimc-source/hap-auto-maker.git && cd hap-auto-maker && python3 setup.py && python3 scripts/run_app_pipeline.py
 ```
 
 初始化时按提示填写 `Gemini API Key`、明道云 OpenAPI 密钥、组织信息和管理员登录账号即可。如果登录认证卡住，可单独执行 `python3 scripts/auth/refresh_auth.py`。
