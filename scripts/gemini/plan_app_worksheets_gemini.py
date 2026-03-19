@@ -18,7 +18,13 @@ NETWORK_RETRY_DELAY = 5  # seconds
 BASE_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BASE_DIR / "scripts" / "hap"))
 
-from ai_utils import AI_CONFIG_PATH, create_generation_config, get_ai_client, load_ai_config
+from ai_utils import (
+    AI_CONFIG_PATH,
+    create_generation_config,
+    get_ai_client,
+    load_ai_config,
+    parse_ai_json,
+)
 
 CONFIG_PATH = AI_CONFIG_PATH
 DEFAULT_MODEL = "gemini-2.5-flash"
@@ -32,29 +38,8 @@ def sanitize_name(name: str) -> str:
 
 
 def extract_json(text: str) -> dict:
-    text = (text or "").strip()
-    if not text:
-        raise ValueError("Gemini 返回为空")
-
-    try:
-        obj = json.loads(text)
-        if isinstance(obj, dict):
-            return obj
-    except json.JSONDecodeError:
-        pass
-
-    # 容错：提取第一个 JSON 对象
-    decoder = json.JSONDecoder()
-    for i, ch in enumerate(text):
-        if ch != "{":
-            continue
-        try:
-            obj, _ = decoder.raw_decode(text[i:])
-            if isinstance(obj, dict):
-                return obj
-        except json.JSONDecodeError:
-            continue
-    raise ValueError(f"Gemini 未返回可解析的 JSON:\n{text}")
+    # 统一使用 ai_utils 中的 robust 解析
+    return parse_ai_json(text)
 
 
 def build_prompt(app_name: str, business_context: str, extra_requirements: str) -> str:

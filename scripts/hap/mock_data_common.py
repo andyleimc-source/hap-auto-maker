@@ -275,7 +275,17 @@ def request_json(method: str, url: str, headers: dict, payload: Optional[dict] =
         raise RuntimeError(f"接口返回非 JSON: status={resp.status_code}, body={resp.text[:500]}") from exc
     if not isinstance(data, dict):
         raise RuntimeError(f"接口返回格式错误: {data}")
-    if not data.get("success"):
+    
+    # 特殊处理：HAP v3 批量删除接口 (DELETE) 有时会返回 success: False, error_code: 0, error_msg: '成功'
+    # 但实际上删除是成功的。
+    is_delete = method.upper() == "DELETE"
+    is_weird_success = (
+        not data.get("success") and 
+        data.get("error_code") == 0 and 
+        data.get("error_msg") == "成功"
+    )
+    
+    if not data.get("success") and not (is_delete and is_weird_success):
         raise RuntimeError(f"接口调用失败: {data}")
     return data
 

@@ -52,32 +52,61 @@ def run_step(cmd: List[str], title: str, log_path: Path) -> Dict[str, object]:
     print(f"\n== {title} ==")
     print("命令:", " ".join(cmd))
     append_log(log_path, "step_start", title=title, cmd=cmd)
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    if proc.stdout.strip():
-        print(proc.stdout.strip())
-    if proc.returncode != 0:
-        if proc.stderr.strip():
-            print(proc.stderr.strip())
+    
+    # 改进：实时输出，防止长耗时步骤触发 Gemini 终端超时
+    stdout_lines = []
+    stderr_lines = []
+    
+    import threading
+    proc = subprocess.Popen(
+        cmd, 
+        stdout=subprocess.PIPE, 
+        stderr=subprocess.PIPE, 
+        text=True, 
+        bufsize=1,
+        universal_newlines=True
+    )
+
+    def reader(pipe, bucket):
+        for line in pipe:
+            bucket.append(line)
+            # 实时打印到终端
+            print(line, end="", flush=True)
+
+    t1 = threading.Thread(target=reader, args=(proc.stdout, stdout_lines))
+    t2 = threading.Thread(target=reader, args=(proc.stderr, stderr_lines))
+    t1.start()
+    t2.start()
+    
+    returncode = proc.wait()
+    t1.join()
+    t2.join()
+
+    full_stdout = "".join(stdout_lines)
+    full_stderr = "".join(stderr_lines)
+
+    if returncode != 0:
         append_log(
             log_path,
             "step_failed",
             title=title,
             cmd=cmd,
-            returncode=proc.returncode,
-            stdout=proc.stdout,
-            stderr=proc.stderr,
+            returncode=returncode,
+            stdout=full_stdout,
+            stderr=full_stderr,
         )
-        raise RuntimeError(f"{title} 失败，退出码: {proc.returncode}")
+        raise RuntimeError(f"{title} 失败，退出码: {returncode}")
+    
     append_log(
         log_path,
         "step_finished",
         title=title,
         cmd=cmd,
-        returncode=proc.returncode,
-        stdout=proc.stdout,
-        stderr=proc.stderr,
+        returncode=returncode,
+        stdout=full_stdout,
+        stderr=full_stderr,
     )
-    return {"cmd": cmd, "stdout": proc.stdout, "stderr": proc.stderr, "returncode": proc.returncode}
+    return {"cmd": cmd, "stdout": full_stdout, "stderr": full_stderr, "returncode": returncode}
 
 
 def extract_file_path(output: str) -> Optional[str]:

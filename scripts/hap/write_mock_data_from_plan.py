@@ -153,7 +153,9 @@ def main() -> None:
             else:
                 account_id, authorization, cookie = web_auth
                 row_responses = []
-                for record in enriched_records:
+                total_to_write = len(enriched_records)
+                print(f"  正在写入 [{worksheet['worksheetName']}] (共 {total_to_write} 条)...", end="", flush=True)
+                for i, record in enumerate(enriched_records):
                     api_resp = add_worksheet_row_with_fallback(
                         base_url=args.base_url,
                         app_key=app["appKey"],
@@ -172,6 +174,9 @@ def main() -> None:
                     if not row_id:
                         raise RuntimeError(f"新增返回缺少 rowid: worksheetId={worksheet['worksheetId']}, record={record['mockRecordKey']}")
                     row_ids.append(row_id)
+                    if (i + 1) % 5 == 0:
+                        print(f"{i+1}..", end="", flush=True)
+                print("完成")
                 response = {"success": True, "rows": row_responses}
             append_log(
                 log_path,

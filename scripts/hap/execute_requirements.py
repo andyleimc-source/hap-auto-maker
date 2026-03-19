@@ -298,18 +298,59 @@ def run_cmd(cmd: List[str], dry_run: bool, verbose: bool) -> Dict[str, object]:
     if dry_run:
         return {"dry_run": True, "cmd": cmd, "cmd_text": cmd_text, "returncode": 0, "stdout": "", "stderr": ""}
 
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    if verbose and proc.stdout.strip():
-        print(proc.stdout.strip())
-    if verbose and proc.stderr.strip():
-        print(proc.stderr.strip())
+    # 改进：使用 Popen 实时流式输出，防止长耗时步骤触发 Gemini 终端超时
+    stdout_lines = []
+    stderr_lines = []
+    
+    proc = subprocess.Popen(
+        cmd, 
+        stdout=subprocess.PIPE, 
+        stderr=subprocess.PIPE, 
+        text=True, 
+        bufsize=1,
+        universal_newlines=True
+    )
+
+    def reader(pipe, bucket, is_stdout):
+        for line in pipe:
+            bucket.append(line)
+            if verbose:
+                # 实时打印到终端，保持活动
+                print(line, end="", flush=True)
+
+    # 定时打印心跳点，防止静默超时
+    def heartbeat(process):
+        while process.poll() is None:
+            if not verbose:
+                print(".", end="", flush=True)
+            time.sleep(30)
+
+    t1 = threading.Thread(target=reader, args=(proc.stdout, stdout_lines, True))
+    t2 = threading.Thread(target=reader, args=(proc.stderr, stderr_lines, False))
+    t3 = threading.Thread(target=heartbeat, args=(proc,))
+    t1.start()
+    t2.start()
+    t3.start()
+    
+    returncode = proc.wait()
+    t1.join()
+    t2.join()
+    # t3 will exit shortly after
+
+    full_stdout = "".join(stdout_lines)
+    full_stderr = "".join(stderr_lines)
+    
+    if not verbose and not dry_run:
+        # 清除刚才打的点
+        print(" ", end="\r")
+
     return {
         "dry_run": False,
         "cmd": cmd,
         "cmd_text": cmd_text,
-        "returncode": proc.returncode,
-        "stdout": proc.stdout,
-        "stderr": proc.stderr,
+        "returncode": returncode,
+        "stdout": full_stdout,
+        "stderr": full_stderr,
     }
 
 

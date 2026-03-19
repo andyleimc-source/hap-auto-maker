@@ -389,6 +389,8 @@ def _fix_trigger_references(plan: dict, app_structure: dict) -> int:
             for wf in ws.get(group_key) or []:
                 for node in wf.get("action_nodes") or []:
                     for field in node.get("fields") or []:
+                        if not isinstance(field, dict):
+                            continue
                         fv = str(field.get("fieldValue", "") or "")
                         field["fieldValue"] = _fix_value(fv, ws_id)
 

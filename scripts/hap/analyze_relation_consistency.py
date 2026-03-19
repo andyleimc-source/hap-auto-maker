@@ -52,21 +52,38 @@ def generate_with_retry(client, model: str, prompt: str, retries: int, ai_config
     last_exc: Optional[Exception] = None
     for attempt in range(1, max(1, retries) + 1):
         try:
-            return client.models.generate_content(
-                model=model,
-                contents=prompt,
-                config=create_generation_config(
-                    ai_config,
-                    response_mime_type="application/json",
-                    temperature=0.1,
-                ),
-            )
+            # 开启心跳辅助线程，防止 AI 响应过慢触发终端超时
+            stop_heartbeat = False
+            def heartbeat():
+                while not stop_heartbeat:
+                    print(".", end="", flush=True)
+                    time.sleep(30)
+            
+            import threading
+            t = threading.Thread(target=heartbeat)
+            t.daemon = True
+            t.start()
+            
+            try:
+                res = client.models.generate_content(
+                    model=model,
+                    contents=prompt,
+                    config=create_generation_config(
+                        ai_config,
+                        response_mime_type="application/json",
+                        temperature=0.1,
+                    ),
+                )
+                return res
+            finally:
+                stop_heartbeat = True
+                # 不要等待 t.join()，daemon 会自己停
         except Exception as exc:
             last_exc = exc
             if attempt >= max(1, retries):
                 break
             wait_seconds = min(16, 2 ** (attempt - 1))
-            print(f"Gemini 调用失败，第 {attempt} 次重试前等待 {wait_seconds}s：{exc}")
+            print(f"\nGemini 调用失败，第 {attempt} 次重试前等待 {wait_seconds}s：{exc}")
             time.sleep(wait_seconds)
     assert last_exc is not None
     raise last_exc
@@ -606,10 +623,11 @@ def main() -> None:
             for state in states:
                 if not state["pendingItems"]:
                     continue
-                print(f"  正在分析 [{state['worksheetName']}] 的关联一致性 (pending={len(state['pendingItems'])})...")
+                print(f"  正在分析 [{state['worksheetName']}] 的关联一致性 (pending={len(state['pendingItems'])})...", end="", flush=True)
                 chunk_prompt = build_prompt([state], write_result)
                 append_log(log_path, "shard_prompt_ready", worksheetId=state["worksheetId"], promptLength=len(chunk_prompt))
                 resp = generate_with_retry(client, args.model, chunk_prompt, args.gemini_retries, ai_config)
+                print("完成")
                 append_log(log_path, "shard_response_received", worksheetId=state["worksheetId"], responseLength=len(resp.text or ""))
                 chunk_raw = parse_ai_json(resp.text or "")
                 

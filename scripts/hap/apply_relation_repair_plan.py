@@ -75,7 +75,11 @@ def main() -> None:
         )
         result_updates = []
         failed_count = 0
-        for update in updates:
+        total_to_update = len(updates)
+        if total_to_update > 0:
+            print(f"  正在修复 [{worksheet['worksheetName']}] (共 {total_to_update} 条)...", end="", flush=True)
+        
+        for i, update in enumerate(updates):
             try:
                 response = {"success": True, "dryRun": args.dry_run}
                 if not args.dry_run:
@@ -90,14 +94,8 @@ def main() -> None:
                         trigger_workflow=args.trigger_workflow,
                     )
                 result_updates.append({**update, "response": response, "success": True})
-                append_log(
-                    log_path,
-                    "update_success",
-                    worksheetId=worksheet["worksheetId"],
-                    rowId=update["rowId"],
-                    relationFieldId=update["relationFieldId"],
-                    targetRowId=update["targetRowId"],
-                )
+                if (i + 1) % 5 == 0:
+                    print(f"{i+1}..", end="", flush=True)
             except Exception as exc:
                 failed_count += 1
                 total_failed += 1
@@ -117,6 +115,8 @@ def main() -> None:
                     targetRowId=update["targetRowId"],
                     error=str(exc),
                 )
+        if total_to_update > 0:
+            print("完成")
         worksheet_results.append(
             {
                 "worksheetId": worksheet["worksheetId"],
