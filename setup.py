@@ -218,7 +218,11 @@ def step_ai(force=True):
     p_choice = ask("AI 平台 (1=Gemini, 2=DeepSeek)", default="1" if old_p=="gemini" else "2", required=True, hint="Gemini" if old_p=="gemini" else "DeepSeek", choices=["1", "2"])
     provider = "deepseek" if p_choice == "2" else "gemini"
     provider_changed = provider != old_p
-    key = ask(f"{provider.title()} API Key", default="" if provider_changed else existing.get("api_key", ""), required=True)
+    # 检查已存 key 是否属于当前 provider（格式不匹配则视为错误 key，强制重填）
+    existing_key = existing.get("api_key", "")
+    key_mismatch = (provider == "gemini" and existing_key.startswith("sk-")) or \
+                   (provider == "deepseek" and existing_key.startswith("AIza"))
+    key = ask(f"{provider.title()} API Key", default="" if (provider_changed or key_mismatch) else existing_key, required=True)
     
     # 根据新架构，不再让用户手动选择模型，而是展示档位映射
     print("\n   已启用模型档位自动适配 (Tier Mapping):")
