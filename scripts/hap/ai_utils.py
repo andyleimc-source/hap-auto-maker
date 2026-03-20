@@ -180,18 +180,25 @@ class GeminiCompatibilityClient:
         
         for attempt in range(max_retries):
             try:
-                response = self._openai_client.chat.completions.create(
+                # 使用流式请求，逐 chunk 接收，避免大响应时服务端 chunked 连接中断
+                stream = self._openai_client.chat.completions.create(
                     model=model or self.model,
                     messages=messages,
                     temperature=temperature,
                     response_format=response_format,
+                    stream=True,
                 )
+                chunks = []
+                for chunk in stream:
+                    delta = chunk.choices[0].delta.content if chunk.choices else None
+                    if delta:
+                        chunks.append(delta)
 
                 class FakeResponse:
                     def __init__(self, text):
                         self.text = text
 
-                return FakeResponse(response.choices[0].message.content or "")
+                return FakeResponse("".join(chunks))
             except (openai.APIConnectionError, openai.APITimeoutError) as e:
                 last_exception = e
                 wait_time = (attempt + 1) * 5
@@ -200,7 +207,7 @@ class GeminiCompatibilityClient:
             except Exception as e:
                 # 其他异常直接抛出
                 raise e
-        
+
         raise last_exception or RuntimeError("AI 请求多次重试后依然失败")
 
 
