@@ -719,8 +719,8 @@ def main() -> int:
 
     # 3. 获取 AI 配置
     try:
-        # 主规划显式使用 reasoning 档位
-        ai_config = load_ai_config(tier="reasoning")
+        # 主规划使用 fast 档位，reasoning 对结构化 JSON 输出性价比低且速度慢
+        ai_config = load_ai_config(tier="fast")
     except Exception as exc:
         print(f"Error: 获取 AI 配置失败：{exc}", file=sys.stderr)
         persist(script_name, None, args=log_args, error=str(exc), started_at=started_at)

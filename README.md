@@ -3,28 +3,48 @@
 基于 Gemini + HAP自动化应用搭建助手。
 通过自然语言对话，全自动完成：**创建应用 → 建立工作表及字段 → 配置视图 → 构造测试数据 → 生成智能机器人** 的完整开发工作流。
 
-## 🚀 快速开始
+## 📦 安装
 
-### macOS / Linux
-
+**环境要求**
 - 操作系统：**macOS / Linux**
 - Python 环境：**Python 3.11 或 3.12**（低于 3.11 将导致运行失败！）
 - 权限说明：需提供一个具有**明道云组织管理员**权限的账号。
 
+**第一步：克隆仓库并安装依赖**
+
 ```bash
 git clone https://github.com/andyleimc-source/hap-auto-maker.git
 cd hap-auto-maker
+pip3 install -r requirements.txt
+```
+
+**第二步：初始化配置（首次使用）**
+
+```bash
 python3 setup.py
+```
+
+执行后进入引导向导，按提示填写 AI 密钥、HAP 密钥和登录账号即可。配置会保存在 `config/credentials/` 目录下，后续启动无需重复执行。
+
+**其他 setup 选项**
+
+| 命令 | 说明 |
+|------|------|
+| `python3 setup.py` | 引导式全量安装（首次使用） |
+| `python3 setup.py --menu` | 管理模式，可增量修改 AI 平台、HAP 密钥或登录账号 |
+| `python3 setup.py --init` | 彻底重置，清空所有已保存配置并重新引导 |
+
+---
+
+## 🚀 启动
+
+完成安装配置后，每次使用只需运行：
+
+```bash
 python3 scripts/run_app_pipeline.py
 ```
 
-### ⚙️ 环境配置说明 (Setup Guide)
-
-执行 `python3 setup.py` 时，你可以使用以下参数来管理你的配置：
-
-- **`python3 setup.py`**: 引导式全量安装（向导模式）。初次使用或需要重新配置所有项时使用。
-- **`python3 setup.py --menu`**: 管理模式。允许你查看当前配置状态，并增量修改 AI 平台、HAP 密钥或登录账号，而无需重新运行完整流程。
-- **`python3 setup.py --init`**: 彻底重置。清空所有本地存储的配置（`config/credentials/` 下的文件），并重新开始引导。
+然后用自然语言描述你的需求，输入「开始运行」即可全自动完成应用搭建。
 
 ---
 

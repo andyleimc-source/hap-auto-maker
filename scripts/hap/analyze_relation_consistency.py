@@ -529,7 +529,7 @@ def main() -> None:
     args = parser.parse_args()
 
     # 加载 AI 配置 (推理档)
-    ai_config = load_ai_config(tier="reasoning")
+    ai_config = load_ai_config(tier="fast")
     client = get_ai_client(ai_config)
     model_name = ai_config["model"]
 

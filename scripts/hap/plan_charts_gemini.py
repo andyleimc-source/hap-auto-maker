@@ -488,8 +488,8 @@ def main() -> None:
     app_name = args.app_name.strip() or app_id
     auth_config_path = Path(args.auth_config).expanduser().resolve()
     
-    # 加载 AI 配置 (推理档)
-    ai_config = load_ai_config(tier="reasoning")
+    # 结构化 JSON 输出，使用极速档
+    ai_config = load_ai_config(tier="fast")
     client = get_ai_client(ai_config)
     model_name = ai_config["model"]
 

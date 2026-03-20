@@ -361,8 +361,8 @@ def main() -> None:
     log = Logger(LOG_DIR / f"plan_pages_{app_id}_{ts}.log")
 
     auth_config_path = Path(args.auth_config).expanduser().resolve()
-    # 显式使用 reasoning 档位
-    ai_config = load_ai_config(Path(args.config).expanduser().resolve(), tier="reasoning")
+    # 结构化 JSON 输出，使用极速档
+    ai_config = load_ai_config(Path(args.config).expanduser().resolve(), tier="fast")
     model_name = ai_config["model"]
 
     # Step 1: 获取应用结构

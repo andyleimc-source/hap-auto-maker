@@ -371,8 +371,8 @@ def main() -> None:
     parser.add_argument("--output", default="", help="输出 JSON 文件路径")
     args = parser.parse_args()
 
-    # 显式使用 reasoning 档位
-    ai_config = load_ai_config(GEMINI_CONFIG_PATH, tier="reasoning")
+    # 结构化 JSON 输出，使用极速档
+    ai_config = load_ai_config(GEMINI_CONFIG_PATH, tier="fast")
     client = get_ai_client(ai_config)
     model_name = ai_config["model"]
 

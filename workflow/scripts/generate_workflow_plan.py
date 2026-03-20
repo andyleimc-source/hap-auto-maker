@@ -292,8 +292,8 @@ def build_prompt(app_structure: dict) -> str:
 
 
 def call_ai(prompt: str, config_path: str) -> dict:
-    # 显式使用 reasoning 档位
-    ai_config = load_ai_config(Path(config_path).expanduser().resolve(), tier="reasoning")
+    # 结构化 JSON 输出，使用极速档
+    ai_config = load_ai_config(Path(config_path).expanduser().resolve(), tier="fast")
     client = get_ai_client(ai_config)
     model_name = ai_config["model"]
 

@@ -256,7 +256,7 @@ def build_spec_prompt(transcript: List[Dict[str, str]]) -> str:
   }},
   "app": {{
     "target_mode": "create_new",
-    "name": "由AI根据对话提取的应用名称",
+    "name": "【从对话提取】应用的完整名称，如对话未明确则根据业务场景推断一个合理名称",
     "group_ids": "{_load_org_group_ids()}",
     "icon_mode": "ai_match",
     "color_mode": "random",
@@ -267,15 +267,15 @@ def build_spec_prompt(transcript: List[Dict[str, str]]) -> str:
   }},
   "worksheets": {{
     "enabled": true,
-    "business_context": "业务背景",
-    "requirements": "工作表规划要求",
+    "business_context": "【从对话提取】用1-3句话描述该应用的业务场景，例如：管理快递运单从揽件到派送的全流程，涵盖包裹追踪、司机排班、网点管理等核心业务",
+    "requirements": "【从对话提取】用户对工作表的具体要求，例如：至少20个表，需要覆盖XX功能。如对话未提及则留空字符串",
     "icon_update": {{
       "enabled": true,
       "refresh_auth": false
     }},
     "layout": {{
       "enabled": true,
-      "requirements": "布局要求",
+      "requirements": "【从对话提取】用户对布局的具体要求，如对话未提及则留空字符串",
       "refresh_auth": false
     }}
   }},
@@ -299,10 +299,13 @@ def build_spec_prompt(transcript: List[Dict[str, str]]) -> str:
 
 规则：
 1) 缺失项按上述默认值补齐。
-2) app.name 若未明确，给出合理占位名：由对话提取的应用名称。
+2) app.name 必须替换为从对话提取的真实应用名称，禁止保留【从对话提取】字样；若对话未明确命名，则根据业务场景推断一个合理名称（如"顺丰物流管理系统"）。
 3) 不要新增未定义顶层字段。
 4) 若对话中未明确提到导航布局，固定 app.navi_style.pcNaviStyle=1。
 5) 若对话中未明确提到主题色，固定 app.color_mode=random。
+6) worksheets.business_context 必须替换为从对话中提取的真实业务场景描述，禁止保留【从对话提取】字样或任何占位文本。
+7) worksheets.requirements 必须替换为从对话中提取的工作表数量/功能要求（如"至少20个表"），若对话无此类要求则填空字符串""。
+8) worksheets.layout.requirements 同理，从对话提取布局要求，无则填""。
 """.strip()
 
 

@@ -171,8 +171,8 @@ def main() -> None:
     parser.add_argument("--auto", action="store_true", help="自动确认第一次生成的方案，跳过人工审核（用于自动化流水线）")
     args = parser.parse_args()
 
-    # 加载 AI 配置 (推理档)
-    ai_config = load_ai_config(tier="reasoning")
+    # 加载 AI 配置 (极速档)
+    ai_config = load_ai_config(tier="fast")
     client = get_ai_client(ai_config)
     model_name = ai_config["model"]
 
