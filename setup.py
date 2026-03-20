@@ -262,7 +262,7 @@ def step_login_and_auth(force=True):
     print("\n   ✔ 登录凭据已保存。")
     print("   🔄 正在启动自动登录并同步浏览器 Session...")
     try:
-        subprocess.call([sys.executable, str(BASE_DIR / "scripts" / "auth" / "refresh_auth.py"), "--headless"])
+        subprocess.call([sys.executable, str(BASE_DIR / "scripts" / "auth" / "refresh_auth.py")])
         print("   ✔ Session 认证同步完成。")
     except Exception as e: print(f"   ⚠️  同步异常: {e}")
 
@@ -353,6 +353,6 @@ def main():
 if __name__ == "__main__":
     try:
         try: import requests
-        except: subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "requests", "openai", "playwright"])
+        except: subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "--break-system-packages", "requests", "openai", "playwright"])
         main()
     except KeyboardInterrupt: print("\n👋 配置流程已中断。")
