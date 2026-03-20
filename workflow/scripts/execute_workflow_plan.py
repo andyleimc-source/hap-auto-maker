@@ -34,6 +34,9 @@ sys.path.insert(0, str(Path(__file__).parent))
 from workflow_io import Session, persist
 
 
+_WORKSHEET_ID_RE = re.compile(r"^[0-9a-f]{24}$")
+
+
 # ── CLI ────────────────────────────────────────────────────────────────────────
 
 def parse_args() -> argparse.Namespace:
@@ -174,6 +177,49 @@ def _build_fields(raw_fields: list, start_node_id: str) -> list:
     return result
 
 
+def _sanitize_action_nodes(action_nodes: list, trigger_worksheet_id: str) -> tuple[list[dict], list[str]]:
+    """
+    兜底清洗 AI 产出的动作节点，避免明显非法的计划直接打到 HAP：
+    - target_worksheet_id 必须是合法工作表 ID
+    - add_record / update_record 至少要有 1 个字段映射
+    """
+    sanitized: list[dict] = []
+    warnings: list[str] = []
+
+    for index, node in enumerate(action_nodes or [], 1):
+        if not isinstance(node, dict):
+            warnings.append(f"动作{index} 不是对象，已跳过")
+            continue
+
+        node_type = str(node.get("type", "update_record")).strip() or "update_record"
+        if node_type not in {"add_record", "update_record"}:
+            warnings.append(f"动作{index} 类型非法({node_type})，已跳过")
+            continue
+
+        target_ws = str(node.get("target_worksheet_id", "")).strip()
+        if not target_ws and node_type == "update_record":
+            target_ws = trigger_worksheet_id
+        if not _WORKSHEET_ID_RE.fullmatch(target_ws):
+            warnings.append(f"动作{index} 目标工作表ID非法({target_ws or '空'})，已跳过")
+            continue
+
+        raw_fields = node.get("fields")
+        if not isinstance(raw_fields, list) or not raw_fields:
+            warnings.append(f"动作{index} 未提供字段映射，已跳过")
+            continue
+
+        sanitized.append(
+            {
+                **node,
+                "type": node_type,
+                "target_worksheet_id": target_ws,
+                "fields": raw_fields,
+            }
+        )
+
+    return sanitized, warnings
+
+
 def add_action_nodes(
     session:       Session,
     process_id:    str,
@@ -284,7 +330,20 @@ def create_custom_action(
     confirm_msg = action_plan.get("confirm_msg", "你确认执行此操作吗？")
     sure_name   = action_plan.get("sure_name", "确认")
     cancel_name = action_plan.get("cancel_name", "取消")
-    action_nodes_plan = action_plan.get("action_nodes", [])
+    action_nodes_plan, action_warnings = _sanitize_action_nodes(
+        action_plan.get("action_nodes", []), worksheet_id
+    )
+    for warning in action_warnings:
+        print(f"    [plan-skip] {warning}", file=sys.stderr)
+    if not action_nodes_plan:
+        return {
+            "ok": True,
+            "skipped": True,
+            "trigger_type": "custom_action",
+            "name": name,
+            "reason": "no_valid_action_nodes",
+            "warnings": action_warnings,
+        }
 
     btn_payload = {
         "btnId": "",
@@ -381,7 +440,20 @@ def create_worksheet_event(
 ) -> dict:
     name             = event_plan.get("name", "工作表事件触发")
     trigger_id       = str(event_plan.get("trigger_id", "2"))
-    action_nodes_plan = event_plan.get("action_nodes", [])
+    action_nodes_plan, action_warnings = _sanitize_action_nodes(
+        event_plan.get("action_nodes", []), worksheet_id
+    )
+    for warning in action_warnings:
+        print(f"    [plan-skip] {warning}", file=sys.stderr)
+    if not action_nodes_plan:
+        return {
+            "ok": True,
+            "skipped": True,
+            "trigger_type": "worksheet_event",
+            "name": name,
+            "reason": "no_valid_action_nodes",
+            "warnings": action_warnings,
+        }
 
     # Step 1: 创建工作流
     add_resp = session.post(
@@ -463,7 +535,20 @@ def _create_time_based(
     interval         = int(trigger_plan.get("interval", 1))
     frequency        = int(trigger_plan.get("frequency", 7))
     week_days        = trigger_plan.get("week_days") or []
-    action_nodes_plan = trigger_plan.get("action_nodes", [])
+    action_nodes_plan, action_warnings = _sanitize_action_nodes(
+        trigger_plan.get("action_nodes", []), worksheet_id
+    )
+    for warning in action_warnings:
+        print(f"    [plan-skip] {warning}", file=sys.stderr)
+    if not action_nodes_plan:
+        return {
+            "ok": True,
+            "skipped": True,
+            "trigger_type": trigger_type_str,
+            "name": name,
+            "reason": "no_valid_action_nodes",
+            "warnings": action_warnings,
+        }
 
     # Step 1: 创建工作流
     add_resp = session.post(
