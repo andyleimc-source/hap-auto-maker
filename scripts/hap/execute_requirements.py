@@ -75,15 +75,6 @@ def now_ts() -> str:
 def now_iso() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
-# 加载全局配置
-try:
-    _AI_CONFIG = load_ai_config()
-    GEN_MODEL = _AI_CONFIG.get("model", "gemini-2.5-flash")
-except Exception:
-    GEN_MODEL = "gemini-2.5-flash"
-
-DEFAULT_MODEL = GEN_MODEL
-
 
 def load_json(path: Path) -> dict:
     if not path.exists():
@@ -146,7 +137,6 @@ def normalize_spec(raw: dict) -> dict:
     ws.setdefault("enabled", True)
     ws.setdefault("business_context", "通用企业管理场景")
     ws.setdefault("requirements", "")
-    ws.setdefault("model", DEFAULT_MODEL)
     icon_update = ws.get("icon_update") if isinstance(ws.get("icon_update"), dict) else {}
     icon_update.setdefault("enabled", True)
     icon_update.setdefault("refresh_auth", False)
@@ -160,38 +150,32 @@ def normalize_spec(raw: dict) -> dict:
 
     views = spec.get("views") if isinstance(spec.get("views"), dict) else {}
     views.setdefault("enabled", True)
-    views.setdefault("model", ws.get("model", DEFAULT_MODEL))
     spec["views"] = views
 
     roles = spec.get("roles") if isinstance(spec.get("roles"), dict) else {}
     roles.setdefault("enabled", True)
-    roles.setdefault("model", DEFAULT_MODEL)
     roles.setdefault("skip_existing", True)
     roles.setdefault("video_mode", "skip")
     spec["roles"] = roles
 
     view_filters = spec.get("view_filters") if isinstance(spec.get("view_filters"), dict) else {}
     view_filters.setdefault("enabled", True)
-    view_filters.setdefault("model", ws.get("model", DEFAULT_MODEL))
     spec["view_filters"] = view_filters
 
     mock_data = spec.get("mock_data") if isinstance(spec.get("mock_data"), dict) else {}
     mock_data.setdefault("enabled", True)
-    mock_data.setdefault("model", ws.get("model", DEFAULT_MODEL))
     mock_data.setdefault("dry_run", False)
     mock_data.setdefault("trigger_workflow", False)
     spec["mock_data"] = mock_data
 
     chatbots = spec.get("chatbots") if isinstance(spec.get("chatbots"), dict) else {}
     chatbots.setdefault("enabled", True)
-    chatbots.setdefault("model", DEFAULT_MODEL)
     chatbots.setdefault("auto", True)
     chatbots.setdefault("dry_run", False)
     spec["chatbots"] = chatbots
 
     workflows = spec.get("workflows") if isinstance(spec.get("workflows"), dict) else {}
     workflows.setdefault("enabled", True)
-    workflows.setdefault("model", DEFAULT_MODEL)
     workflows.setdefault("thinking", "none")
     workflows.setdefault("no_publish", False)
     workflows.setdefault("skip_analysis", False)
@@ -204,7 +188,6 @@ def normalize_spec(raw: dict) -> dict:
 
     pages = spec.get("pages") if isinstance(spec.get("pages"), dict) else {}
     pages.setdefault("enabled", True)
-    pages.setdefault("model", ws.get("model", DEFAULT_MODEL))
     spec["pages"] = pages
 
     execution = spec.get("execution") if isinstance(spec.get("execution"), dict) else {}
@@ -574,8 +557,6 @@ def main() -> None:
             str(app.get("name", "CRM自动化应用")),
             "--group-ids",
             str(app.get("group_ids", _load_org_group_ids())),
-            "--gemini-model",
-            str(ws.get("model", DEFAULT_MODEL)),
         ]
         if str(app.get("icon_mode", "gemini_match")) != "gemini_match":
             cmd1.append("--skip-smart-icon")
@@ -632,7 +613,6 @@ def main() -> None:
             "--app-name", str(app.get("name", "CRM自动化应用")),
             "--business-context", str(ws.get("business_context", "通用企业管理场景")),
             "--requirements", str(ws.get("requirements", "")),
-            "--model", str(ws.get("model", DEFAULT_MODEL)),
             "--output", str(plan_output),
         ]
         return execute_step(2, "worksheets_plan", "规划工作表", cmd2a, uses_gemini=True)
@@ -645,7 +625,6 @@ def main() -> None:
         cmd3 = [
             sys.executable, str(SCRIPT_PIPELINE_APP_ROLES),
             "--app-id", app_id,
-            "--model", str(roles.get("model", "gemini-2.5-flash")),
             "--video-mode", str(roles.get("video_mode", "skip")),
         ]
         if not bool(roles.get("skip_existing", True)):
@@ -742,7 +721,6 @@ def main() -> None:
             sys.executable, str(SCRIPT_PIPELINE_ICON),
             "--app-auth-json", str(app_auth_json),
             "--app-id", app_id,
-            "--model", str(ws.get("model", DEFAULT_MODEL)),
         ]
         if ws["icon_update"].get("refresh_auth", False):
             cmd4.append("--refresh-auth")
@@ -756,7 +734,6 @@ def main() -> None:
         cmd5 = [
             sys.executable, str(SCRIPT_PIPELINE_LAYOUT),
             "--app-id", app_id,
-            "--model", str(ws.get("model", DEFAULT_MODEL)),
         ]
         layout_req = str(ws["layout"].get("requirements", "")).strip()
         if layout_req:
@@ -777,7 +754,6 @@ def main() -> None:
             return True
         cmd6 = [
             sys.executable, str(SCRIPT_PIPELINE_VIEWS),
-            "--model", str(views.get("model", ws.get("model", DEFAULT_MODEL))),
             "--app-ids", app_id,
             "--plan-output", str(view_plan_output),
             "--create-output", str(view_create_output),
@@ -796,7 +772,6 @@ def main() -> None:
         cmd9 = [
             sys.executable, str(SCRIPT_PIPELINE_MOCK_DATA),
             "--app-id", app_id,
-            "--model", str(mock_data.get("model", ws.get("model", DEFAULT_MODEL))),
         ]
         if execution_dry_run or mock_data.get("dry_run", False):
             cmd9.append("--dry-run")
@@ -815,7 +790,6 @@ def main() -> None:
         cmd10 = [
             sys.executable, str(SCRIPT_PIPELINE_CHATBOTS),
             "--app-id", app_id,
-            "--model", str(chatbots.get("model", "gemini-2.5-flash")),
         ]
         if chatbots.get("auto", True):
             cmd10.append("--auto")
@@ -837,7 +811,6 @@ def main() -> None:
         cmd11 = [
             sys.executable, str(SCRIPT_PIPELINE_WORKFLOWS),
             "--relation-id", app_id,
-            "--model", str(workflows.get("model", "gemini-2.5-flash")),
             "--thinking", str(workflows.get("thinking", "none")),
             "--output", str(workflow_plan_output),
         ]
@@ -873,7 +846,6 @@ def main() -> None:
         cmd14a = [
             sys.executable, str(SCRIPT_PLAN_PAGES),
             "--app-id", app_id,
-            "--model", str(pages_cfg.get("model", DEFAULT_MODEL)),
             "--auth-config", str(CONFIG_WEB_AUTH),
             "--output", str(page_plan_output),
         ]
@@ -935,7 +907,6 @@ def main() -> None:
             return True
         cmd7 = [
             sys.executable, str(SCRIPT_PIPELINE_TABLEVIEW_FILTERS),
-            "--model", str(view_filters.get("model", views.get("model", ws.get("model", DEFAULT_MODEL)))),
             "--app-ids", app_id,
             "--view-create-result", str(view_create_output),
             "--plan-output", str(filter_plan_output),
@@ -989,7 +960,6 @@ def main() -> None:
         cmd14 = [
             sys.executable, str(SCRIPT_PIPELINE_PAGES),
             "--app-id", app_id,
-            "--model", str(pages_cfg.get("model", DEFAULT_MODEL)),
             "--auth-config", str(CONFIG_WEB_AUTH),
             "--plan-output", str(page_plan_output),
         ]

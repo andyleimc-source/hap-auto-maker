@@ -34,7 +34,7 @@ from mock_data_common import (
     sanitize_name,
     write_json,
 )
-from gemini_utils import load_gemini_config
+from ai_utils import load_ai_config
 
 PLAN_SCRIPT = CURRENT_DIR / "plan_role_recommendations_gemini.py"
 CREATE_SCRIPT = CURRENT_DIR / "create_roles_from_recommendation.py"
@@ -43,13 +43,7 @@ APP_ROLE_RUN_DIR = OUTPUT_ROOT / "app_role_runs"
 APP_ROLE_RUN_LATEST = APP_ROLE_RUN_DIR / "app_role_run_latest.json"
 EXECUTION_RUN_LATEST = OUTPUT_ROOT / "execution_runs" / "execution_run_latest.json"
 APP_VIDEO_RUNS_DIR = OUTPUT_ROOT / "app_video_runs"
-# 加载全局配置
-try:
-    _, GEN_MODEL = load_gemini_config()
-except Exception:
-    GEN_MODEL = "gemini-2.5-flash"
 
-DEFAULT_MODEL = GEN_MODEL
 VIDEO_MODE_SKIP = "skip"
 VIDEO_MODE_RESUME_LATEST = "resume-latest"
 
@@ -254,8 +248,6 @@ def main() -> None:
         help="可选，限制参与角色规划的工作表名称。可重复传入，也可使用逗号分隔。",
     )
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="API 基础地址")
-    parser.add_argument("--model", default=DEFAULT_MODEL, help="Gemini 模型")
-    parser.add_argument("--config", default="", help="Gemini 配置 JSON 路径")
     parser.add_argument("--skip-existing", action="store_true", default=True, help="角色已存在时跳过（默认启用）")
     parser.add_argument("--no-skip-existing", dest="skip_existing", action="store_false", help="角色已存在时仍尝试创建")
     parser.add_argument(
@@ -265,6 +257,10 @@ def main() -> None:
         help="是否在角色写入后接入 run_app_to_video.py 做校验",
     )
     args = parser.parse_args()
+
+    # 加载 AI 配置仅用于日志记录
+    ai_config = load_ai_config(tier="fast")
+    model_name = ai_config["model"]
 
     apps = discover_authorized_apps(base_url=args.base_url)
     app = resolve_app(apps, app_id=args.app_id, app_name=args.app_name, app_index=args.app_index)
@@ -294,7 +290,7 @@ def main() -> None:
         appName=app["appName"],
         requestedWorksheetNames=requested_worksheet_names,
         selectedWorksheetNames=selected_worksheet_names,
-        model=args.model,
+        model=model_name,
         videoMode=args.video_mode,
     )
 
@@ -321,7 +317,7 @@ def main() -> None:
         "selectedWorksheetNames": selected_worksheet_names,
         "allWorksheetNames": all_worksheet_names,
         "videoMode": args.video_mode,
-        "model": args.model,
+        "model": model_name,
     }
     write_json(context_json, context_payload)
     context_step = {
@@ -362,8 +358,6 @@ def main() -> None:
             app["appId"],
             "--base-url",
             args.base_url,
-            "--model",
-            args.model,
             "--output",
             str(role_plan_json.resolve()),
             "--inventory-output",
@@ -373,8 +367,6 @@ def main() -> None:
             "--raw-output",
             str(role_raw_txt.resolve()),
         ]
-        if args.config:
-            plan_cmd.extend(["--config", args.config])
         for worksheet_name in selected_worksheet_names:
             plan_cmd.extend(["--worksheet-name", worksheet_name])
         plan_step = run_step(

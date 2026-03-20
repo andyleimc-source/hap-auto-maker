@@ -102,12 +102,10 @@ _SKIP_FIELD_TYPES = {14, 21, 29, 30, 31, 32, 35, 42, 43, 45}
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="调用 Gemini 规划 6 个工作流/工作表（含字段映射），生成 pipeline_workflows_latest.json。"
+        description="调用 AI 规划 6 个工作流/工作表（含字段映射），生成 pipeline_workflows_latest.json。"
     )
     parser.add_argument("--relation-id", required=True, help="应用 ID（relationId）。")
     parser.add_argument("--app-auth-json", default="", help="应用授权 JSON 文件路径（留空则自动匹配）。")
-    parser.add_argument("--gemini-key", default="", help="Gemini API Key。")
-    parser.add_argument("--model", default="gemini-2.5-flash", help="Gemini 模型（默认：gemini-2.5-flash）。")
     parser.add_argument("--thinking", default="none", choices=["none", "low", "medium", "high"], help="主规划调用的推理深度（默认：none）。Prompt 已内置业务分析，无需额外推理；high thinking 反而易导致 JSON 输出破损。")
     parser.add_argument("--skip-analysis", action="store_true", help="跳过业务关系预分析（直接规划，速度更快但质量略低）。")
     parser.add_argument("--output", default="", help="自定义输出路径（默认写入 output/pipeline_workflows_latest.json）。")
@@ -330,19 +328,21 @@ def build_analysis_prompt(app_structure: dict) -> str:
 }}"""
 
 
-def analyze_relationships(app_structure: dict, ai_config: dict, model: str) -> dict:
-    """调用 Gemini 分析各工作表的业务关联关系（轻量调用，不开 thinking）。"""
-    print("[gemini] 第1步：分析业务关联关系...", file=sys.stderr)
+def analyze_relationships(app_structure: dict, ai_config: dict) -> dict:
+    """调用 AI 分析各工作表的业务关联关系（轻量调用，使用 fast 档位）。"""
+    print("[ai] 第1步：分析业务关联关系...", file=sys.stderr)
     prompt = build_analysis_prompt(app_structure)
+    # 业务分析使用 fast 档位即可
+    fast_config = load_ai_config(tier="fast")
     try:
-        result = call_gemini(prompt, ai_config, model, thinking="none")
+        result = call_ai(prompt, fast_config, thinking="none")
         flows = result.get("cross_table_flows", [])
         summary = result.get("app_summary", "")
-        print(f"[gemini] 业务分析完成：{summary}", file=sys.stderr)
-        print(f"[gemini] 识别跨表数据流转 {len(flows)} 条", file=sys.stderr)
+        print(f"[ai] 业务分析完成：{summary}", file=sys.stderr)
+        print(f"[ai] 识别跨表数据流转 {len(flows)} 条", file=sys.stderr)
         return result
     except Exception as exc:
-        print(f"[gemini] 业务关系分析失败（跳过）：{exc}", file=sys.stderr)
+        print(f"[ai] 业务关系分析失败（跳过）：{exc}", file=sys.stderr)
         return {}
 
 
@@ -638,14 +638,15 @@ _THINKING_BUDGETS: dict[str, int] = {
 _MAX_JSON_RETRIES = 2  # JSON 解析失败时最多重试 Gemini 调用的次数
 
 
-def _call_gemini_once(prompt: str, ai_config: dict, model: str, thinking: str) -> str:
+def _call_ai_once(prompt: str, ai_config: dict, thinking: str) -> str:
     """发起一次 AI API 调用，返回原始文本。"""
     budget = None if thinking == "none" else _THINKING_BUDGETS.get(thinking, 8192)
     client = get_ai_client(ai_config)
+    model_name = ai_config["model"]
     provider = ai_config.get("provider", "gemini")
-    print(f"[ai] 正在生成工作流规划（provider={provider}，model={model}，thinking={thinking}）...", file=sys.stderr)
+    print(f"[ai] 正在生成工作流规划（provider={provider}，model={model_name}，thinking={thinking}）...", file=sys.stderr)
     resp = client.models.generate_content(
-        model=model,
+        model=model_name,
         contents=prompt,
         config=create_generation_config(
             ai_config,
@@ -656,28 +657,25 @@ def _call_gemini_once(prompt: str, ai_config: dict, model: str, thinking: str) -
     return resp.text
 
 
-def call_gemini(prompt: str, ai_config: dict, model: str, thinking: str = "none") -> dict:
+def call_ai(prompt: str, ai_config: dict, thinking: str = "none") -> dict:
     """
-    调用 Gemini API 生成工作流规划 JSON。
+    调用 AI API 生成工作流规划 JSON。
     JSON 解析失败时自动重试（最多 _MAX_JSON_RETRIES 次）。
-
-    参数：
-      thinking: "none"|"low"|"medium"|"high"
-        - none：不开启推理，速度最快，适合 flash-lite 等轻量模型
-        - low/medium/high：开启 thinking，适合 pro 模型复杂规划任务
     """
     last_exc: Exception = RuntimeError("未知错误")
     for attempt in range(1, _MAX_JSON_RETRIES + 2):  # 1 次正常 + 最多 _MAX_JSON_RETRIES 次重试
         try:
-            raw = _call_gemini_once(prompt, ai_config, model, thinking)
-            print(f"[gemini] 响应长度 {len(raw)} 字符", file=sys.stderr)
-            return parse_gemini_json(raw)
+            raw = _call_ai_once(prompt, ai_config, thinking)
+            print(f"[ai] 响应长度 {len(raw)} 字符", file=sys.stderr)
+            # 使用 ai_utils 中更健壮的 parse_ai_json
+            from ai_utils import parse_ai_json
+            return parse_ai_json(raw)
         except (ValueError, Exception) as exc:
             last_exc = exc
             if attempt <= _MAX_JSON_RETRIES:
                 wait = attempt * 5
                 print(
-                    f"[gemini] JSON 解析失败（第 {attempt} 次），{wait}s 后重试：{exc}",
+                    f"[ai] JSON 解析失败（第 {attempt} 次），{wait}s 后重试：{exc}",
                     file=sys.stderr,
                 )
                 time.sleep(wait)
@@ -721,49 +719,38 @@ def main() -> int:
 
     # 3. 获取 AI 配置
     try:
-        ai_config = load_ai_config(_GEMINI_AUTH_JSON)
-    except Exception:
-        ai_config = {}
-    cli_key = args.gemini_key or os.environ.get("GEMINI_API_KEY", "").strip()
-    if cli_key:
-        ai_config = dict(ai_config or {})
-        ai_config["provider"] = ai_config.get("provider", "gemini")
-        ai_config["api_key"] = cli_key
-    if not ai_config.get("api_key", ""):
-        msg = (
-            "缺少 AI API Key。\n"
-            "  方式1：export GEMINI_API_KEY=your_key\n"
-            "  方式2：--gemini-key your_key\n"
-            f"  方式3：在 {_GEMINI_AUTH_JSON} 中设置 api_key 字段"
-        )
-        print(f"Error: {msg}", file=sys.stderr)
-        persist(script_name, None, args=log_args, error=msg, started_at=started_at)
+        # 主规划显式使用 reasoning 档位
+        ai_config = load_ai_config(tier="reasoning")
+    except Exception as exc:
+        print(f"Error: 获取 AI 配置失败：{exc}", file=sys.stderr)
+        persist(script_name, None, args=log_args, error=str(exc), started_at=started_at)
         return 2
 
     # 4. 业务关系预分析（可选）
     relationships: dict = {}
     if not args.skip_analysis:
         print(f"\n[step 2/4] 业务关系预分析（--skip-analysis 可跳过）...", file=sys.stderr)
-        relationships = analyze_relationships(app_structure, ai_config, args.model)
+        relationships = analyze_relationships(app_structure, ai_config)
     else:
         print(f"\n[step 2/4] 跳过业务关系预分析（--skip-analysis）", file=sys.stderr)
 
-    # 5. 主规划：调用 Gemini
-    print(f"\n[step 3/4] 调用 Gemini 生成工作流规划（model={args.model}，thinking={args.thinking}）...", file=sys.stderr)
+    # 5. 主规划：调用 AI
+    model_name = ai_config["model"]
+    print(f"\n[step 3/4] 调用 AI 生成工作流规划（model={model_name}，thinking={args.thinking}）...", file=sys.stderr)
     try:
-        gemini_result = call_gemini(
-            build_prompt(app_structure, relationships), ai_config, args.model, args.thinking
+        ai_result = call_ai(
+            build_prompt(app_structure, relationships), ai_config, args.thinking
         )
     except Exception as exc:
-        print(f"Error: Gemini 调用失败：{exc}", file=sys.stderr)
+        print(f"Error: AI 调用失败：{exc}", file=sys.stderr)
         persist(script_name, None, args=log_args, error=str(exc), started_at=started_at)
         return 1
 
-    planned_ws      = gemini_result.get("worksheets", [])
-    planned_tt      = gemini_result.get("time_triggers", [])
+    planned_ws      = ai_result.get("worksheets", [])
+    planned_tt      = ai_result.get("time_triggers", [])
 
-    # 后处理：修正 Gemini 可能生成的 {{trigger.字段名}} 为 {{trigger.field_id}}
-    fix_count = _fix_trigger_references(gemini_result, app_structure)
+    # 后处理：修正 AI 可能生成的 {{trigger.字段名}} 为 {{trigger.field_id}}
+    fix_count = _fix_trigger_references(ai_result, app_structure)
     if fix_count:
         print(f"[fix] 修正了 {fix_count} 个 trigger 引用（字段名→字段ID）", file=sys.stderr)
 
@@ -782,7 +769,7 @@ def main() -> int:
         "app_id":            args.relation_id,
         "app_name":          app_structure.get("app_name", ""),
         "generated_at":      datetime.now().isoformat(timespec="seconds"),
-        "model":             args.model,
+        "model":             model_name,
         "thinking":          args.thinking,
         "skip_analysis":     args.skip_analysis,
         "relationships":     relationships,

@@ -28,8 +28,6 @@ PAGE_PLAN_DIR = OUTPUT_ROOT / "page_plans"
 PAGE_CREATE_DIR = OUTPUT_ROOT / "page_create_results"
 LOG_DIR = BASE_DIR / "data" / "logs"
 AUTH_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "auth_config.py"
-GEMINI_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "gemini_auth.json"
-DEFAULT_MODEL = "gemini-2.5-flash"
 
 ADD_WORKSHEET_URL = "https://www.mingdao.com/api/AppManagement/AddWorkSheet"
 SAVE_PAGE_URL = "https://api.mingdao.com/report/custom/savePage"
@@ -177,8 +175,6 @@ def run_pipeline_charts(
     app_name: str,
     worksheet_ids: List[str],
     page_id: str,
-    model: str,
-    gemini_config: str,
     auth_config: str,
     chart_plan_output: str,
     chart_create_output: str,
@@ -192,8 +188,6 @@ def run_pipeline_charts(
         "--app-name", app_name,
         "--worksheet-ids", ",".join(worksheet_ids),
         "--page-id", page_id,
-        "--model", model,
-        "--config", gemini_config,
         "--auth-config", auth_config,
         "--plan-output", chart_plan_output,
         "--create-output", chart_create_output,
@@ -224,8 +218,6 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="根据 page_plan 创建自定义页面并生成统计图")
     parser.add_argument("--plan-json", default="", help="page_plan JSON 文件路径（默认取最新）")
     parser.add_argument("--auth-config", default=str(AUTH_CONFIG_PATH), help="auth_config.py 路径")
-    parser.add_argument("--config", default=str(GEMINI_CONFIG_PATH), help="Gemini 配置 JSON 路径")
-    parser.add_argument("--model", default=DEFAULT_MODEL, help="Gemini 模型名")
     parser.add_argument("--output", default="", help="结果 JSON 输出路径（可选）")
     parser.add_argument("--dry-run", action="store_true", help="仅演练，不实际创建 Page 和图表")
     args = parser.parse_args()
@@ -251,7 +243,6 @@ def main() -> None:
 
     auth_config_path = Path(args.auth_config).expanduser().resolve()
     auth_config = str(auth_config_path)
-    gemini_config = str(Path(args.config).expanduser().resolve())
 
     log.log(f"应用: {app_name} ({app_id})")
     log.log(f"规划文件: {plan_path}")
@@ -324,8 +315,6 @@ def main() -> None:
             app_name=f"{app_name}-{page_name}",
             worksheet_ids=ws_ids,
             page_id=page_id,
-            model=args.model,
-            gemini_config=gemini_config,
             auth_config=auth_config,
             chart_plan_output=chart_plan_path,
             chart_create_output=chart_create_path,

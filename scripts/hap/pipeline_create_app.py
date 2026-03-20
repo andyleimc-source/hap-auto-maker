@@ -104,15 +104,6 @@ def ensure_scripts() -> None:
             raise FileNotFoundError(f"缺少脚本: {p}")
 
 
-# 加载全局配置
-try:
-    _, GEN_MODEL = load_gemini_config()
-except Exception:
-    GEN_MODEL = "gemini-2.5-flash"
-
-DEFAULT_MODEL = GEN_MODEL
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description="创建应用并自动匹配/更新应用 icon")
     parser.add_argument("--name", required=True, help="应用名称")
@@ -122,7 +113,6 @@ def main() -> None:
     parser.add_argument("--base-url", default="", help="API 基础地址（默认沿用子脚本默认值）")
     parser.add_argument("--project-id", default="", help="HAP 组织Id")
     parser.add_argument("--owner-id", default="", help="应用拥有者 HAP 账号Id")
-    parser.add_argument("--gemini-model", default=DEFAULT_MODEL, help="Gemini 模型名")
     parser.add_argument("--skip-smart-icon", action="store_true", help="跳过步骤3-5，不执行智能 icon 匹配/更新")
     parser.add_argument("--dry-run-icon-update", action="store_true", help="智能 icon 的更新步骤仅预览，不实际更新")
     args = parser.parse_args()
@@ -189,12 +179,10 @@ def main() -> None:
         str(MATCH_APPS_ICON_SCRIPT),
         "--app-json",
         str(app_inventory_output),
-        "--model",
-        args.gemini_model,
         "--output",
         str(app_icon_match_output),
     ]
-    print_cmd("Step 4/5 Gemini 匹配应用 icon", match_icon_cmd)
+    print_cmd("Step 4/5 AI 匹配应用 icon", match_icon_cmd)
     p4 = run_command(match_icon_cmd)
     if p4.returncode != 0:
         print(p4.stdout.strip())

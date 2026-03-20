@@ -29,15 +29,6 @@ MATCH_SCRIPT = resolve_script("match_worksheet_icons_gemini.py")
 UPDATE_SCRIPT = resolve_script("update_worksheet_icons.py")
 
 
-# 加载全局配置
-try:
-    _, GEN_MODEL = load_gemini_config()
-except Exception:
-    GEN_MODEL = "gemini-2.5-flash"
-
-DEFAULT_MODEL = GEN_MODEL
-
-
 def run_step(cmd: list[str], title: str) -> None:
     print(f"\n== {title} ==")
     print("命令:", " ".join(cmd))
@@ -50,7 +41,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="一键执行工作表 icon 匹配与批量更新")
     parser.add_argument("--app-auth-json", default="", help="应用授权 JSON 文件名或路径")
     parser.add_argument("--app-id", default="", help="可选，授权文件有多个 app 时可指定")
-    parser.add_argument("--model", default=DEFAULT_MODEL, help="Gemini 模型名")
+    
     parser.add_argument(
         "--inventory-json",
         default=str((WORKSHEET_INVENTORY_DIR / "worksheet_inventory_latest.json").resolve()),
@@ -84,8 +75,6 @@ def main() -> None:
         str(MATCH_SCRIPT),
         "--worksheet-json",
         str(inventory_path),
-        "--model",
-        args.model,
         "--output",
         str(match_path),
     ]

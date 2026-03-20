@@ -27,15 +27,6 @@ PLAN_SCRIPT = resolve_script("plan_worksheet_layout.py")
 APPLY_SCRIPT = resolve_script("apply_worksheet_layout.py")
 
 
-# 加载全局配置
-try:
-    _, GEN_MODEL = load_gemini_config()
-except Exception:
-    GEN_MODEL = "gemini-2.5-flash"
-
-DEFAULT_MODEL = GEN_MODEL
-
-
 def run_step(cmd: list[str], title: str) -> None:
     print(f"\n== {title} ==")
     print("命令:", " ".join(cmd))
@@ -49,7 +40,6 @@ def main() -> None:
     parser.add_argument("--app-index", type=int, default=0, help="可选，应用序号（免交互）")
     parser.add_argument("--app-id", default="", help="可选，应用 ID（传入后跳过应用选择交互）")
     parser.add_argument("--requirements", default="", help="额外布局要求")
-    parser.add_argument("--model", default=DEFAULT_MODEL, help="Gemini 模型名")
     parser.add_argument("--refresh-auth", action="store_true", help="应用布局前先刷新网页登录认证")
     parser.add_argument("--headless", action="store_true", help="配合 --refresh-auth 无头刷新")
     parser.add_argument("--dry-run", action="store_true", help="仅预览应用布局，不实际保存")
@@ -59,7 +49,7 @@ def main() -> None:
     plan_output = (LAYOUT_PLAN_DIR / f"worksheet_layout_plan_pipeline_{ts}.json").resolve()
     plan_output.parent.mkdir(parents=True, exist_ok=True)
 
-    cmd1 = [sys.executable, str(PLAN_SCRIPT), "--output", str(plan_output), "--model", args.model]
+    cmd1 = [sys.executable, str(PLAN_SCRIPT), "--output", str(plan_output)]
     if args.app_index > 0:
         cmd1.extend(["--app-index", str(args.app_index)])
     if args.app_id:

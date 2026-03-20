@@ -32,14 +32,7 @@ PLAN_DIR = OUTPUT_ROOT / "tableview_filter_plans"
 VIEW_CREATE_RESULT_DIR = OUTPUT_ROOT / "view_create_results"
 GEMINI_CONFIG_PATH = AI_CONFIG_PATH
 AUTH_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "auth_config.py"
-# 加载全局配置
-try:
-    GEN_API_KEY, GEN_MODEL = load_gemini_config()
-except Exception:
-    GEN_API_KEY = ""
-    GEN_MODEL = "gemini-2.5-flash"
 
-DEFAULT_MODEL = GEN_MODEL
 APP_INFO_URL = "https://api.mingdao.com/v3/app"
 GET_CONTROLS_URL = "https://www.mingdao.com/api/Worksheet/GetWorksheetControls"
 SUPPORTED_VIEW_TYPES = {"0", "1", "3", "4"}
@@ -94,16 +87,6 @@ def choose_indexes(prompt: str, items_count: int) -> Optional[List[int]]:
     if not picked:
         return None
     return picked
-
-
-def load_gemini_api_key(path: Path) -> str:
-    if GEN_API_KEY:
-        return GEN_API_KEY
-    data = load_ai_config(path)
-    api_key = str(data.get("api_key", "")).strip()
-    if not api_key:
-        raise ValueError(f"AI 配置缺少 api_key: {path}")
-    return api_key
 
 
 def resolve_view_create_result_json(value: str) -> Path:
@@ -601,18 +584,18 @@ def normalize_view_plan(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="规划视图的筛选列表与快速筛选")
-    parser.add_argument("--model", default=DEFAULT_MODEL, help="Gemini 模型名")
-    parser.add_argument("--config", default=str(GEMINI_CONFIG_PATH), help="Gemini 配置 JSON 路径")
+    parser.add_argument("--config", default=str(GEMINI_CONFIG_PATH), help="AI 配置 JSON 路径")
     parser.add_argument("--auth-config", default=str(AUTH_CONFIG_PATH), help="auth_config.py 路径")
     parser.add_argument("--view-create-result", default="", help="视图创建结果 JSON 路径（默认取最新）")
     parser.add_argument("--app-ids", default="", help="可选，应用ID列表（逗号分隔）；不传则交互选择")
     parser.add_argument("--output", default="", help="输出 JSON 路径")
-    parser.add_argument("--gemini-retries", type=int, default=DEFAULT_GEMINI_RETRIES, help="Gemini 请求失败时的重试次数")
+    parser.add_argument("--gemini-retries", type=int, default=DEFAULT_GEMINI_RETRIES, help="AI 请求失败时的重试次数")
     args = parser.parse_args()
 
-    load_gemini_api_key(Path(args.config).expanduser().resolve())
-    ai_config = load_ai_config(Path(args.config).expanduser().resolve())
+    # 显式使用 fast 档位
+    ai_config = load_ai_config(Path(args.config).expanduser().resolve(), tier="fast")
     client = get_ai_client(ai_config)
+    model_name = ai_config["model"]
     auth_config_path = Path(args.auth_config).expanduser().resolve()
 
     app_rows = load_app_auth_rows()
@@ -697,9 +680,9 @@ def main() -> None:
             print(f"- {ws['workSheetName']}：目标视图 {len(target_views)} 个")
 
         # 一次 Gemini 批量调用
-        print(f"  调用 Gemini 批量规划 {len(worksheets_batch)} 个工作表筛选...")
+        print(f"  调用 AI 批量规划 {len(worksheets_batch)} 个工作表筛选...")
         batch_prompt = build_batch_filter_prompt(app["appName"], worksheets_batch)
-        resp = generate_with_retry(client, args.model, batch_prompt, args.gemini_retries, ai_config)
+        resp = generate_with_retry(client, model_name, batch_prompt, args.gemini_retries, ai_config)
         parsed = extract_json(resp.text or "")
 
         # 解析批量结果
@@ -748,8 +731,8 @@ def main() -> None:
 
     payload = {
         "generatedAt": datetime.now().isoformat(timespec="seconds"),
-        "model": args.model,
-        "source": "view_filter_plan_gemini_v2",
+        "model": model_name,
+        "source": "view_filter_plan_ai_v2",
         "viewCreateResultJson": str(view_create_result_path),
         "apps": output_apps,
         "summary": {"appCount": len(output_apps), "viewCount": total_views},

@@ -16,7 +16,6 @@ if str(CURRENT_DIR) not in sys.path:
     sys.path.insert(0, str(CURRENT_DIR))
 
 from script_locator import resolve_script
-from gemini_utils import load_gemini_config
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 PLAN_SCRIPT = resolve_script("plan_worksheet_views_gemini.py")
@@ -24,13 +23,7 @@ CREATE_SCRIPT = resolve_script("create_views_from_plan.py")
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 VIEW_PLAN_DIR = OUTPUT_ROOT / "view_plans"
 VIEW_CREATE_RESULT_DIR = OUTPUT_ROOT / "view_create_results"
-# 加载全局配置
-try:
-    _, GEN_MODEL = load_gemini_config()
-except Exception:
-    GEN_MODEL = "gemini-2.5-flash"
 
-DEFAULT_MODEL = GEN_MODEL
 DEFAULT_GEMINI_CONFIG = BASE_DIR / "config" / "credentials" / "gemini_auth.json"
 DEFAULT_AUTH_CONFIG = BASE_DIR / "config" / "credentials" / "auth_config.py"
 
@@ -45,8 +38,8 @@ def run_cmd(cmd: list[str], title: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="一键执行：规划视图 -> 创建视图")
-    parser.add_argument("--model", default=DEFAULT_MODEL, help="Gemini 模型名")
-    parser.add_argument("--config", default=str(DEFAULT_GEMINI_CONFIG), help="Gemini 配置 JSON 路径")
+    
+    
     parser.add_argument("--auth-config", default=str(DEFAULT_AUTH_CONFIG), help="auth_config.py 路径")
     parser.add_argument("--app-ids", default="", help="可选，仅执行指定 appId（逗号分隔）")
     parser.add_argument("--worksheet-ids", default="", help="可选，仅执行指定 worksheetId（逗号分隔）")
@@ -66,10 +59,6 @@ def main() -> None:
     cmd_plan = [
         sys.executable,
         str(PLAN_SCRIPT),
-        "--model",
-        args.model,
-        "--config",
-        str(Path(args.config).expanduser().resolve()),
         "--auth-config",
         str(Path(args.auth_config).expanduser().resolve()),
         "--output",

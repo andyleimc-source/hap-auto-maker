@@ -29,7 +29,6 @@ PAGE_PLAN_DIR = OUTPUT_ROOT / "page_plans"
 LOG_DIR = BASE_DIR / "data" / "logs"
 GEMINI_CONFIG_PATH = AI_CONFIG_PATH
 AUTH_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "auth_config.py"
-DEFAULT_MODEL = "gemini-2.5-flash"
 
 GET_APP_URL = "https://www.mingdao.com/api/HomeApp/GetApp"
 GET_WORKSHEET_INFO_URL = "https://www.mingdao.com/api/Worksheet/GetWorksheetInfo"
@@ -346,13 +345,12 @@ def validate_page_plan(raw: dict, valid_ws_ids: set) -> List[dict]:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="调用 Gemini 为应用规划自定义分析页")
+    parser = argparse.ArgumentParser(description="调用 AI 为应用规划自定义分析页")
     parser.add_argument("--app-id", required=True, help="应用 ID")
-    parser.add_argument("--model", default=DEFAULT_MODEL, help="Gemini 模型名")
-    parser.add_argument("--config", default=str(GEMINI_CONFIG_PATH), help="Gemini 配置 JSON 路径")
+    parser.add_argument("--config", default=str(GEMINI_CONFIG_PATH), help="AI 配置 JSON 路径")
     parser.add_argument("--auth-config", default=str(AUTH_CONFIG_PATH), help="auth_config.py 路径")
     parser.add_argument("--output", default="", help="输出 JSON 文件路径（可选）")
-    parser.add_argument("--gemini-retries", type=int, default=4, help="Gemini 最大重试次数")
+    parser.add_argument("--gemini-retries", type=int, default=4, help="AI 最大重试次数")
     args = parser.parse_args()
 
     app_id = args.app_id.strip()
@@ -363,8 +361,9 @@ def main() -> None:
     log = Logger(LOG_DIR / f"plan_pages_{app_id}_{ts}.log")
 
     auth_config_path = Path(args.auth_config).expanduser().resolve()
-    load_gemini_api_key(Path(args.config).expanduser().resolve())
-    ai_config = load_ai_config(Path(args.config).expanduser().resolve())
+    # 显式使用 reasoning 档位
+    ai_config = load_ai_config(Path(args.config).expanduser().resolve(), tier="reasoning")
+    model_name = ai_config["model"]
 
     # Step 1: 获取应用结构
     log.log(f"[1/3] 拉取应用结构: {app_id}")
@@ -409,7 +408,7 @@ def main() -> None:
             valid_ws_ids.add(ws_id)
 
     # Step 3: Gemini 规划
-    log.log(f"\n[3/3] 调用 Gemini 规划 Page（模型: {args.model}）...")
+    log.log(f"\n[3/3] 调用 AI 规划 Page（模型: {model_name}）...")
     client = get_ai_client(ai_config)
     prompt = build_prompt(app_id, app_name, worksheets_detail, ICON_CANDIDATES, COLOR_POOL)
 
@@ -419,7 +418,7 @@ def main() -> None:
         p = prompt
         if last_error:
             p = prompt + f"\n\n# 上次验证失败（第 {attempt-1} 次）\n错误：{last_error}\n请修正后重新输出。"
-        response = generate_with_retry(client, args.model, p, ai_config, args.gemini_retries)
+        response = generate_with_retry(client, model_name, p, ai_config, args.gemini_retries)
         raw = extract_json_object(response.text or "")
         try:
             validated = validate_page_plan(raw, valid_ws_ids)

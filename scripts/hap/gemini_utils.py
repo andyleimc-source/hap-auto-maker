@@ -20,9 +20,6 @@ from ai_utils import (
     parse_ai_json,
 )
 
-DEFAULT_MODEL = default_model_for_provider("gemini")
-
-
 def load_ai_provider_config(config_path: Path = AI_CONFIG_PATH) -> Dict[str, str]:
     return load_ai_config(config_path)
 

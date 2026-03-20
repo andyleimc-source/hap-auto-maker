@@ -254,7 +254,7 @@ def main() -> None:
             cmd1 = [sys.executable, str(AGENT_COLLECT_SCRIPT.resolve())]
             stdin_text = ""
             if str(args.requirements_text).strip():
-                stdin_text = args.requirements_text.strip() + "\n/done\n"
+                stdin_text = args.requirements_text.strip() + "\n开始运行\n"
             result1 = run_command(cmd1, cwd=BASE_DIR, interactive=True, stdin_text=stdin_text)
             result1["name"] = "agent_collect_requirements"
             tech_log["commands"].append(result1)

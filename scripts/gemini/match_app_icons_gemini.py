@@ -26,7 +26,6 @@ ICON_JSON_PATH = BASE_DIR / "data" / "assets" / "icons" / "icon.json"
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 APP_INVENTORY_DIR = OUTPUT_ROOT / "app_inventory"
 APP_ICON_MATCH_DIR = OUTPUT_ROOT / "app_icon_match_plans"
-DEFAULT_MODEL = "gemini-2.5-flash"
 
 
 def load_json(path: Path) -> dict:
@@ -99,13 +98,17 @@ def sanitize_name(name: str) -> str:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="使用 Gemini 为应用匹配 icon，并输出待执行 JSON")
+    parser = argparse.ArgumentParser(description="使用 AI 为应用匹配 icon，并输出待执行 JSON")
     parser.add_argument("--app-json", default="", help="应用清单 JSON（文件名或路径，默认取最新）")
     parser.add_argument("--icon-json", default=str(ICON_JSON_PATH), help="icon 库 JSON 路径")
-    parser.add_argument("--model", default=DEFAULT_MODEL, help="Gemini 模型名")
-    parser.add_argument("--config", default=str(CONFIG_PATH), help="Gemini 配置 JSON 路径")
+    parser.add_argument("--config", default=str(CONFIG_PATH), help="AI 配置 JSON 路径")
     parser.add_argument("--output", default="", help="输出 JSON 文件路径")
     args = parser.parse_args()
+
+    # 显式使用 fast 档位
+    ai_config = load_ai_config(Path(args.config).expanduser().resolve(), tier="fast")
+    client = get_ai_client(ai_config)
+    model_name = ai_config["model"]
 
     app_json_path = resolve_app_inventory_json(args.app_json)
     app_inventory = load_json(app_json_path)
@@ -155,13 +158,11 @@ icon 库（fileName）：
 3) 不要输出 markdown，不要输出额外文本。
 """.strip()
 
-    ai_config = load_ai_config(Path(args.config).expanduser().resolve())
-    client = get_ai_client(ai_config)
     response = None
     for net_try in range(1, NETWORK_MAX_RETRIES + 1):
         try:
             response = client.models.generate_content(
-                model=args.model,
+                model=model_name,
                 contents=prompt,
                 config=create_generation_config(
                     ai_config,

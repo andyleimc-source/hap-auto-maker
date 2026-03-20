@@ -28,8 +28,6 @@ OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 PAGE_PLAN_DIR = OUTPUT_ROOT / "page_plans"
 PAGE_CREATE_DIR = OUTPUT_ROOT / "page_create_results"
 
-DEFAULT_MODEL = "gemini-2.5-flash"
-DEFAULT_GEMINI_CONFIG = BASE_DIR / "config" / "credentials" / "gemini_auth.json"
 DEFAULT_AUTH_CONFIG = BASE_DIR / "config" / "credentials" / "auth_config.py"
 
 
@@ -52,9 +50,6 @@ def main() -> None:
   # 最简调用（自动读取 auth_config.py 中的默认配置）
   python pipeline_pages.py --app-id YOUR_APP_ID
 
-  # 指定模型和应用名称
-  python pipeline_pages.py --app-id YOUR_APP_ID --app-name 图书馆管理系统 --model gemini-2.5-flash
-
   # 跳过规划（使用已有最新规划文件直接创建）
   python pipeline_pages.py --app-id YOUR_APP_ID --skip-plan
 
@@ -63,8 +58,6 @@ def main() -> None:
         """,
     )
     parser.add_argument("--app-id", required=True, help="应用 ID")
-    parser.add_argument("--model", default=DEFAULT_MODEL, help="Gemini 模型名")
-    parser.add_argument("--config", default=str(DEFAULT_GEMINI_CONFIG), help="Gemini 配置 JSON 路径")
     parser.add_argument("--auth-config", default=str(DEFAULT_AUTH_CONFIG), help="auth_config.py 路径")
     parser.add_argument("--plan-output", default="", help="Page 规划 JSON 输出路径（可选）")
     parser.add_argument("--create-output", default="", help="创建结果 JSON 输出路径（可选）")
@@ -74,7 +67,6 @@ def main() -> None:
 
     app_id = args.app_id.strip()
     auth_config = str(Path(args.auth_config).expanduser().resolve())
-    gemini_config = str(Path(args.config).expanduser().resolve())
 
     plan_output = args.plan_output.strip()
     if not plan_output:
@@ -89,7 +81,6 @@ def main() -> None:
 
     print(f"自定义页面 + 统计图流水线启动")
     print(f"  应用 ID  : {app_id}")
-    print(f"  Gemini   : {args.model}")
     print(f"  dry-run  : {args.dry_run}")
     print(f"  skip-plan: {args.skip_plan}")
 
@@ -98,8 +89,6 @@ def main() -> None:
         cmd_plan = [
             sys.executable, str(plan_script),
             "--app-id", app_id,
-            "--model", args.model,
-            "--config", gemini_config,
             "--auth-config", auth_config,
             "--output", plan_output,
         ]
@@ -114,8 +103,6 @@ def main() -> None:
         sys.executable, str(create_script),
         "--plan-json", plan_json_arg,
         "--auth-config", auth_config,
-        "--config", gemini_config,
-        "--model", args.model,
         "--output", create_output,
     ]
     if args.dry_run:

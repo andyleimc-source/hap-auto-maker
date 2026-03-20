@@ -16,35 +16,24 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from ai_utils import create_generation_config, get_ai_client, load_ai_config, parse_ai_json
+from ai_utils import AI_CONFIG_PATH, create_generation_config, get_ai_client, load_ai_config, parse_ai_json
 from script_locator import resolve_script
-from gemini_utils import load_gemini_config
 
 CURRENT_DIR = Path(__file__).resolve().parent
 if str(CURRENT_DIR) not in sys.path:
     sys.path.insert(0, str(CURRENT_DIR))
 
 from mock_data_common import (
-    DEFAULT_GEMINI_MODEL,
-    GEMINI_CONFIG_PATH,
     MOCK_BUNDLE_DIR,
     MOCK_PLAN_DIR,
     MOCK_SCHEMA_DIR,
     append_log,
-    extract_json_object,
-    load_gemini_api_key,
     load_json,
     make_log_path,
     make_output_path,
     resolve_json_input,
     write_json_with_latest,
 )
-# 加载全局配置
-try:
-    GEN_API_KEY, GEN_MODEL = load_gemini_config()
-except Exception:
-    GEN_API_KEY = ""
-    GEN_MODEL = "gemini-2.5-flash"
 
 
 def generate_with_retry(client, model: str, prompt: str, retries: int, ai_config: dict) -> Any:
@@ -431,8 +420,7 @@ def validate_plan(raw: dict, snapshot: dict) -> Dict[str, Any]:
 def main() -> None:
     parser = argparse.ArgumentParser(description="根据结构快照调用 AI 规划造数")
     parser.add_argument("--schema-json", required=True, help="结构快照 JSON 路径")
-    parser.add_argument("--model", default=GEN_MODEL if GEN_MODEL else DEFAULT_GEMINI_MODEL, help="AI 模型名")
-    parser.add_argument("--config", default=str(GEMINI_CONFIG_PATH), help="AI 配置 JSON 路径")
+    parser.add_argument("--config", default=str(AI_CONFIG_PATH), help="AI 配置 JSON 路径")
     parser.add_argument("--gemini-retries", type=int, default=4, help="AI 调用失败时的最大重试次数")
     parser.add_argument("--plan-output", default="", help="mock_data_plan 输出路径")
     parser.add_argument("--bundle-output", default="", help="mock_data_bundle 输出路径")
@@ -442,11 +430,14 @@ def main() -> None:
     snapshot = load_json(schema_path)
     app_id = str(snapshot.get("app", {}).get("appId", "")).strip()
     log_path = make_log_path("plan_mock_data", app_id)
-    append_log(log_path, "start", appId=app_id, model=args.model)
 
-    ai_config = load_ai_config(Path(args.config).expanduser().resolve())
+    # 显式使用 fast 档位
+    ai_config = load_ai_config(Path(args.config).expanduser().resolve(), tier="fast")
     client = get_ai_client(ai_config)
+    model_name = ai_config["model"]
     provider = ai_config.get("provider", "gemini")
+
+    append_log(log_path, "start", appId=app_id, model=model_name)
 
     app = snapshot.get("app", {})
     all_worksheets_to_plan = []
@@ -475,7 +466,7 @@ def main() -> None:
         for ws_to_plan in all_worksheets_to_plan:
             print(f"  正在为 [{ws_to_plan['worksheetName']}] 生成造数规划...")
             p = build_prompt_v2(app, [ws_to_plan])
-            resp = generate_with_retry(client, args.model, p, args.gemini_retries, ai_config)
+            resp = generate_with_retry(client, model_name, p, args.gemini_retries, ai_config)
             chunk = parse_ai_json(resp.text or "")
             chunk_ws = chunk.get("worksheets", [])
             if chunk_ws and isinstance(chunk_ws, list):
@@ -493,7 +484,7 @@ def main() -> None:
             prompt = base_prompt
             if last_error:
                 prompt = base_prompt + f"\n\n# 上次输出验证失败（第 {val_attempt - 1} 次）\n错误信息：{last_error}\n请仔细检查并修正后重新输出。"
-            response = generate_with_retry(client, args.model, prompt, args.gemini_retries, ai_config)
+            response = generate_with_retry(client, model_name, prompt, args.gemini_retries, ai_config)
             raw = parse_ai_json(response.text or "")
             try:
                 validated = validate_plan(raw, snapshot)

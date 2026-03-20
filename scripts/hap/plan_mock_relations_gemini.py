@@ -18,32 +18,21 @@ NETWORK_RETRY_DELAY = 5
 
 from ai_utils import create_generation_config, get_ai_client, load_ai_config
 from script_locator import resolve_script
-from gemini_utils import load_gemini_config
 
 CURRENT_DIR = Path(__file__).resolve().parent
 if str(CURRENT_DIR) not in sys.path:
     sys.path.insert(0, str(CURRENT_DIR))
 
 from mock_data_common import (
-    DEFAULT_GEMINI_MODEL,
-    GEMINI_CONFIG_PATH,
     MOCK_RELATION_PLAN_DIR,
     MOCK_SCHEMA_DIR,
     MOCK_WRITE_RESULT_DIR,
     extract_json_object,
-    load_gemini_api_key,
     load_json,
     make_output_path,
     resolve_json_input,
     write_json_with_latest,
 )
-
-# 加载全局配置
-try:
-    GEN_API_KEY, GEN_MODEL = load_gemini_config()
-except Exception:
-    GEN_API_KEY = ""
-    GEN_MODEL = "gemini-2.5-flash"
 
 def build_candidate_fields(snapshot: dict) -> List[dict]:
     pair_type_map: Dict[tuple, str] = {}
@@ -284,8 +273,6 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="调用 Gemini 规划 mock 关系回填")
     parser.add_argument("--schema-json", required=True, help="结构快照 JSON 路径")
     parser.add_argument("--write-result-json", required=True, help="造数写入结果 JSON 路径")
-    parser.add_argument("--model", default=GEN_MODEL if GEN_MODEL else DEFAULT_GEMINI_MODEL, help="Gemini 模型名")
-    parser.add_argument("--config", default=str(GEMINI_CONFIG_PATH), help="Gemini 配置 JSON 路径")
     parser.add_argument("--output", default="", help="关系规划输出路径")
     args = parser.parse_args()
 
@@ -293,11 +280,7 @@ def main() -> None:
     write_result_path = resolve_json_input(str(args.write_result_json), [MOCK_WRITE_RESULT_DIR])
     snapshot = load_json(schema_path)
     write_result = load_json(write_result_path)
-    if GEN_API_KEY:
-        api_key = GEN_API_KEY
-    else:
-        load_gemini_api_key(Path(args.config).expanduser().resolve())
-    ai_config = load_ai_config(Path(args.config).expanduser().resolve())
+    ai_config = load_ai_config(tier="fast")
     client = get_ai_client(ai_config)
 
     base_prompt = build_prompt(snapshot, write_result)
@@ -312,7 +295,7 @@ def main() -> None:
         for net_try in range(1, NETWORK_MAX_RETRIES + 1):
             try:
                 response = client.models.generate_content(
-                    model=args.model,
+                    model=ai_config["model"],
                     contents=prompt,
                     config=create_generation_config(
                         ai_config,

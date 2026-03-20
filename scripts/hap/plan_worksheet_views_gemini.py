@@ -29,15 +29,8 @@ APP_AUTH_DIR = OUTPUT_ROOT / "app_authorizations"
 VIEW_PLAN_DIR = OUTPUT_ROOT / "view_plans"
 GEMINI_CONFIG_PATH = AI_CONFIG_PATH
 AUTH_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "auth_config.py"
-# 加载全局配置
-try:
-    GEN_API_KEY, GEN_MODEL = load_gemini_config()
-except Exception:
-    GEN_API_KEY = ""
-    GEN_MODEL = "gemini-2.5-flash"
 
-DEFAULT_MODEL = GEN_MODEL
-CURRENT_AI_CONFIG: Dict[str, str] = {"provider": "gemini", "api_key": "", "model": DEFAULT_MODEL, "base_url": ""}
+CURRENT_AI_CONFIG: Dict[str, str] = {}
 
 APP_INFO_URL = "https://api.mingdao.com/v3/app"
 GET_CONTROLS_URL = "https://www.mingdao.com/api/Worksheet/GetWorksheetControls"
@@ -93,16 +86,6 @@ def choose_indexes(prompt: str, items_count: int) -> Optional[List[int]]:
 
 def sanitize_name(name: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_-]+", "_", name).strip("_") or "app"
-
-
-def load_gemini_api_key(config_path: Path) -> str:
-    if GEN_API_KEY:
-        return GEN_API_KEY
-    data = load_ai_config(config_path)
-    api_key = str(data.get("api_key", "")).strip()
-    if not api_key:
-        raise ValueError(f"AI 配置缺少 api_key: {config_path}")
-    return api_key
 
 
 def extract_json(text: str) -> dict:
@@ -573,18 +556,18 @@ def plan_views_for_worksheet(client, model: str, app_name: str, worksheet: dict,
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="遍历应用工作表并使用 Gemini 规划视图")
-    parser.add_argument("--model", default=DEFAULT_MODEL, help="Gemini 模型名")
-    parser.add_argument("--config", default=str(GEMINI_CONFIG_PATH), help="Gemini 配置 JSON 路径")
+    parser = argparse.ArgumentParser(description="遍历应用工作表并使用 AI 规划视图")
+    parser.add_argument("--config", default=str(GEMINI_CONFIG_PATH), help="AI 配置 JSON 路径")
     parser.add_argument("--auth-config", default=str(AUTH_CONFIG_PATH), help="auth_config.py 路径")
     parser.add_argument("--app-ids", default="", help="可选，应用ID列表（逗号分隔）；不传则交互选择")
     parser.add_argument("--output", default="", help="输出 JSON 文件路径")
     args = parser.parse_args()
 
     global CURRENT_AI_CONFIG
-    load_gemini_api_key(Path(args.config).expanduser().resolve())
-    CURRENT_AI_CONFIG = load_ai_config(Path(args.config).expanduser().resolve())
+    # 显式使用 fast 档位
+    CURRENT_AI_CONFIG = load_ai_config(Path(args.config).expanduser().resolve(), tier="fast")
     client = get_ai_client(CURRENT_AI_CONFIG)
+    model_name = CURRENT_AI_CONFIG["model"]
     auth_config_path = Path(args.auth_config).expanduser().resolve()
 
     app_rows = load_app_auth_rows()
@@ -643,8 +626,8 @@ def main() -> None:
         with ThreadPoolExecutor(max_workers=min(8, len(worksheets))) as ex:
             ws_with_fields = list(ex.map(_fetch_ws, worksheets))
         # 一次 Gemini 批量调用
-        print(f"  调用 Gemini 批量规划 {len(worksheets)} 个工作表视图...")
-        planned_list = plan_views_batch(client, args.model, app["appName"], ws_with_fields)
+        print(f"  调用 AI 批量规划 {len(worksheets)} 个工作表视图...")
+        planned_list = plan_views_batch(client, model_name, app["appName"], ws_with_fields)
         for planned in planned_list:
             app_out["worksheets"].append(planned)
             total_worksheets += 1
@@ -654,8 +637,8 @@ def main() -> None:
 
     payload = {
         "generatedAt": datetime.now().isoformat(timespec="seconds"),
-        "model": args.model,
-        "source": "gemini_view_planner_v1",
+        "model": model_name,
+        "source": "ai_view_planner_v1",
         "apps": result_apps,
         "summary": {
             "appCount": len(result_apps),

@@ -14,7 +14,6 @@ from typing import Any, Dict, List
 
 from ai_utils import create_generation_config, get_ai_client, load_ai_config
 from script_locator import resolve_script
-from gemini_utils import load_gemini_config
 
 CURRENT_DIR = Path(__file__).resolve().parent
 if str(CURRENT_DIR) not in sys.path:
@@ -38,15 +37,6 @@ from mock_data_common import (
 
 ROLE_PLAN_DIR = OUTPUT_ROOT / "role_plans"
 ROLE_PLAN_LATEST = ROLE_PLAN_DIR / "role_plan_latest.json"
-
-# 加载全局配置
-try:
-    GEN_API_KEY, GEN_MODEL = load_gemini_config()
-except Exception:
-    GEN_API_KEY = ""
-    GEN_MODEL = "gemini-2.5-flash"
-
-DEFAULT_MODEL = GEN_MODEL
 
 
 def bool_or_default(value: Any, default: bool) -> bool:
@@ -211,14 +201,19 @@ def main() -> None:
         help="可选，指定参与角色规划的工作表名称。可重复传入，也可单次传逗号分隔值。",
     )
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="API 基础地址")
-    parser.add_argument("--model", default=DEFAULT_MODEL, help="Gemini 模型名")
-    parser.add_argument("--config", default="", help="Gemini 配置 JSON 路径")
+    parser.add_argument("--config", default="", help="AI 配置 JSON 路径")
     parser.add_argument("--output", default="", help="输出 JSON 文件路径")
     parser.add_argument("--inventory-output", default="", help="可选，写出工作表清单 JSON")
-    parser.add_argument("--prompt-output", default="", help="可选，写出发送给 Gemini 的 prompt 文本")
-    parser.add_argument("--raw-output", default="", help="可选，写出 Gemini 原始响应文本")
-    parser.add_argument("--max-retries", type=int, default=3, help="Gemini 重试次数")
+    parser.add_argument("--prompt-output", default="", help="可选，写出发送给 AI 的 prompt 文本")
+    parser.add_argument("--raw-output", default="", help="可选，写出 AI 原始响应文本")
+    parser.add_argument("--max-retries", type=int, default=3, help="AI 重试次数")
     args = parser.parse_args()
+
+    # 显式使用 reasoning 档位
+    config_path = Path(args.config).expanduser().resolve() if args.config else None
+    ai_config = load_ai_config(config_path, tier="reasoning")
+    client = get_ai_client(ai_config)
+    model_name = ai_config["model"]
 
     apps = discover_authorized_apps(base_url=args.base_url)
     app = resolve_app(apps, app_id=args.app_id, app_name=args.app_name, app_index=args.app_index)
@@ -229,7 +224,7 @@ def main() -> None:
         "start",
         appId=app["appId"],
         appName=app["appName"],
-        model=args.model,
+        model=model_name,
         worksheetNames=requested_worksheet_names,
     )
 
@@ -265,12 +260,7 @@ def main() -> None:
             },
         )
 
-    config_path = Path(args.config).expanduser().resolve() if args.config else None
-    if GEN_API_KEY:
-        ai_config = load_ai_config()
-    else:
-        load_gemini_api_key(config_path) if config_path else load_gemini_api_key()
-        ai_config = load_ai_config(config_path) if config_path else load_ai_config()
+    ai_config = load_ai_config(config_path, tier="reasoning")
     client = get_ai_client(ai_config)
     prompt = build_prompt(str(app_meta.get("name", "")).strip() or app["appName"], selected_worksheet_names)
     if args.prompt_output:
@@ -282,10 +272,10 @@ def main() -> None:
     raw_response_text = ""
     last_error = ""
     for i in range(1, max(1, args.max_retries) + 1):
-        append_log(log_path, "gemini_request", attempt=i)
+        append_log(log_path, "ai_request", attempt=i)
         try:
             resp = client.models.generate_content(
-                model=args.model,
+                model=model_name,
                 contents=prompt,
                 config=create_generation_config(
                     ai_config,
@@ -299,11 +289,11 @@ def main() -> None:
             break
         except Exception as exc:
             last_error = str(exc)
-            append_log(log_path, "gemini_retry_failed", attempt=i, error=last_error)
+            append_log(log_path, "ai_retry_failed", attempt=i, error=last_error)
             if i >= max(1, args.max_retries):
-                raise RuntimeError(f"Gemini 生成失败: {last_error}") from exc
+                raise RuntimeError(f"AI 生成失败: {last_error}") from exc
     else:
-        raise RuntimeError(f"Gemini 生成失败: {last_error}")
+        raise RuntimeError(f"AI 生成失败: {last_error}")
 
     roles = normalize_roles(raw)
     if args.raw_output:
@@ -317,7 +307,7 @@ def main() -> None:
     result = {
         "schemaVersion": "role_plan_v1",
         "generatedAt": now_iso(),
-        "model": args.model,
+        "model": model_name,
         "app": {
             "appId": app["appId"],
             "appName": str(app_meta.get("name", "")).strip() or app["appName"],

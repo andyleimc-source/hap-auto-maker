@@ -18,6 +18,18 @@ DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 DEFAULT_DEEPSEEK_MODEL = "deepseek-chat"
 DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 
+# 任务档位映射
+TIER_MODELS = {
+    "gemini": {
+        "reasoning": "gemini-2.5-pro",
+        "fast": "gemini-2.5-flash",
+    },
+    "deepseek": {
+        "reasoning": "deepseek-reasoner",
+        "fast": "deepseek-chat",
+    },
+}
+
 
 def normalize_provider(provider: str) -> str:
     raw = str(provider or "").strip().lower()
@@ -28,8 +40,20 @@ def normalize_provider(provider: str) -> str:
     raise ValueError(f"不支持的 AI 供应商: {provider}")
 
 
+def get_model_by_tier(provider: str, tier: str = "fast") -> str:
+    """
+    根据供应商和任务档位获取模型名称。
+    tier: "reasoning" (推理档) | "fast" (极速档)
+    """
+    p = normalize_provider(provider)
+    t = str(tier or "fast").strip().lower()
+    if t not in {"reasoning", "fast"}:
+        t = "fast"
+    return TIER_MODELS.get(p, {}).get(t, TIER_MODELS[p]["fast"])
+
+
 def default_model_for_provider(provider: str) -> str:
-    return DEFAULT_GEMINI_MODEL if normalize_provider(provider) == "gemini" else DEFAULT_DEEPSEEK_MODEL
+    return get_model_by_tier(provider, "fast")
 
 
 def default_base_url_for_provider(provider: str) -> str:
@@ -45,11 +69,16 @@ def mask_secret(value: str, show: int = 4) -> str:
     return text[:show] + "****"
 
 
-def load_ai_config(config_path: Path = AI_CONFIG_PATH) -> Dict[str, str]:
+def load_ai_config(config_path: Optional[Path] = None, tier: Optional[str] = None) -> Dict[str, str]:
     """
     加载 AI 配置。
-    返回: {"provider": "gemini|deepseek", "api_key": "...", "model": "...", "base_url": "..."}
+    如果指定了 tier，则根据 provider 自动选择模型；
+    否则，优先使用配置文件中的 model，若无则使用默认的 fast 模型。
+    返回: {"provider": "gemini|deepseek", "api_key": "...", "model": "...", "base_url": "...", "tier": "..."}
     """
+    if config_path is None:
+        config_path = AI_CONFIG_PATH
+
     target_path = config_path
     if config_path == GEMINI_CONFIG_PATH and AI_CONFIG_PATH.exists():
         target_path = AI_CONFIG_PATH
@@ -66,7 +95,13 @@ def load_ai_config(config_path: Path = AI_CONFIG_PATH) -> Dict[str, str]:
 
     provider = normalize_provider(str(data.get("provider", "gemini")).strip().lower())
     api_key = str(data.get("api_key", "")).strip()
-    model = str(data.get("model", "")).strip() or default_model_for_provider(provider)
+
+    # 模型选择逻辑
+    if tier:
+        model = get_model_by_tier(provider, tier)
+    else:
+        model = str(data.get("model", "")).strip() or get_model_by_tier(provider, "fast")
+
     base_url = str(data.get("base_url", "")).strip() or default_base_url_for_provider(provider)
 
     if not api_key:
@@ -77,6 +112,7 @@ def load_ai_config(config_path: Path = AI_CONFIG_PATH) -> Dict[str, str]:
         "api_key": api_key,
         "model": model,
         "base_url": base_url,
+        "tier": tier or ("reasoning" if "reasoner" in model or "pro" in model.lower() else "fast"),
     }
 
 
@@ -177,16 +213,21 @@ class FakeChat:
         return FakeResponse(reply)
 
 
-def get_ai_client(config: Optional[Dict[str, str]] = None):
+def get_ai_client(config: Optional[Dict[str, str]] = None, tier: Optional[str] = None):
     """
     根据配置获取相应的 AI 客户端。
+    如果指定了 tier，则会根据配置的 provider 自动选择对应的推理或极速模型。
     """
     if config is None:
-        config = load_ai_config()
+        config = load_ai_config(tier=tier)
+    elif tier:
+        # 如果提供了 config 但又指定了 tier，则更新 config 中的 model
+        provider = normalize_provider(config.get("provider", "gemini"))
+        config["model"] = get_model_by_tier(provider, tier)
 
     provider = normalize_provider(config.get("provider", "gemini"))
     api_key = config.get("api_key", "")
-    model = config.get("model", "") or default_model_for_provider(provider)
+    model = config.get("model", "") or get_model_by_tier(provider, "fast")
 
     if provider == "gemini":
         from google import genai

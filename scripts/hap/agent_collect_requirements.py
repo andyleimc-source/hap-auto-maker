@@ -19,7 +19,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from ai_utils import create_generation_config, get_ai_client, load_ai_config
+from ai_utils import AI_CONFIG_PATH, create_generation_config, get_ai_client, load_ai_config
 
 CURRENT_DIR = Path(__file__).resolve().parent
 if str(CURRENT_DIR) not in sys.path:
@@ -82,18 +82,7 @@ class Spinner:
 BASE_DIR = Path(__file__).resolve().parents[2]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 SPEC_DIR = OUTPUT_ROOT / "requirement_specs"
-# 加载全局配置
-try:
-    AI_CONFIG = load_ai_config()
-    GEN_API_KEY = AI_CONFIG.get("api_key", "")
-    GEN_MODEL = AI_CONFIG.get("model", "gemini-2.5-flash")
-except Exception:
-    AI_CONFIG = {"provider": "gemini", "api_key": "", "model": "gemini-2.5-flash", "base_url": ""}
-    GEN_API_KEY, GEN_MODEL = "", "gemini-2.5-flash"
 
-# 用户指定优先模型；若不可用则自动回退到已验证可用模型
-DEFAULT_MODEL = GEN_MODEL
-FALLBACK_MODELS = (GEN_MODEL, "gemini-2.0-flash", "gemini-1.5-pro")
 EXECUTE_REQUIREMENTS_SCRIPT = resolve_script("execute_requirements.py")
 ORG_AUTH_PATH = BASE_DIR / "config" / "credentials" / "organization_auth.json"
 
@@ -129,17 +118,6 @@ def load_json(path: Path) -> dict:
     if not path.exists():
         raise FileNotFoundError(f"文件不存在: {path}")
     return json.loads(path.read_text(encoding="utf-8"))
-
-
-def load_api_key(config_path: Path) -> str:
-    # 优先使用已加载的全局 Key
-    if GEN_API_KEY:
-        return GEN_API_KEY
-    data = load_json(config_path)
-    api_key = str(data.get("api_key", "")).strip()
-    if not api_key:
-        raise ValueError(f"Gemini 配置缺少 api_key: {config_path}")
-    return api_key
 
 
 def extract_json(text: str) -> dict:
@@ -230,78 +208,6 @@ def print_wrapped(prefix: str, text: str) -> None:
         print(f"{align}{ln}")
 
 
-def create_chat_with_fallback(client, model: str, temperature: float, seed: Optional[int]):
-    tried = [model] + [m for m in FALLBACK_MODELS if m != model]
-    last_exc: Optional[Exception] = None
-    for idx, m in enumerate(tried):
-        try:
-            chat_config = make_config(response_mime_type="text/plain", temperature=temperature, seed=seed)
-            # 官方推荐：多轮聊天使用 chats.create + send_message
-            chat = client.chats.create(model=m, config=chat_config)
-            return chat, m
-        except Exception as exc:
-            last_exc = exc
-            if idx < len(tried) - 1:
-                print(f"模型 {m} 不可用，回退到 {tried[idx + 1]} ...")
-    if last_exc:
-        raise last_exc
-    raise RuntimeError("无法创建 Gemini Chat 会话")
-
-
-def generate_with_fallback(client, model: str, contents: str, config):
-    tried = [model] + [m for m in FALLBACK_MODELS if m != model]
-    last_exc: Optional[Exception] = None
-    for idx, m in enumerate(tried):
-        try:
-            return client.models.generate_content(model=m, contents=contents, config=config), m
-        except Exception as exc:
-            last_exc = exc
-            if idx < len(tried) - 1:
-                print(f"模型 {m} 不可用，回退到 {tried[idx + 1]} ...")
-    if last_exc:
-        raise last_exc
-    raise RuntimeError("Gemini 生成失败")
-
-
-def send_chat_with_fallback(
-    client: genai.Client,
-    chat,
-    current_model: str,
-    prompt: str,
-    temperature: float,
-    seed: Optional[int],
-) -> Tuple[object, object, str]:
-    """
-    发送聊天消息；若当前模型在 send_message 阶段失败（常见 404/NOT_FOUND），
-    自动回退到候选模型并重试一次。
-    返回: (response, chat_obj, model_name)
-    """
-    try:
-        resp = chat.send_message(prompt)
-        return resp, chat, current_model
-    except Exception as exc:
-        msg = str(exc)
-        recoverable = (
-            "NOT_FOUND" in msg
-            or "is not found" in msg
-            or "not supported for generateContent" in msg
-        )
-        if not recoverable:
-            raise
-
-        tried = [current_model] + [m for m in FALLBACK_MODELS if m != current_model]
-        for m in tried[1:]:
-            print(f"聊天模型 {current_model} 不可用，自动回退到 {m} ...")
-            try:
-                chat_config = make_config(response_mime_type="text/plain", temperature=temperature, seed=seed)
-                new_chat = client.chats.create(model=m, config=chat_config)
-                resp = new_chat.send_message(prompt)
-                return resp, new_chat, m
-            except Exception:
-                continue
-        raise
-
-
 def build_chat_prompt(transcript: List[Dict[str, str]], latest_user_input: str) -> str:
     lines = []
     for turn in transcript[-30:]:
@@ -345,14 +251,14 @@ def build_spec_prompt(transcript: List[Dict[str, str]]) -> str:
   "schema_version": "workflow_requirement_v1",
   "meta": {{
     "created_at": "{now_iso()}",
-    "source": "terminal_gemini_chat",
+    "source": "terminal_ai_chat",
     "conversation_summary": "100字以内总结"
   }},
   "app": {{
     "target_mode": "create_new",
     "name": "由AI根据对话提取的应用名称",
     "group_ids": "{_load_org_group_ids()}",
-    "icon_mode": "gemini_match",
+    "icon_mode": "ai_match",
     "color_mode": "random",
     "navi_style": {{
       "enabled": true,
@@ -363,7 +269,6 @@ def build_spec_prompt(transcript: List[Dict[str, str]]) -> str:
     "enabled": true,
     "business_context": "业务背景",
     "requirements": "工作表规划要求",
-    "model": "{DEFAULT_MODEL}",
     "icon_update": {{
       "enabled": true,
       "refresh_auth": false
@@ -375,16 +280,13 @@ def build_spec_prompt(transcript: List[Dict[str, str]]) -> str:
     }}
   }},
   "views": {{
-    "enabled": true,
-    "model": "{DEFAULT_MODEL}"
+    "enabled": true
   }},
   "view_filters": {{
-    "enabled": true,
-    "model": "{DEFAULT_MODEL}"
+    "enabled": true
   }},
   "mock_data": {{
     "enabled": true,
-    "model": "{DEFAULT_MODEL}",
     "dry_run": false,
     "trigger_workflow": false
   }},
@@ -402,6 +304,7 @@ def build_spec_prompt(transcript: List[Dict[str, str]]) -> str:
 4) 若对话中未明确提到导航布局，固定 app.navi_style.pcNaviStyle=1。
 5) 若对话中未明确提到主题色，固定 app.color_mode=random。
 """.strip()
+
 
 
 def normalize_spec(raw: dict) -> dict:
@@ -440,7 +343,6 @@ def normalize_spec(raw: dict) -> dict:
     ws.setdefault("enabled", True)
     ws.setdefault("business_context", "通用企业管理场景")
     ws.setdefault("requirements", "")
-    ws.setdefault("model", DEFAULT_MODEL)
     icon_update = ws.get("icon_update") if isinstance(ws.get("icon_update"), dict) else {}
     icon_update.setdefault("enabled", True)
     icon_update.setdefault("refresh_auth", False)
@@ -451,24 +353,20 @@ def normalize_spec(raw: dict) -> dict:
     layout.setdefault("refresh_auth", False)
     ws["layout"] = layout
     spec["worksheets"] = ws
-    
+
     views = spec.get("views") if isinstance(spec.get("views"), dict) else {}
     views.setdefault("enabled", True)
-    views.setdefault("model", ws.get("model", DEFAULT_MODEL))
     spec["views"] = views
-    
+
     view_filters = spec.get("view_filters") if isinstance(spec.get("view_filters"), dict) else {}
     view_filters.setdefault("enabled", True)
-    view_filters.setdefault("model", ws.get("model", DEFAULT_MODEL))
     spec["view_filters"] = view_filters
 
     mock_data = spec.get("mock_data") if isinstance(spec.get("mock_data"), dict) else {}
     mock_data.setdefault("enabled", True)
-    mock_data.setdefault("model", ws.get("model", DEFAULT_MODEL))
     mock_data.setdefault("dry_run", False)
     mock_data.setdefault("trigger_workflow", False)
     spec["mock_data"] = mock_data
-
     execution = spec.get("execution") if isinstance(spec.get("execution"), dict) else {}
     execution.setdefault("fail_fast", True)
     execution.setdefault("dry_run", False)
@@ -498,7 +396,7 @@ def print_transcript_summary(transcript: List[Dict[str, str]]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="终端需求对话 Agent（AI）")
-    parser.add_argument("--model", default=DEFAULT_MODEL, help="AI 模型名")
+    parser.add_argument("--config", default=str(AI_CONFIG_PATH), help="AI 配置 JSON 路径")
     parser.add_argument("--output", default="", help="输出 JSON 路径（默认自动命名）")
     parser.add_argument("--max-turns", type=int, default=0, help="最大对话轮数（0 表示不限制）")
     parser.add_argument("--temperature", type=float, default=0.2, help="AI 温度")
@@ -509,9 +407,17 @@ def main() -> None:
     parser.add_argument("--continue-on-error", action="store_true", help="「开始运行」自动执行时，执行器遇错继续")
     args = parser.parse_args()
 
-    client = get_ai_client(AI_CONFIG)
+    # 显式使用 fast 档位
+    ai_config = load_ai_config(Path(args.config).expanduser().resolve(), tier="fast")
+    client = get_ai_client(ai_config)
+    model_name = ai_config["model"]
+
     output_path = Path(args.output).expanduser().resolve() if args.output else None
-    chat, actual_model = create_chat_with_fallback(client, args.model, args.temperature, args.seed)
+
+    # 官方推荐：多轮聊天使用 chats.create + send_message
+    chat_config = create_generation_config(ai_config, response_mime_type="text/plain", temperature=args.temperature, seed=args.seed)
+    chat = client.chats.create(model=model_name, config=chat_config)
+    actual_model = model_name
     if readline is not None:
         try:
             readline.parse_and_bind("set editing-mode emacs")
@@ -548,11 +454,10 @@ def main() -> None:
             prompt = build_spec_prompt(transcript)
             spinner = Spinner("正在生成需求 JSON").start()
             try:
-                resp, _ = generate_with_fallback(
-                    client=client,
+                resp = client.models.generate_content(
                     model=actual_model,
                     contents=prompt,
-                    config=make_config(response_mime_type="application/json", temperature=args.temperature, seed=args.seed),
+                    config=create_generation_config(ai_config, response_mime_type="application/json", temperature=args.temperature, seed=args.seed),
                 )
             finally:
                 spinner.stop()
@@ -577,14 +482,7 @@ def main() -> None:
         prompt = build_chat_prompt(transcript, latest_user_input=cmd)
         spinner = Spinner("思考中").start()
         try:
-            resp, chat, actual_model = send_chat_with_fallback(
-                client=client,
-                chat=chat,
-                current_model=actual_model,
-                prompt=prompt,
-                temperature=args.temperature,
-                seed=args.seed,
-            )
+            resp = chat.send_message(prompt)
         finally:
             spinner.stop()
         reply = (resp.text or "").strip() or "请继续补充你的需求，我会整理成可执行 JSON。"

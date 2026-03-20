@@ -19,7 +19,6 @@ if str(CURRENT_DIR) not in sys.path:
 
 from mock_data_common import (
     DEFAULT_BASE_URL,
-    DEFAULT_GEMINI_MODEL,
     MOCK_BUNDLE_DIR,
     MOCK_PLAN_DIR,
     MOCK_RELATION_REPAIR_APPLY_DIR,
@@ -124,7 +123,7 @@ def main() -> None:
     parser.add_argument("--app-id", default="", help="可选，指定 appId")
     parser.add_argument("--app-index", type=int, default=0, help="可选，指定应用序号")
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="API 基础地址")
-    parser.add_argument("--model", default=DEFAULT_GEMINI_MODEL, help="Gemini 模型名")
+    
     parser.add_argument("--dry-run", action="store_true", help="写入与更新步骤使用 dry-run")
     parser.add_argument("--trigger-workflow", action="store_true", help="写入与更新时触发工作流")
     args = parser.parse_args()
@@ -139,7 +138,6 @@ def main() -> None:
         appName=app["appName"],
         dryRun=bool(args.dry_run),
         triggerWorkflow=bool(args.trigger_workflow),
-        model=args.model,
     )
     context: Dict[str, object] = {
         "app": {"appId": app["appId"], "appName": app["appName"]},
@@ -173,8 +171,6 @@ def main() -> None:
             str(SCRIPT_PLAN_DATA),
             "--schema-json",
             str(schema_json),
-            "--model",
-            args.model,
             "--plan-output",
             plan_json,
             "--bundle-output",
@@ -217,8 +213,6 @@ def main() -> None:
             app["appId"],
             "--base-url",
             args.base_url,
-            "--model",
-            args.model,
             "--output",
             relation_plan_json,
         ]

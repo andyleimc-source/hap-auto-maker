@@ -27,7 +27,6 @@ from ai_utils import (
 )
 
 CONFIG_PATH = AI_CONFIG_PATH
-DEFAULT_MODEL = "gemini-2.5-flash"
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 WORKSHEET_PLAN_DIR = OUTPUT_ROOT / "worksheet_plans"
 MAX_PLAN_RETRIES = 3
@@ -114,18 +113,19 @@ def validate_plan(plan: dict) -> list[str]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="使用 Gemini 规划应用工作表结构并输出 JSON")
+    parser = argparse.ArgumentParser(description="使用 AI 规划应用工作表结构并输出 JSON")
     parser.add_argument("--app-name", required=True, help="应用名称")
     parser.add_argument("--business-context", default="通用企业管理场景", help="业务背景描述")
     parser.add_argument("--requirements", default="", help="额外要求")
-    parser.add_argument("--model", default=DEFAULT_MODEL, help="Gemini 模型名")
-    parser.add_argument("--config", default=str(CONFIG_PATH), help="Gemini 配置 JSON 路径")
+    parser.add_argument("--config", default=str(CONFIG_PATH), help="AI 配置 JSON 路径")
     parser.add_argument("--output", default="", help="输出 JSON 文件路径")
     parser.add_argument("--max-retries", type=int, default=MAX_PLAN_RETRIES, help="规划校验失败后的最大重试次数")
     args = parser.parse_args()
 
-    ai_config = load_ai_config(Path(args.config).expanduser().resolve())
+    # 显式使用 reasoning 档位
+    ai_config = load_ai_config(Path(args.config).expanduser().resolve(), tier="reasoning")
     client = get_ai_client(ai_config)
+    model_name = ai_config["model"]
 
     prompt = build_prompt(args.app_name, args.business_context, args.requirements)
     plan = None
@@ -142,7 +142,7 @@ def main() -> None:
         for net_try in range(1, NETWORK_MAX_RETRIES + 1):
             try:
                 response = client.models.generate_content(
-                    model=args.model,
+                    model=model_name,
                     contents=current_prompt,
                     config=create_generation_config(
                         ai_config,

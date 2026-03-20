@@ -30,19 +30,12 @@ from mock_data_common import (
     write_json,
 )
 from script_locator import resolve_script
-from gemini_utils import load_gemini_config
+from ai_utils import load_ai_config
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 SCRIPT_PLAN = resolve_script("plan_role_recommendations_gemini.py")
 SCRIPT_CREATE = resolve_script("create_roles_from_recommendation.py")
 ROLE_RUN_DIR = OUTPUT_ROOT / "role_runs"
-# 加载全局配置
-try:
-    _, GEN_MODEL = load_gemini_config()
-except Exception:
-    GEN_MODEL = "gemini-2.5-flash"
-
-DEFAULT_MODEL = GEN_MODEL if GEN_MODEL else "gemini-2.5-flash"
 
 
 def run_step(cmd: List[str], title: str, log_path: Path) -> Dict[str, object]:
@@ -90,11 +83,13 @@ def main() -> None:
     parser.add_argument("--app-id", default="", help="可选，指定 appId")
     parser.add_argument("--app-index", type=int, default=0, help="可选，指定应用序号")
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="API 基础地址")
-    parser.add_argument("--model", default=DEFAULT_MODEL, help="Gemini 模型名")
-    parser.add_argument("--config", default="", help="Gemini 配置 JSON 路径")
     parser.add_argument("--skip-existing", action="store_true", default=True, help="创建时角色已存在则跳过（默认启用）")
     parser.add_argument("--no-skip-existing", dest="skip_existing", action="store_false", help="创建时不跳过已有角色")
     args = parser.parse_args()
+
+    # 加载 AI 配置 (极速档)
+    ai_config = load_ai_config(tier="fast")
+    model_name = ai_config["model"]
 
     apps = discover_authorized_apps(base_url=args.base_url)
     app = choose_app(apps, app_id=args.app_id, app_index=args.app_index)
@@ -104,7 +99,7 @@ def main() -> None:
         "start",
         appId=app["appId"],
         appName=app["appName"],
-        model=args.model,
+        model=model_name,
         skipExisting=bool(args.skip_existing),
     )
 
@@ -123,11 +118,7 @@ def main() -> None:
             app["appId"],
             "--base-url",
             args.base_url,
-            "--model",
-            args.model,
         ]
-        if args.config:
-            plan_cmd.extend(["--config", args.config])
         plan_result = run_step(plan_cmd, "Step 1/2 生成推荐角色", log_path)
         plan_json = extract_marker_path(str(plan_result.get("stdout", "")), "RESULT_JSON")
         if not plan_json:

@@ -61,6 +61,16 @@ import time
 
 import requests
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT / "scripts" / "hap"))
+from ai_utils import (
+    AI_CONFIG_PATH,
+    create_generation_config,
+    get_ai_client,
+    load_ai_config,
+    parse_ai_json,
+)
+
 sys.path.insert(0, str(Path(__file__).parent))
 from workflow_io import persist
 
@@ -71,7 +81,7 @@ def parse_args() -> argparse.Namespace:
     project_root = Path(__file__).resolve().parents[2]
     default_auth_config = project_root / "config" / "credentials" / "auth_config.py"
     parser = argparse.ArgumentParser(
-        description="分析应用结构，调用 Gemini 规划工作流，输出 workflow_plan_latest.json。"
+        description="分析应用结构，使用 AI 规划工作流，输出 workflow_plan_latest.json。"
     )
     parser.add_argument("--relation-id", required=True, help="App relationId（应用 ID）。")
     parser.add_argument(
@@ -82,16 +92,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--app-key", default="", help="明道云 Open API appKey（用于自动拉取结构）。")
     parser.add_argument("--app-secret", default="", help="明道云 Open API appSecret（用于自动拉取结构）。")
     parser.add_argument(
-        "--gemini-key",
-        default="",
-        help="Gemini API Key（也可通过 GEMINI_API_KEY 环境变量提供）。",
-    )
-    parser.add_argument(
-        "--model",
-        default="gemini-1.5-pro",
-        help="Gemini 模型名称（默认：gemini-1.5-pro）。",
-    )
-    parser.add_argument(
         "--output",
         default="",
         help="输出文件路径（默认：output/workflow_plan_latest.json）。",
@@ -100,6 +100,11 @@ def parse_args() -> argparse.Namespace:
         "--auth-config",
         default=str(default_auth_config),
         help="auth_config.py 路径（用于加载 Open API key，可选）。",
+    )
+    parser.add_argument(
+        "--config",
+        default=str(AI_CONFIG_PATH),
+        help="AI 配置 JSON 路径",
     )
     return parser.parse_args()
 
@@ -286,28 +291,26 @@ def build_prompt(app_structure: dict) -> str:
 }}"""
 
 
-def call_gemini(prompt: str, api_key: str, model: str) -> dict:
-    try:
-        import google.generativeai as genai  # type: ignore
-    except ImportError:
-        raise RuntimeError(
-            "缺少依赖：请先安装 google-generativeai\n"
-            "  pip install google-generativeai"
-        )
+def call_ai(prompt: str, config_path: str) -> dict:
+    # 显式使用 reasoning 档位
+    ai_config = load_ai_config(Path(config_path).expanduser().resolve(), tier="reasoning")
+    client = get_ai_client(ai_config)
+    model_name = ai_config["model"]
 
-    genai.configure(api_key=api_key)
-    gm = genai.GenerativeModel(
-        model,
-        generation_config=genai.types.GenerationConfig(
+    print(f"[ai] 正在生成工作流规划（provider={ai_config['provider']}，model={model_name}，thinking=none）...", file=sys.stderr)
+
+    response = client.models.generate_content(
+        model=model_name,
+        contents=prompt,
+        config=create_generation_config(
+            ai_config,
             response_mime_type="application/json",
             temperature=0.7,
         ),
     )
-    print("[gemini] 正在生成工作流规划...", file=sys.stderr)
-    response = gm.generate_content(prompt)
     raw = response.text
-    print(f"[gemini] 响应长度 {len(raw)} 字符", file=sys.stderr)
-    return json.loads(raw)
+    print(f"[ai] 响应长度 {len(raw)} 字符", file=sys.stderr)
+    return parse_ai_json(raw)
 
 
 # ── 主流程 ─────────────────────────────────────────────────────────────────────
@@ -363,34 +366,22 @@ def main() -> int:
     ws_count = len(app_structure.get("worksheets", []))
     print(f"[structure] 应用：{app_structure.get('app_name')}，共 {ws_count} 个工作表", file=sys.stderr)
 
-    # 2. 获取 Gemini key
-    gemini_key = args.gemini_key or os.environ.get("GEMINI_API_KEY", "").strip()
-    if not gemini_key:
-        print(
-            "Error: 缺少 Gemini API Key。\n"
-            "  方式1：export GEMINI_API_KEY=your_key\n"
-            "  方式2：--gemini-key your_key",
-            file=sys.stderr,
-        )
-        persist(script_name, None, args=log_args, error="missing gemini api key", started_at=started_at)
-        return 2
-
-    # 3. 构建 Prompt 并调用 Gemini
+    # 2. 构建 Prompt 并调用 AI
     prompt = build_prompt(app_structure)
     try:
-        gemini_result = call_gemini(prompt, gemini_key, args.model)
+        ai_result = call_ai(prompt, args.config)
     except Exception as exc:
-        print(f"Error: Gemini 调用失败：{exc}", file=sys.stderr)
+        print(f"Error: AI 调用失败：{exc}", file=sys.stderr)
         persist(script_name, None, args=log_args, error=str(exc), started_at=started_at)
         return 1
 
-    # 4. 组装最终计划（注入 app_id、generated_at）
+    # 3. 组装最终计划（注入 app_id、generated_at）
     plan: dict = {
         "app_id": args.relation_id,
         "app_name": app_structure.get("app_name", ""),
         "generated_at": datetime.now().isoformat(timespec="seconds"),
-        "model": args.model,
-        "worksheets": gemini_result.get("worksheets", []),
+        "model": ai_result.get("model", ""),
+        "worksheets": ai_result.get("worksheets", []),
     }
 
     # 5. 输出

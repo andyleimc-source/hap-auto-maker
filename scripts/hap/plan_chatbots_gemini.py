@@ -14,7 +14,6 @@ from typing import Any, Dict, List
 
 from ai_utils import create_generation_config, get_ai_client, load_ai_config
 from script_locator import resolve_script
-from gemini_utils import load_gemini_config
 
 CURRENT_DIR = Path(__file__).resolve().parent
 if str(CURRENT_DIR) not in sys.path:
@@ -34,14 +33,6 @@ from chatbot_common import (
     write_json_with_latest,
 )
 
-# 加载全局配置
-try:
-    GEN_API_KEY, GEN_MODEL = load_gemini_config()
-except Exception:
-    GEN_API_KEY = ""
-    GEN_MODEL = "gemini-2.5-flash"
-
-DEFAULT_MODEL = GEN_MODEL
 DEFAULT_CHATBOT_COUNT = 2
 
 
@@ -175,12 +166,15 @@ def save_round_snapshot(app_id: str, round_no: int, payload: dict) -> Path:
 def main() -> None:
     parser = argparse.ArgumentParser(description="基于应用结构，用 Gemini 交互式生成对话机器人方案")
     parser.add_argument("--schema-json", default="", help="应用结构 JSON 路径（默认使用 latest）")
-    parser.add_argument("--model", default=DEFAULT_MODEL, help="Gemini 模型名")
-    parser.add_argument("--config", default="", help="Gemini 配置 JSON 路径")
     parser.add_argument("--output", default="", help="最终输出 JSON 文件路径")
     parser.add_argument("--max-retries", type=int, default=3, help="单轮 Gemini 最大重试次数")
     parser.add_argument("--auto", action="store_true", help="自动确认第一次生成的方案，跳过人工审核（用于自动化流水线）")
     args = parser.parse_args()
+
+    # 加载 AI 配置 (推理档)
+    ai_config = load_ai_config(tier="reasoning")
+    client = get_ai_client(ai_config)
+    model_name = ai_config["model"]
 
     ensure_chatbot_dirs()
     schema_path = Path(args.schema_json).expanduser().resolve() if args.schema_json else (CHATBOT_SCHEMA_DIR / "chatbot_app_schema_latest.json").resolve()
@@ -192,15 +186,7 @@ def main() -> None:
     app_name = str(schema.get("appName", "")).strip() or str(runtime_app.get("appName", "")).strip()
 
     log_path = make_chatbot_log_path("chatbot_plan", app_id)
-    append_log(log_path, "start", schemaJson=str(schema_path), appId=app_id, appName=app_name, model=args.model)
-
-    config_path = Path(args.config).expanduser().resolve() if args.config else None
-    if GEN_API_KEY:
-        ai_config = load_ai_config()
-    else:
-        load_gemini_api_key(config_path) if config_path else load_gemini_api_key()
-        ai_config = load_ai_config(config_path) if config_path else load_ai_config()
-    client = get_ai_client(ai_config)
+    append_log(log_path, "start", schemaJson=str(schema_path), appId=app_id, appName=app_name, model=model_name)
 
     feedback_history: List[dict] = []
     current_proposals: List[dict] = []
@@ -215,7 +201,7 @@ def main() -> None:
         for attempt in range(1, max(1, args.max_retries) + 1):
             try:
                 resp = client.models.generate_content(
-                    model=args.model,
+                    model=model_name,
                     contents=prompt,
                     config=create_generation_config(
                         ai_config,
@@ -237,7 +223,7 @@ def main() -> None:
             "schemaVersion": "chatbot_plan_draft_v1",
             "generatedAt": now_iso(),
             "round": round_no,
-            "model": args.model,
+            "model": model_name,
             "sourceSchemaJson": str(schema_path),
             "appName": app_name,
             "summary": str(raw.get("summary", "")).strip(),
@@ -263,7 +249,7 @@ def main() -> None:
             final_payload = {
                 "schemaVersion": "chatbot_plan_v1",
                 "approvedAt": now_iso(),
-                "model": args.model,
+                "model": model_name,
                 "sourceSchemaJson": str(schema_path),
                 "appName": app_name,
                 "summary": round_payload["summary"],

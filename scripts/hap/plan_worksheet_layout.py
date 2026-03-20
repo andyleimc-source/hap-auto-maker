@@ -34,16 +34,8 @@ LAYOUT_PLAN_DIR = OUTPUT_ROOT / "worksheet_layout_plans"
 GEMINI_CONFIG_PATH = AI_CONFIG_PATH
 AUTH_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "auth_config.py"
 
-# 加载全局配置
-try:
-    GEN_API_KEY, GEN_MODEL = load_gemini_config()
-except Exception:
-    GEN_API_KEY = ""
-    GEN_MODEL = "gemini-2.5-flash"
-
 APP_INFO_URL = "https://api.mingdao.com/v3/app"
 GET_CONTROLS_URL = "https://www.mingdao.com/api/Worksheet/GetWorksheetControls"
-DEFAULT_MODEL = GEN_MODEL
 VALID_SIZES = (12, 6, 4, 3)
 
 
@@ -56,16 +48,6 @@ def load_json(path: Path) -> dict:
     if not path.exists():
         raise FileNotFoundError(f"文件不存在: {path}")
     return json.loads(path.read_text(encoding="utf-8"))
-
-
-def load_api_key() -> str:
-    if GEN_API_KEY:
-        return GEN_API_KEY
-    data = load_ai_config(GEMINI_CONFIG_PATH)
-    api_key = str(data.get("api_key", "")).strip()
-    if not api_key:
-        raise ValueError(f"AI 配置缺少 api_key: {GEMINI_CONFIG_PATH}")
-    return api_key
 
 
 def extract_json(text: str) -> dict:
@@ -386,9 +368,13 @@ def main() -> None:
     parser.add_argument("--app-index", type=int, default=0, help="可选，应用序号（免交互）")
     parser.add_argument("--app-id", default="", help="可选，应用 ID（传入后跳过应用选择交互）")
     parser.add_argument("--requirements", default="", help="额外布局要求")
-    parser.add_argument("--model", default=DEFAULT_MODEL, help="Gemini 模型名")
     parser.add_argument("--output", default="", help="输出 JSON 文件路径")
     args = parser.parse_args()
+
+    # 显式使用 reasoning 档位
+    ai_config = load_ai_config(GEMINI_CONFIG_PATH, tier="reasoning")
+    client = get_ai_client(ai_config)
+    model_name = ai_config["model"]
 
     apps = discover_apps()
     picked = pick_app_interactive(apps, app_index=args.app_index, app_id=args.app_id)
@@ -440,13 +426,11 @@ def main() -> None:
         )
 
     prompt = build_prompt(app_name=app_name, worksheet_brief=worksheet_brief, requirements=args.requirements.strip())
-    ai_config = load_ai_config(GEMINI_CONFIG_PATH)
-    client = get_ai_client(ai_config)
     response = None
     for net_try in range(1, NETWORK_MAX_RETRIES + 1):
         try:
             response = client.models.generate_content(
-                model=args.model,
+                model=model_name,
                 contents=prompt,
                 config=create_generation_config(
                     ai_config,

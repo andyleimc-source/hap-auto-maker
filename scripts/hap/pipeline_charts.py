@@ -19,8 +19,6 @@ OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 CHART_PLAN_DIR = OUTPUT_ROOT / "chart_plans"
 CHART_CREATE_DIR = OUTPUT_ROOT / "chart_create_results"
 
-DEFAULT_MODEL = "gemini-2.5-flash"
-DEFAULT_GEMINI_CONFIG = BASE_DIR / "config" / "credentials" / "gemini_auth.json"
 DEFAULT_AUTH_CONFIG = BASE_DIR / "config" / "credentials" / "auth_config.py"
 
 
@@ -37,8 +35,6 @@ def run_cmd(cmd: list[str], title: str) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="一键执行：规划图表 -> 创建图表")
     parser.add_argument("--app-id", required=True, help="应用 ID")
-    parser.add_argument("--model", default=DEFAULT_MODEL, help="Gemini 模型名")
-    parser.add_argument("--config", default=str(DEFAULT_GEMINI_CONFIG), help="Gemini 配置 JSON 路径")
     parser.add_argument("--auth-config", default=str(DEFAULT_AUTH_CONFIG), help="auth_config.py 路径")
     parser.add_argument("--worksheet-ids", default="", help="工作表 ID 列表，逗号分隔（从应用 URL 获取）")
     parser.add_argument("--app-name", default="", help="应用名称（可选）")
@@ -59,22 +55,18 @@ def main() -> None:
         create_output = str((CHART_CREATE_DIR / f"chart_create_{args.app_id}_pipeline.json").resolve())
 
     auth_config = str(Path(args.auth_config).expanduser().resolve())
-    gemini_config = str(Path(args.config).expanduser().resolve())
 
     plan_script = CURRENT_DIR / "plan_charts_gemini.py"
     create_script = CURRENT_DIR / "create_charts_from_plan.py"
 
     print(f"统计图流水线启动")
     print(f"  应用 ID  : {args.app_id}")
-    print(f"  Gemini   : {args.model}")
     print(f"  dry-run  : {args.dry_run}")
 
     if not args.skip_plan:
         cmd_plan = [
             sys.executable, str(plan_script),
             "--app-id", args.app_id,
-            "--model", args.model,
-            "--config", gemini_config,
             "--auth-config", auth_config,
             "--output", plan_output,
         ]

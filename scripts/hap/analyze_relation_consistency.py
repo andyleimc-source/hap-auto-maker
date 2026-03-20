@@ -15,7 +15,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from ai_utils import create_generation_config, get_ai_client, load_ai_config, parse_ai_json
 from script_locator import resolve_script
-from gemini_utils import load_gemini_config
 
 CURRENT_DIR = Path(__file__).resolve().parent
 if str(CURRENT_DIR) not in sys.path:
@@ -23,15 +22,12 @@ if str(CURRENT_DIR) not in sys.path:
 
 from mock_data_common import (
     DEFAULT_BASE_URL,
-    DEFAULT_GEMINI_MODEL,
-    GEMINI_CONFIG_PATH,
     MOCK_RELATION_REPAIR_PLAN_DIR,
     MOCK_SCHEMA_DIR,
     MOCK_WRITE_RESULT_DIR,
     append_log,
     choose_app,
     discover_authorized_apps,
-    load_gemini_api_key,
     load_json,
     make_log_path,
     make_output_path,
@@ -39,13 +35,6 @@ from mock_data_common import (
     resolve_json_input,
     write_json_with_latest,
 )
-
-# 加载全局配置
-try:
-    GEN_API_KEY, GEN_MODEL = load_gemini_config()
-except Exception:
-    GEN_API_KEY = ""
-    GEN_MODEL = "gemini-2.5-flash"
 
 
 def generate_with_retry(client, model: str, prompt: str, retries: int, ai_config: dict) -> Any:
@@ -535,11 +524,14 @@ def main() -> None:
     parser.add_argument("--app-id", default="", help="可选，指定 appId")
     parser.add_argument("--app-index", type=int, default=0, help="可选，指定应用序号")
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="API 基础地址")
-    parser.add_argument("--model", default=GEN_MODEL if GEN_MODEL else DEFAULT_GEMINI_MODEL, help="Gemini 模型名")
-    parser.add_argument("--config", default=str(GEMINI_CONFIG_PATH), help="Gemini 配置 JSON 路径")
     parser.add_argument("--gemini-retries", type=int, default=4, help="Gemini 调用失败时的最大重试次数")
     parser.add_argument("--output", default="", help="修复计划输出路径")
     args = parser.parse_args()
+
+    # 加载 AI 配置 (推理档)
+    ai_config = load_ai_config(tier="reasoning")
+    client = get_ai_client(ai_config)
+    model_name = ai_config["model"]
 
     schema_path = resolve_json_input(str(args.schema_json), [MOCK_SCHEMA_DIR])
     write_result_path = resolve_json_input(str(args.write_result_json), [MOCK_WRITE_RESULT_DIR])
@@ -556,7 +548,7 @@ def main() -> None:
         writeResultJson=str(write_result_path),
         appId=app["appId"],
         appName=app["appName"],
-        model=args.model,
+        model=model_name,
     )
 
     states = collect_consistency_state(snapshot, write_result, args.base_url, app["appKey"], app["sign"], log_path)
@@ -578,6 +570,7 @@ def main() -> None:
             "logFile": str(log_path),
             "app": snapshot.get("app", {}),
             "notes": ["未发现待修复的单选关联字段。"],
+            "model": model_name,
             "worksheets": [
                 {
                     "worksheetId": item["worksheetId"],
@@ -605,12 +598,6 @@ def main() -> None:
             },
         }
     else:
-        if GEN_API_KEY:
-            ai_config = load_ai_config()
-        else:
-            load_gemini_api_key(Path(args.config).expanduser().resolve())
-            ai_config = load_ai_config(Path(args.config).expanduser().resolve())
-        client = get_ai_client(ai_config)
         provider = ai_config.get("provider", "gemini")
         
         # 策略：如果 provider 是 deepseek 或待处理项较多，开启分片生成模式（逐个工作表处理）
@@ -626,7 +613,7 @@ def main() -> None:
                 print(f"  正在分析 [{state['worksheetName']}] 的关联一致性 (pending={len(state['pendingItems'])})...", end="", flush=True)
                 chunk_prompt = build_prompt([state], write_result)
                 append_log(log_path, "shard_prompt_ready", worksheetId=state["worksheetId"], promptLength=len(chunk_prompt))
-                resp = generate_with_retry(client, args.model, chunk_prompt, args.gemini_retries, ai_config)
+                resp = generate_with_retry(client, model_name, chunk_prompt, args.gemini_retries, ai_config)
                 print("完成")
                 append_log(log_path, "shard_response_received", worksheetId=state["worksheetId"], responseLength=len(resp.text or ""))
                 chunk_raw = parse_ai_json(resp.text or "")
@@ -660,7 +647,7 @@ def main() -> None:
         else:
             prompt = build_prompt(states, write_result)
             append_log(log_path, "prompt_ready", promptLength=len(prompt), pendingCount=pending_count)
-            response = generate_with_retry(client, args.model, prompt, args.gemini_retries, ai_config)
+            response = generate_with_retry(client, model_name, prompt, args.gemini_retries, ai_config)
             append_log(log_path, "gemini_response_received", responseLength=len(response.text or ""))
             raw = parse_ai_json(response.text or "")
 
@@ -673,6 +660,7 @@ def main() -> None:
         result["sourceSchema"] = str(schema_path)
         result["sourceWriteResult"] = str(write_result_path)
         result["logFile"] = str(log_path)
+        result["model"] = model_name
 
     output_path = (
         Path(args.output).expanduser().resolve()
