@@ -209,7 +209,7 @@ def get_status_group():
 # --- 步骤执行 ---
 
 def step_ai(force=True):
-    from ai_utils import AI_CONFIG_PATH, DEFAULT_DEEPSEEK_BASE_URL, load_ai_config
+    from ai_utils import AI_CONFIG_PATH, DEFAULT_DEEPSEEK_BASE_URL, load_ai_config, TIER_MODELS
     existing = {}
     try: existing = load_ai_config()
     except: pass
@@ -218,16 +218,25 @@ def step_ai(force=True):
     p_choice = ask("AI 平台 (1=Gemini, 2=DeepSeek)", default="1" if old_p=="gemini" else "2", required=True, hint="Gemini" if old_p=="gemini" else "DeepSeek", choices=["1", "2"])
     provider = "deepseek" if p_choice == "2" else "gemini"
     key = ask(f"{provider.title()} API Key", default=existing.get("api_key", ""), required=True)
-    opts = {"gemini": {"1": ("gemini-2.0-flash", "响应极快"), "2": ("gemini-2.0-pro-exp-02-05", "逻辑顶尖")},
-            "deepseek": {"1": ("deepseek-chat", "通用对话"), "2": ("deepseek-reasoner", "深度推理")}}[provider]
-    print("\n   可用模型清单:")
-    for k, v in opts.items(): print(f"      {k}. {ljust_cjk(v[0], 25)} -> {v[1]}")
-    m_choice = ask("请选择模型序号", default="1", required=True, hint=existing.get("model", "") if provider==old_p else "", choices=list(opts.keys()))
-    model = opts.get(m_choice, opts["1"])[0]
-    data = {"provider": provider, "api_key": key, "model": model, "base_url": DEFAULT_DEEPSEEK_BASE_URL if provider=="deepseek" else ""}
+    
+    # 根据新架构，不再让用户手动选择模型，而是展示档位映射
+    print("\n   已启用模型档位自动适配 (Tier Mapping):")
+    tiers = TIER_MODELS.get(provider, {})
+    print(f"      - 🚀 FAST (极速档):      {ljust_cjk(tiers.get('fast', 'N/A'), 20)}")
+    print(f"      - 🧠 REASONING (推理档): {ljust_cjk(tiers.get('reasoning', 'N/A'), 20)}")
+    
+    data = {
+        "provider": provider, 
+        "api_key": key, 
+        "base_url": DEFAULT_DEEPSEEK_BASE_URL if provider=="deepseek" else ""
+    }
+    # 保持兼容性，默认写入 fast 档位模型作为备选
+    data["model"] = tiers.get("fast", "")
+    
     AI_CONFIG_PATH.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-    if provider == "gemini": (CRED_DIR / "gemini_auth.json").write_text(json.dumps({"api_key": key, "model": model}, indent=2), encoding="utf-8")
-    print("\n   ✔ AI 平台配置已保存。")
+    if provider == "gemini": 
+        (CRED_DIR / "gemini_auth.json").write_text(json.dumps({"api_key": key, "model": data["model"]}, indent=2), encoding="utf-8")
+    print("\n   ✔ AI 平台配置已完成 (已根据厂商自动适配模型档位)。")
 
 def step_org_auth(force=True):
     dst = CRED_DIR / "organization_auth.json"
