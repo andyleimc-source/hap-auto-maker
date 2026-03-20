@@ -130,7 +130,12 @@ class GeminiCompatibilityClient:
 
         from openai import OpenAI
 
-        self._openai_client = OpenAI(api_key=self.api_key, base_url=self.base_url)
+        # 增加 300s 超时设置，防止推理模型思考时间过长导致连接断开
+        self._openai_client = OpenAI(
+            api_key=self.api_key, 
+            base_url=self.base_url,
+            timeout=300.0 
+        )
 
     @property
     def models(self):
@@ -144,6 +149,9 @@ class GeminiCompatibilityClient:
         return FakeChat(self._openai_client, model or self.model, config)
 
     def generate_content(self, model: str, contents: str, config: Any = None) -> Any:
+        import time
+        import openai
+        
         temperature = 0.2
         response_format = None
 
@@ -166,18 +174,34 @@ class GeminiCompatibilityClient:
 
         messages = [{"role": "user", "content": contents}]
 
-        response = self._openai_client.chat.completions.create(
-            model=model or self.model,
-            messages=messages,
-            temperature=temperature,
-            response_format=response_format,
-        )
+        # 增加重试逻辑，应对推理模型长时间思考导致的连接中断
+        max_retries = 3
+        last_exception = None
+        
+        for attempt in range(max_retries):
+            try:
+                response = self._openai_client.chat.completions.create(
+                    model=model or self.model,
+                    messages=messages,
+                    temperature=temperature,
+                    response_format=response_format,
+                )
 
-        class FakeResponse:
-            def __init__(self, text):
-                self.text = text
+                class FakeResponse:
+                    def __init__(self, text):
+                        self.text = text
 
-        return FakeResponse(response.choices[0].message.content or "")
+                return FakeResponse(response.choices[0].message.content or "")
+            except (openai.APIConnectionError, openai.APITimeoutError) as e:
+                last_exception = e
+                wait_time = (attempt + 1) * 5
+                print(f"\n      ⚠️  AI 连接异常 ({type(e).__name__})，正在进行第 {attempt+1}/{max_retries} 次重试，等待 {wait_time}s...")
+                time.sleep(wait_time)
+            except Exception as e:
+                # 其他异常直接抛出
+                raise e
+        
+        raise last_exception or RuntimeError("AI 请求多次重试后依然失败")
 
 
 class FakeChat:
