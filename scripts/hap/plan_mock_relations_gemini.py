@@ -204,7 +204,8 @@ def validate_relation_plan(raw: dict, snapshot: dict, write_result: dict) -> dic
         worksheet_id = str(raw_item.get("worksheetId", "")).strip()
         candidate = candidate_by_ws.get(worksheet_id)
         if not candidate:
-            raise ValueError(f"关联规划返回未知 worksheetId: {worksheet_id}")
+            print(f"[警告] 关联规划返回未知 worksheetId: {worksheet_id}，已跳过")
+            continue
         valid_source_records = {
             (record["rowId"], record["mockRecordKey"]): record
             for record in records_by_ws.get(worksheet_id, [])
@@ -229,12 +230,15 @@ def validate_relation_plan(raw: dict, snapshot: dict, write_result: dict) -> dic
             relation_field_id = str(update.get("relationFieldId", "")).strip()
             target_row_id = str(update.get("targetRowId", "")).strip()
             if (row_id, mock_record_key) not in valid_source_records:
-                raise ValueError(f"更新项引用了未知源记录: worksheetId={worksheet_id}, update={update}")
+                print(f"[警告] 更新项引用了未知源记录，已跳过: worksheetId={worksheet_id}, update={update}")
+                continue
             if relation_field_id not in field_targets:
-                raise ValueError(f"更新项引用了未知 relationFieldId: worksheetId={worksheet_id}, fieldId={relation_field_id}")
+                print(f"[警告] 更新项引用了未知 relationFieldId，已跳过: worksheetId={worksheet_id}, fieldId={relation_field_id}")
+                continue
             target_meta = field_targets[relation_field_id]
             if target_row_id not in target_meta["targetRowIds"]:
-                raise ValueError(f"更新项引用了未知 targetRowId: worksheetId={worksheet_id}, update={update}")
+                print(f"[警告] 更新项引用了未知 targetRowId，已跳过: worksheetId={worksheet_id}, update={update}")
+                continue
             updates.append(
                 {
                     "worksheetId": worksheet_id,

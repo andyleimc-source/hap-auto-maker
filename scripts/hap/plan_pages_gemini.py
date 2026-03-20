@@ -331,7 +331,8 @@ def validate_page_plan(raw: dict, valid_ws_ids: set) -> List[dict]:
         # 过滤掉不存在的工作表 ID
         valid_ids = [wid for wid in ws_ids if str(wid).strip() in valid_ws_ids]
         if not valid_ids:
-            raise ValueError(f"Page {i+1} 的 worksheetIds 均不在应用工作表中: {ws_ids}")
+            print(f"[警告] Page {i+1} 的 worksheetIds 均不在应用工作表中，已跳过: {ws_ids}")
+            continue
         page["worksheetIds"] = valid_ids
         page["icon"] = "dashboard"   # 只用已验证的图标
         page["iconColor"] = str(page.get("iconColor", "#2196F3")).strip() or "#2196F3"

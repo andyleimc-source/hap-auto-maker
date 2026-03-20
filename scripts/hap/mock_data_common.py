@@ -911,7 +911,8 @@ def build_v3_fields(record: dict, field_meta_map: Dict[str, dict]) -> List[dict]
         if not field_id:
             continue
         if field_id not in field_meta_map:
-            raise ValueError(f"字段元数据缺失: fieldId={field_id}")
+            print(f"[警告] 字段元数据缺失，已跳过该字段: fieldId={field_id}")
+            continue
         value = to_v3_field_value(field_meta_map[field_id], raw_value)
         if value is None:
             continue

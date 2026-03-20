@@ -121,16 +121,12 @@ def main() -> None:
                         continue
                     target_records = created_records_by_ws.get(target_ws_id, [])
                     if not target_records:
-                        raise RuntimeError(
-                            f"必填关联字段缺少可用目标记录: worksheet={worksheet['worksheetName']}, "
-                            f"field={rel.get('fieldName', field_id)}, targetWorksheetId={target_ws_id}"
-                        )
+                        print(f"[警告] 必填关联字段缺少可用目标记录，已跳过该字段: worksheet={worksheet['worksheetName']}, field={rel.get('fieldName', field_id)}, targetWorksheetId={target_ws_id}")
+                        continue
                     target_row_id = str(target_records[index % len(target_records)].get("rowId", "")).strip()
                     if not target_row_id:
-                        raise RuntimeError(
-                            f"必填关联字段目标记录缺少 rowId: worksheet={worksheet['worksheetName']}, "
-                            f"field={rel.get('fieldName', field_id)}, targetWorksheetId={target_ws_id}"
-                        )
+                        print(f"[警告] 必填关联字段目标记录缺少 rowId，已跳过该字段: worksheet={worksheet['worksheetName']}, field={rel.get('fieldName', field_id)}, targetWorksheetId={target_ws_id}")
+                        continue
                     final_values[field_id] = [target_row_id]
                 enriched_record = dict(record)
                 enriched_record["valuesByFieldId"] = final_values
@@ -148,8 +144,10 @@ def main() -> None:
                 lastMockRecordKey=enriched_records[-1]["mockRecordKey"] if enriched_records else "",
             )
             row_ids: List[str] = []
+            written_enriched_records: List[dict] = []
             if args.dry_run:
                 row_ids = [f"dryrun-{item['mockRecordKey']}" for item in enriched_records]
+                written_enriched_records = list(enriched_records)
             else:
                 account_id, authorization, cookie = web_auth
                 row_responses = []
@@ -172,8 +170,10 @@ def main() -> None:
                     row_responses.append(api_resp)
                     row_id = str(api_resp.get("rowId", "")).strip()
                     if not row_id:
-                        raise RuntimeError(f"新增返回缺少 rowid: worksheetId={worksheet['worksheetId']}, record={record['mockRecordKey']}")
+                        print(f"[警告] 新增返回缺少 rowId，已跳过该记录: worksheetId={worksheet['worksheetId']}, record={record['mockRecordKey']}")
+                        continue
                     row_ids.append(row_id)
+                    written_enriched_records.append(record)
                     if (i + 1) % 5 == 0:
                         print(f"{i+1}..", end="", flush=True)
                 print("完成")
@@ -184,7 +184,7 @@ def main() -> None:
                 worksheetId=worksheet["worksheetId"],
                 returnedRowIdCount=len(row_ids),
             )
-            for record, row_id in zip(enriched_records, row_ids):
+            for record, row_id in zip(written_enriched_records, row_ids):
                 created_records.append(
                     {
                         "mockRecordKey": record["mockRecordKey"],

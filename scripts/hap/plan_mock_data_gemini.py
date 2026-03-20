@@ -208,14 +208,19 @@ def validate_plan(raw: dict, snapshot: dict) -> Dict[str, Any]:
     tier_by_id = {item["worksheetId"]: item for item in snapshot.get("worksheetTiers", [])}
     raw_worksheets = raw.get("worksheets", [])
     if not isinstance(raw_worksheets, list):
-        raise ValueError("AI 返回的 worksheets 不是数组")
+        if isinstance(raw_worksheets, dict):
+            raw_worksheets = [raw_worksheets]
+        else:
+            print(f"[警告] AI 返回的 worksheets 不是数组，已跳过")
+            raw_worksheets = []
 
     normalized_plan_items: List[dict] = []
     bundle_items: List[dict] = []
     diagnostics: List[dict] = []
     for raw_item in raw_worksheets:
         if not isinstance(raw_item, dict):
-            raise ValueError(f"工作表项格式错误: {raw_item}")
+            print(f"[警告] 工作表项格式错误，已跳过: {raw_item}")
+            continue
         worksheet_id = str(raw_item.get("worksheetId", "")).strip()
         schema_ws = worksheets_by_id.get(worksheet_id)
         tier_info = tier_by_id.get(worksheet_id)

@@ -72,7 +72,7 @@ def generate_with_retry(client, model: str, prompt: str, retries: int, ai_config
             if attempt >= max(1, retries):
                 break
             wait_seconds = min(16, 2 ** (attempt - 1))
-            print(f"\nGemini 调用失败，第 {attempt} 次重试前等待 {wait_seconds}s：{exc}")
+            print(f"\nAI 调用失败（{model}），第 {attempt} 次重试前等待 {wait_seconds}s：{exc}")
             time.sleep(wait_seconds)
     assert last_exc is not None
     raise last_exc
@@ -374,7 +374,7 @@ def validate_repair_plan(raw: dict, states: List[dict], write_result: dict) -> d
     state_by_ws = {item["worksheetId"]: item for item in states}
     raw_items = raw.get("worksheets", [])
     if not isinstance(raw_items, list):
-        raise ValueError("Gemini 返回的 worksheets 不是数组")
+        raise ValueError("AI 返回的 worksheets 不是数组")
 
     raw_by_ws = {}
     for item in raw_items:
@@ -382,7 +382,8 @@ def validate_repair_plan(raw: dict, states: List[dict], write_result: dict) -> d
             raise ValueError(f"工作表项格式错误: {item}")
         worksheet_id = str(item.get("worksheetId", "")).strip()
         if worksheet_id not in state_by_ws:
-            raise ValueError(f"Gemini 返回未知 worksheetId: {worksheet_id}")
+            print(f"[警告] AI 返回未知 worksheetId: {worksheet_id}，已跳过")
+            continue
         raw_by_ws[worksheet_id] = item
 
     result_items = []
@@ -409,12 +410,31 @@ def validate_repair_plan(raw: dict, states: List[dict], write_result: dict) -> d
             key = (row_id, relation_field_id)
             pending_item = pending_map.get(key)
             if not pending_item:
-                raise ValueError(f"更新项引用未知待修复关系: worksheetId={worksheet_id}, update={update}")
+                print(f"[警告] 更新项引用未知待修复关系，已跳过: worksheetId={worksheet_id}, update={update}")
+                continue
             target_row_id = str(update.get("targetRowId", "")).strip()
             if target_row_id not in target_row_ids_by_field.get(relation_field_id, set()):
-                raise ValueError(f"更新项目标记录非法: worksheetId={worksheet_id}, update={update}")
+                # AI 返回了非法 targetRowId（如截断的 UUID），降级为 unresolved
+                print(f"[警告] 更新项 targetRowId 非法（{target_row_id!r}），转为 unresolved: worksheetId={worksheet_id}, rowId={row_id}")
+                seen.add(key)
+                unresolved.append(
+                    {
+                        "rowId": row_id,
+                        "mockRecordKey": pending_item["mockRecordKey"],
+                        "relationFieldId": relation_field_id,
+                        "relationFieldName": pending_item["relationFieldName"],
+                        "targetWorksheetId": pending_item["targetWorksheetId"],
+                        "targetWorksheetName": pending_item["targetWorksheetName"],
+                        "pairType": pending_item["pairType"],
+                        "handlingMode": pending_item["handlingMode"],
+                        "required": pending_item["required"],
+                        "reason": f"AI 返回的 targetRowId 不合法（{target_row_id!r}），已跳过",
+                    }
+                )
+                continue
             if key in seen:
-                raise ValueError(f"同一待修复关系重复出现: worksheetId={worksheet_id}, key={key}")
+                print(f"[警告] 同一待修复关系重复出现，已忽略: worksheetId={worksheet_id}, key={key}")
+                continue
             seen.add(key)
             updates.append(
                 {
@@ -443,7 +463,8 @@ def validate_repair_plan(raw: dict, states: List[dict], write_result: dict) -> d
             if not pending_item:
                 raise ValueError(f"未解决项引用未知待修复关系: worksheetId={worksheet_id}, item={item}")
             if key in seen:
-                raise ValueError(f"同一待修复关系重复出现: worksheetId={worksheet_id}, key={key}")
+                print(f"[警告] 同一待修复关系重复出现，已忽略: worksheetId={worksheet_id}, key={key}")
+                continue
             seen.add(key)
             unresolved.append(
                 {
@@ -524,7 +545,7 @@ def main() -> None:
     parser.add_argument("--app-id", default="", help="可选，指定 appId")
     parser.add_argument("--app-index", type=int, default=0, help="可选，指定应用序号")
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="API 基础地址")
-    parser.add_argument("--gemini-retries", type=int, default=4, help="Gemini 调用失败时的最大重试次数")
+    parser.add_argument("--gemini-retries", type=int, default=4, help="AI 调用失败时的最大重试次数")
     parser.add_argument("--output", default="", help="修复计划输出路径")
     args = parser.parse_args()
 

@@ -39,12 +39,17 @@ data/logs/
 data/outputs/
 data/temp/
 
-# PRD (如果不想同步到 Git)
+# PRD & 本地开发文档 (不同步到 Git)
 PRD.md
 plan.md
 progress.md
 rules.md
 achieve/
+# vibi 标准开发文档
+PLAN.md
+RULES.md
+DEBUG.md
+TEST_CASES.md
 
 # 系统文件
 .DS_Store

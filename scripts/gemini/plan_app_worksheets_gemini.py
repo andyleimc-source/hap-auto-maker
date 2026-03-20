@@ -68,12 +68,12 @@ def build_prompt(app_name: str, business_context: str, extra_requirements: str) 
   "relationships": [
     {{"from": "工作表A", "field": "关联字段名", "to": "工作表B", "cardinality": "1-1|1-N", "description": "关系说明"}}
   ],
-  "creation_order": ["按创建顺序排列的工作表名"],
+  "creation_order": ["按创建顺序排列的【所有】工作表名，必须包含 worksheets 中每一个 name，一个不漏"],
   "notes": ["实施建议1", "实施建议2"]
 }}
 
 约束：
-1) creation_order 必须满足 depends_on 的依赖拓扑顺序。
+1) creation_order 必须包含 worksheets 中的每一个工作表名（一个不漏），同时满足 depends_on 的依赖拓扑顺序。
 2) worksheets 中涉及 Relation 的 relation_target 必须在 worksheets 中存在。
 3) 字段类型仅允许上述枚举。
 4) 当字段 type=SingleSelect 或 MultipleSelect 时，必须填写 option_values，长度 3-8，且每个值是可直接展示的“最终文案”。
@@ -85,6 +85,20 @@ def build_prompt(app_name: str, business_context: str, extra_requirements: str) 
 10) 当字段 type=Collaborator 时，required 必须为 false。
 11) 输出为合法 JSON。
 """.strip()
+
+
+def repair_plan(plan: dict) -> None:
+    """自动补全 creation_order：把 worksheets 中遗漏的工作表名追加到末尾。"""
+    worksheets = plan.get("worksheets", [])
+    if not isinstance(worksheets, list):
+        return
+    names = [str(w.get("name", "")).strip() for w in worksheets if isinstance(w, dict)]
+    order = plan.get("creation_order", [])
+    if not isinstance(order, list):
+        order = []
+    missing = [n for n in names if n not in order]
+    if missing:
+        plan["creation_order"] = order + missing
 
 
 def validate_plan(plan: dict) -> list[str]:
@@ -160,6 +174,7 @@ def main() -> None:
                 else:
                     raise
         plan = extract_json(response.text or "")
+        repair_plan(plan)
         validation_errors = validate_plan(plan)
         if not validation_errors:
             break

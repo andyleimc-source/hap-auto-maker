@@ -470,8 +470,10 @@ def plan_views_batch(
         parsed = extract_json(resp.text or "")
         try:
             ws_list = parsed.get("worksheets", [])
-            if not isinstance(ws_list, list) or len(ws_list) == 0:
-                raise ValueError(f"返回的 worksheets 不是有效数组（得到 {type(ws_list).__name__}）")
+            if not isinstance(ws_list, list):
+                raise ValueError(f"返回的 worksheets 类型错误（得到 {type(ws_list).__name__}，期望 list）")
+            if len(ws_list) == 0:
+                raise ValueError("返回的 worksheets 数组为空，AI 未生成任何工作表视图规划")
             ws_views_map = {}
             for ws_item in ws_list:
                 if not isinstance(ws_item, dict):
@@ -625,14 +627,34 @@ def main() -> None:
             return ws, [simplify_field(f) for f in schema.get("fields", []) if isinstance(f, dict)]
         with ThreadPoolExecutor(max_workers=min(8, len(worksheets))) as ex:
             ws_with_fields = list(ex.map(_fetch_ws, worksheets))
-        # 一次 Gemini 批量调用
+        # 一次 Gemini 批量调用；若失败则退化为逐表规划
         print(f"  调用 AI 批量规划 {len(worksheets)} 个工作表视图...")
-        planned_list = plan_views_batch(client, model_name, app["appName"], ws_with_fields)
+        used_fallback = False
+        try:
+            planned_list = plan_views_batch(client, model_name, app["appName"], ws_with_fields)
+        except Exception as batch_err:
+            print(f"  ⚠ 批量视图规划失败（{batch_err}），退化为逐表规划...")
+            used_fallback = True
+            planned_list = []
+            for ws, fields in ws_with_fields:
+                try:
+                    planned = plan_views_for_worksheet(client, model_name, app["appName"], ws, fields)
+                    planned_list.append(planned)
+                    print(f"    - {ws['workSheetName']}：规划 {len(planned.get('views', []))} 个视图")
+                except Exception as ws_err:
+                    print(f"    ✗ {ws['workSheetName']} 视图规划失败：{ws_err}")
+                    planned_list.append({
+                        "worksheetId": ws["workSheetId"],
+                        "worksheetName": ws["workSheetName"],
+                        "fields": fields,
+                        "views": [],
+                    })
         for planned in planned_list:
             app_out["worksheets"].append(planned)
             total_worksheets += 1
             total_views += len(planned.get("views", []))
-            print(f"  - {planned['worksheetName']}：规划 {len(planned.get('views', []))} 个视图")
+            if not used_fallback:
+                print(f"  - {planned['worksheetName']}：规划 {len(planned.get('views', []))} 个视图")
         result_apps.append(app_out)
 
     payload = {

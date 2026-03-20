@@ -348,7 +348,8 @@ def validate_plan(raw: dict, worksheets_by_id: Dict[str, dict]) -> List[dict]:
             raise ValueError(f"图表 {i+1} reportType 非法: {report_type}")
         worksheet_id = str(chart.get("worksheetId", "")).strip()
         if worksheet_id not in worksheets_by_id:
-            raise ValueError(f"图表 {i+1} worksheetId 不存在: {worksheet_id}")
+            print(f"[警告] 图表 {i+1} worksheetId 不存在，已跳过: {worksheet_id}")
+            continue
         xaxes = chart.get("xaxes", {})
         if not isinstance(xaxes, dict) or not str(xaxes.get("controlId", "")).strip():
             raise ValueError(f"图表 {i+1} xaxes 缺少 controlId")
