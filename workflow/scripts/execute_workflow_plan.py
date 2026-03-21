@@ -177,6 +177,38 @@ def _build_fields(raw_fields: list, start_node_id: str) -> list:
     return result
 
 
+def _sanitize_action_fields(raw_fields: list, action_index: int) -> tuple[list[dict], list[str]]:
+    sanitized: list[dict] = []
+    warnings: list[str] = []
+
+    for field_index, field in enumerate(raw_fields or [], 1):
+        if not isinstance(field, dict):
+            warnings.append(f"动作{action_index} 字段{field_index} 不是对象，已跳过")
+            continue
+
+        field_id = str(field.get("fieldId", "")).strip()
+        raw_type = field.get("type")
+        try:
+            field_type = int(raw_type)
+        except (TypeError, ValueError):
+            warnings.append(f"动作{action_index} 字段{field_index} type 非法({raw_type!r})，已跳过")
+            continue
+
+        if not field_id:
+            warnings.append(f"动作{action_index} 字段{field_index} fieldId 为空，已跳过")
+            continue
+
+        sanitized.append(
+            {
+                **field,
+                "fieldId": field_id,
+                "type": field_type,
+            }
+        )
+
+    return sanitized, warnings
+
+
 def _sanitize_action_nodes(action_nodes: list, trigger_worksheet_id: str) -> tuple[list[dict], list[str]]:
     """
     兜底清洗 AI 产出的动作节点，避免明显非法的计划直接打到 HAP：
@@ -208,12 +240,21 @@ def _sanitize_action_nodes(action_nodes: list, trigger_worksheet_id: str) -> tup
             warnings.append(f"动作{index} 未提供字段映射，已跳过")
             continue
 
+        sanitized_fields, field_warnings = _sanitize_action_fields(raw_fields, index)
+        warnings.extend(field_warnings)
+        if not sanitized_fields:
+            warnings.append(f"动作{index} 清洗后无有效字段映射，已跳过")
+            continue
+        if node_type == "add_record" and len(sanitized_fields) < 2:
+            warnings.append(f"动作{index} add_record 字段映射过少({len(sanitized_fields)})，已跳过")
+            continue
+
         sanitized.append(
             {
                 **node,
                 "type": node_type,
                 "target_worksheet_id": target_ws,
-                "fields": raw_fields,
+                "fields": sanitized_fields,
             }
         )
 

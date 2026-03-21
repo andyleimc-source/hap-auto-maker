@@ -39,6 +39,11 @@ PROMPTS: List[str] = [
     "请创建一个企业门店巡检应用，包含门店档案、巡检任务、整改复查三个核心模块，适合连锁门店运营管理。",
     "请创建一个企业项目立项管理应用，包含立项申请、预算评审、里程碑跟踪三个核心模块，适合项目制团队管理。",
     "请创建一个企业客户续费管理应用，包含客户合同、续费提醒、跟进记录三个核心模块，适合销售续费运营管理。",
+    "请创建一个大型集团企业运营管理应用，覆盖人事、行政、采购、资产、合同、培训、费用、车辆、会议、公告、印章、宿舍、访客、档案、值班、证照、供应商、工单、巡检、报表等场景，要求工作表不少于20张，并保持真实企业管理逻辑。",
+    "请创建一个制造企业数字化管理应用，覆盖设备台账、点检计划、保养计划、备件库存、采购申请、供应商管理、来料检验、生产排程、工单、质检、不良处理、出货、仓储、盘点、能耗、安全检查、隐患整改、培训、维修、统计分析等场景，要求工作表不少于20张。",
+    "请创建一个连锁零售企业运营中台应用，覆盖门店档案、商品资料、价格策略、库存调拨、盘点任务、巡店检查、陈列整改、促销活动、会员运营、客诉工单、供应商协同、采购订单、收货验收、报损、值班排班、培训考试、费用报销、合同台账、证照年检、经营报表等场景，要求工作表不少于20张。",
+    "请创建一个项目制企业综合管理应用，覆盖客户档案、商机、合同、项目立项、预算评审、资源分配、任务分解、工时填报、里程碑、风险问题、变更申请、采购需求、付款计划、开票记录、验收、回款、知识库、培训、绩效、复盘等场景，要求工作表不少于20张。",
+    "请创建一个物业园区企业综合运营应用，覆盖楼栋档案、房源档案、租户档案、合同、收费计划、账单、缴费记录、报修工单、巡检任务、保洁排班、安保排班、访客登记、车辆放行、物资采购、仓库库存、固定资产、能耗抄表、活动场地预订、公告通知、满意度回访、统计报表等场景，要求工作表不少于20张。",
 ]
 
 
@@ -53,6 +58,24 @@ def ensure_dir(path: Path) -> None:
 def extract(pattern: str, text: str) -> str:
     match = re.search(pattern, text, re.MULTILINE)
     return match.group(1).strip() if match else ""
+
+
+def extract_min_worksheet_count(prompt: str) -> int:
+    text = str(prompt or "").strip()
+    if not text:
+        return 0
+    patterns = [
+        r"(?:不少于|不低于|至少|最少)\s*(\d+)\s*(?:张工作表|个工作表|张表|个表)",
+        r"工作表\s*(?:不少于|不低于|至少|最少)\s*(\d+)\s*张",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            try:
+                return max(0, int(match.group(1)))
+            except Exception:
+                return 0
+    return 0
 
 
 def parse_summary(output: str) -> Dict[str, Any]:
@@ -117,6 +140,24 @@ def main() -> int:
             "summary": parse_summary(combined_output),
             "stdout_tail": combined_output[-12000:],
         }
+
+        min_worksheet_count = extract_min_worksheet_count(prompt)
+        actual_worksheet_count = 0
+        try:
+            actual_worksheet_count = int(case_result["summary"].get("worksheet_count") or 0)
+        except Exception:
+            actual_worksheet_count = 0
+        if proc.returncode == 0 and min_worksheet_count > 0 and actual_worksheet_count < min_worksheet_count:
+            case_result["returncode"] = 100
+            case_result["validation_error"] = (
+                f"工作表数量不达标: 要求至少 {min_worksheet_count} 张，实际 {actual_worksheet_count} 张"
+            )
+            proc = subprocess.CompletedProcess(
+                args=cmd,
+                returncode=100,
+                stdout=proc.stdout,
+                stderr=proc.stderr,
+            )
         results["cases"].append(case_result)
         write_json(result_path, results)
 

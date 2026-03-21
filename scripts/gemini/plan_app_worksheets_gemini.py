@@ -36,12 +36,141 @@ def sanitize_name(name: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_-]+", "_", name).strip("_") or "app"
 
 
+def extract_min_worksheet_count(extra_requirements: str) -> int:
+    text = str(extra_requirements or "").strip()
+    if not text:
+        return 0
+
+    patterns = [
+        r"(?:不少于|不低于|至少|最少)\s*(\d+)\s*(?:张工作表|个工作表|张表|个表)",
+        r"工作表\s*(?:不少于|不低于|至少|最少)\s*(\d+)\s*张",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            try:
+                return max(0, int(match.group(1)))
+            except Exception:
+                return 0
+    return 0
+
+
+def extract_scene_candidates(business_context: str, extra_requirements: str) -> list[str]:
+    text = "\n".join(
+        part.strip() for part in (business_context, extra_requirements) if str(part or "").strip()
+    )
+    if not text:
+        return []
+
+    text = (
+        text.replace("，", ",")
+        .replace("、", ",")
+        .replace("；", ",")
+        .replace("。", ",")
+        .replace("：", ",")
+        .replace("覆盖", ",")
+        .replace("包含", ",")
+        .replace("涵盖", ",")
+    )
+    raw_parts = [part.strip() for part in text.split(",") if part.strip()]
+    candidates: list[str] = []
+    seen: set[str] = set()
+    for part in raw_parts:
+        cleaned = re.sub(
+            r"(要求.*|适合.*|并保持.*|真实企业管理逻辑.*|工作表.*|场景.*|模块.*|应用.*)$",
+            "",
+            part,
+        ).strip()
+        cleaned = re.sub(r"^(请创建一个|请创建|一个|大型集团企业|制造企业|连锁零售企业|项目制企业|物业园区企业)", "", cleaned).strip()
+        cleaned = cleaned.strip(" ,")
+        if not cleaned or len(cleaned) < 2 or len(cleaned) > 12:
+            continue
+        if cleaned not in seen:
+            seen.add(cleaned)
+            candidates.append(cleaned)
+    return candidates
+
+
+def normalize_scene_to_worksheet_name(scene: str) -> str:
+    scene = str(scene or "").strip()
+    if not scene:
+        return ""
+    suffixes = (
+        "台账", "档案", "计划", "申请", "订单", "管理", "记录", "任务",
+        "报表", "工单", "排班", "通知", "检验", "盘点", "分析", "考试",
+        "预订", "整改", "跟踪", "报修", "验收", "运营", "中台",
+    )
+    if scene.endswith(suffixes):
+        return scene
+    if len(scene) <= 4:
+        return f"{scene}管理"
+    return scene
+
+
+def build_fallback_worksheet(name: str, scene: str) -> dict:
+    return {
+        "name": name,
+        "purpose": f"管理{scene}相关业务数据",
+        "fields": [
+            {
+                "name": "名称",
+                "type": "Text",
+                "required": True,
+                "description": f"{scene}名称",
+                "relation_target": "",
+                "option_values": [],
+            },
+            {
+                "name": "状态",
+                "type": "SingleSelect",
+                "required": True,
+                "description": f"{scene}状态",
+                "relation_target": "",
+                "option_values": ["草稿", "进行中", "已完成"],
+            },
+            {
+                "name": "负责人",
+                "type": "Collaborator",
+                "required": False,
+                "description": f"{scene}负责人",
+                "relation_target": "",
+                "option_values": [],
+            },
+            {
+                "name": "计划日期",
+                "type": "Date",
+                "required": False,
+                "description": f"{scene}计划日期",
+                "relation_target": "",
+                "option_values": [],
+            },
+            {
+                "name": "说明",
+                "type": "Text",
+                "required": False,
+                "description": f"{scene}补充说明",
+                "relation_target": "",
+                "option_values": [],
+            },
+        ],
+        "depends_on": [],
+    }
+
+
 def extract_json(text: str) -> dict:
     # 统一使用 ai_utils 中的 robust 解析
     return parse_ai_json(text)
 
 
 def build_prompt(app_name: str, business_context: str, extra_requirements: str) -> str:
+    min_worksheet_count = extract_min_worksheet_count(extra_requirements)
+    count_constraint = ""
+    if min_worksheet_count > 0:
+        count_constraint = (
+            f"\n12) worksheets 数量必须 >= {min_worksheet_count}，"
+            f"且不能通过合并业务模块规避该数量要求。"
+        )
+
     return f"""
 你是企业应用架构师。请为应用《{app_name}》设计工作表结构，输出严格 JSON。
 
@@ -84,6 +213,7 @@ def build_prompt(app_name: str, business_context: str, extra_requirements: str) 
 9) 当 relationships.cardinality=1-N 时，Relation 字段应定义在 to 表，relation_target 指向 from 表；同一对表禁止 A->B 与 B->A 同时出现 Relation 字段。
 10) 当字段 type=Collaborator 时，required 必须为 false。
 11) 输出为合法 JSON。
+{count_constraint}
 """.strip()
 
 
@@ -101,11 +231,65 @@ def repair_plan(plan: dict) -> None:
         plan["creation_order"] = order + missing
 
 
-def validate_plan(plan: dict) -> list[str]:
+def ensure_minimum_worksheets(
+    plan: dict,
+    min_worksheet_count: int,
+    business_context: str,
+    extra_requirements: str,
+) -> None:
+    if min_worksheet_count <= 0:
+        return
+    worksheets = plan.get("worksheets", [])
+    if not isinstance(worksheets, list):
+        return
+    if len(worksheets) >= min_worksheet_count:
+        return
+
+    existing_names = {
+        str(item.get("name", "")).strip()
+        for item in worksheets
+        if isinstance(item, dict) and str(item.get("name", "")).strip()
+    }
+    candidates = extract_scene_candidates(business_context, extra_requirements)
+
+    for scene in candidates:
+        if len(worksheets) >= min_worksheet_count:
+            break
+        ws_name = normalize_scene_to_worksheet_name(scene)
+        if not ws_name or ws_name in existing_names:
+            continue
+        worksheets.append(build_fallback_worksheet(ws_name, scene))
+        existing_names.add(ws_name)
+
+    auto_index = 1
+    while len(worksheets) < min_worksheet_count:
+        ws_name = f"扩展模块{auto_index}"
+        auto_index += 1
+        if ws_name in existing_names:
+            continue
+        worksheets.append(build_fallback_worksheet(ws_name, ws_name))
+        existing_names.add(ws_name)
+
+    plan["worksheets"] = worksheets
+    repair_plan(plan)
+    notes = plan.get("notes")
+    if not isinstance(notes, list):
+        notes = []
+    if "已按最少工作表数量要求自动补齐工作表规划。" not in notes:
+        notes.append("已按最少工作表数量要求自动补齐工作表规划。")
+    plan["notes"] = notes
+
+
+def validate_plan(plan: dict, min_worksheet_count: int = 0) -> list[str]:
     errors = []
     worksheets = plan.get("worksheets", [])
     if not isinstance(worksheets, list):
         return ["worksheets 必须是数组"]
+
+    if min_worksheet_count > 0 and len(worksheets) < min_worksheet_count:
+        errors.append(
+            f"worksheets 数量不足: 期望至少 {min_worksheet_count} 张，实际 {len(worksheets)} 张"
+        )
 
     worksheet_names = []
     for index, worksheet in enumerate(worksheets, start=1):
@@ -140,6 +324,7 @@ def main() -> None:
     ai_config = load_ai_config(Path(args.config).expanduser().resolve(), tier="fast")
     client = get_ai_client(ai_config)
     model_name = ai_config["model"]
+    min_worksheet_count = extract_min_worksheet_count(args.requirements)
 
     prompt = build_prompt(args.app_name, args.business_context, args.requirements)
     plan = None
@@ -175,7 +360,13 @@ def main() -> None:
                     raise
         plan = extract_json(response.text or "")
         repair_plan(plan)
-        validation_errors = validate_plan(plan)
+        ensure_minimum_worksheets(
+            plan,
+            min_worksheet_count=min_worksheet_count,
+            business_context=args.business_context,
+            extra_requirements=args.requirements,
+        )
+        validation_errors = validate_plan(plan, min_worksheet_count=min_worksheet_count)
         if not validation_errors:
             break
         if attempt == max(1, args.max_retries):
