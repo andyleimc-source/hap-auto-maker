@@ -17,6 +17,7 @@ from mock_data_common import (
     BASE_DIR,
     OUTPUT_ROOT,
     append_log,
+    discover_authorized_apps,
     ensure_dir,
     fetch_app_worksheets,
     fetch_worksheet_controls,
