@@ -59,7 +59,7 @@ def main() -> None:
     plan_script = CURRENT_DIR / "plan_charts_gemini.py"
     create_script = CURRENT_DIR / "create_charts_from_plan.py"
 
-    print(f"统计图流水线启动")
+    print("统计图流水线启动")
     print(f"  应用 ID  : {args.app_id}")
     print(f"  dry-run  : {args.dry_run}")
 

@@ -124,19 +124,19 @@ def publish_process(session: Session, process_id: str) -> bool:
         error_nodes = data.get("errorNodeIds") or []
         warnings = data.get("processWarnings") or []
         if is_publish:
-            print(f"    process/publish → ✓ 已开启", file=sys.stderr)
+            print("    process/publish → ✓ 已开启", file=sys.stderr)
             return True
         else:
             print(f"    process/publish → ✗ 未开启  errorNodes={error_nodes}  warnings={warnings}", file=sys.stderr)
             # 如果有错误节点，尝试第二次发布（某些场景下首次调用仅做校验）
             if error_nodes:
-                print(f"    process/publish → 重试发布...", file=sys.stderr)
+                print("    process/publish → 重试发布...", file=sys.stderr)
                 resp2 = session.get(
                     f"https://api.mingdao.com/workflow/process/publish?isPublish=true&processId={process_id}",
                 )
                 data2 = resp2.get("data") or {}
                 if data2.get("isPublish"):
-                    print(f"    process/publish → ✓ 重试成功，已开启", file=sys.stderr)
+                    print("    process/publish → ✓ 重试成功，已开启", file=sys.stderr)
                     return True
                 print(f"    process/publish → ✗ 重试仍失败  errorNodes={data2.get('errorNodeIds')}", file=sys.stderr)
             return False
@@ -820,7 +820,7 @@ def main() -> int:
         existing_names = fetch_existing_names(session, app_id)
 
     # 4. 批量创建（按工作表）
-    print(f"\n[step 3/3] 开始批量创建...", file=sys.stderr)
+    print("\n[step 3/3] 开始批量创建...", file=sys.stderr)
     print("=" * 60, file=sys.stderr)
 
     all_results: list[dict] = []
@@ -898,7 +898,7 @@ def main() -> int:
     print(f"   工作流成功：{total_ok} / {total_ok + total_failed}", file=sys.stderr)
     if total_failed:
         print(f"   ⚠️  失败数：{total_failed}（详见 logs/ 目录）", file=sys.stderr)
-    print(f"   结果文件：output/execute_workflow_plan_latest.json", file=sys.stderr)
+    print("   结果文件：output/execute_workflow_plan_latest.json", file=sys.stderr)
     print("=" * 60, file=sys.stderr)
 
     return 0 if total_failed == 0 else 1

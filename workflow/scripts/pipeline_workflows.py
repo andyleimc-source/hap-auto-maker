@@ -727,10 +727,10 @@ def main() -> int:
     # 4. 业务关系预分析（可选）
     relationships: dict = {}
     if not args.skip_analysis:
-        print(f"\n[step 2/4] 业务关系预分析（--skip-analysis 可跳过）...", file=sys.stderr)
+        print("\n[step 2/4] 业务关系预分析（--skip-analysis 可跳过）...", file=sys.stderr)
         relationships = analyze_relationships(app_structure, ai_config)
     else:
-        print(f"\n[step 2/4] 跳过业务关系预分析（--skip-analysis）", file=sys.stderr)
+        print("\n[step 2/4] 跳过业务关系预分析（--skip-analysis）", file=sys.stderr)
 
     # 5. 主规划：调用 AI
     model_name = ai_config["model"]
@@ -776,7 +776,7 @@ def main() -> int:
     }
 
     # 7. 写出
-    print(f"\n[step 4/4] 写入规划文件...", file=sys.stderr)
+    print("\n[step 4/4] 写入规划文件...", file=sys.stderr)
     if args.output:
         out = Path(args.output).expanduser().resolve()
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -791,7 +791,7 @@ def main() -> int:
     print(f"   工作表 {len(planned_ws)} 个：自定义动作 {total_ca}，事件触发 {total_ev}", file=sys.stderr)
     print(f"   全局时间触发 {len(planned_tt)} 个", file=sys.stderr)
     print(f"   规划文件：output/{script_name}_latest.json", file=sys.stderr)
-    print(f"\n   下一步执行：python3 scripts/execute_workflow_plan.py --publish", file=sys.stderr)
+    print("\n   下一步执行：python3 scripts/execute_workflow_plan.py --publish", file=sys.stderr)
     print("=" * 60, file=sys.stderr)
     return 0
 

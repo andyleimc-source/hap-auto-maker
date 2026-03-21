@@ -13,7 +13,6 @@ HAP Auto 初始化工具 (稳健修复版)
 import json
 import subprocess
 import sys
-import os
 import re
 import argparse
 import unicodedata
@@ -357,7 +356,7 @@ def main():
 
 if __name__ == "__main__":
     try:
-        try: import requests
+        try: pass
         except: subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "--break-system-packages", "requests", "openai", "playwright"])
         main()
     except KeyboardInterrupt: print("\n👋 配置流程已中断。")

@@ -210,7 +210,7 @@ def validate_plan(raw: dict, snapshot: dict) -> Dict[str, Any]:
         if isinstance(raw_worksheets, dict):
             raw_worksheets = [raw_worksheets]
         else:
-            print(f"[警告] AI 返回的 worksheets 不是数组，已跳过")
+            print("[警告] AI 返回的 worksheets 不是数组，已跳过")
             raw_worksheets = []
 
     normalized_plan_items: List[dict] = []

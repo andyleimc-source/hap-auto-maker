@@ -515,9 +515,9 @@ def main() -> None:
     use_system_fields_only = len(ws_ids) == 0
 
     if use_system_fields_only:
-        print(f"[模式] 仅系统字段模式（未提供 --worksheet-ids）")
-        print(f"  使用字段: ctime（创建时间）+ record_count（记录数）")
-        print(f"  如需更丰富的图表，请添加 --worksheet-ids（从应用 URL 的路径中复制工作表 ID）")
+        print("[模式] 仅系统字段模式（未提供 --worksheet-ids）")
+        print("  使用字段: ctime（创建时间）+ record_count（记录数）")
+        print("  如需更丰富的图表，请添加 --worksheet-ids（从应用 URL 的路径中复制工作表 ID）")
         worksheets_info = []
         worksheets_by_id: Dict[str, dict] = {SYSTEM_ONLY_WORKSHEET_ID: {"worksheetId": SYSTEM_ONLY_WORKSHEET_ID}}
     else:

@@ -274,14 +274,14 @@ def main() -> None:
         }
 
         if args.dry_run:
-            log.log(f"  [dry-run] 跳过 Page 创建和图表生成")
+            log.log("  [dry-run] 跳过 Page 创建和图表生成")
             page_result["status"] = "dry-run"
             results.append(page_result)
             continue
 
         # Step A: 创建 Page
         try:
-            log.log(f"  [A] 创建 Page...")
+            log.log("  [A] 创建 Page...")
             page_id = create_page(app_id, app_section_id, project_id,
                                   page_name, icon, icon_color, auth_config_path)
             log.log(f"  [A] OK  pageId={page_id}")
@@ -295,9 +295,9 @@ def main() -> None:
 
         # Step B: 初始化空白 Page
         try:
-            log.log(f"  [B] 初始化 Page...")
+            log.log("  [B] 初始化 Page...")
             initialize_page(page_id, auth_config_path)
-            log.log(f"  [B] OK")
+            log.log("  [B] OK")
         except Exception as exc:
             log.log(f"  [B] 警告（初始化失败，继续创建图表）: {exc}")
             # 初始化失败不是致命错误，继续
@@ -309,7 +309,7 @@ def main() -> None:
                                  f"chart_create_{app_id}_page_{page_id}.json").resolve())
         PAGE_CREATE_DIR.mkdir(parents=True, exist_ok=True)
 
-        log.log(f"  [C] 调用 pipeline_charts.py 创建统计图...")
+        log.log("  [C] 调用 pipeline_charts.py 创建统计图...")
         chart_result = run_pipeline_charts(
             app_id=app_id,
             app_name=f"{app_name}-{page_name}",
@@ -322,7 +322,7 @@ def main() -> None:
         )
 
         if chart_result["returncode"] == 0:
-            log.log(f"  [C] OK  图表创建成功")
+            log.log("  [C] OK  图表创建成功")
             page_result["status"] = "success"
             page_result["chartPlanFile"] = chart_plan_path
             page_result["chartCreateFile"] = chart_create_path

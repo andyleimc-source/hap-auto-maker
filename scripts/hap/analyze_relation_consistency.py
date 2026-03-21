@@ -213,7 +213,6 @@ def collect_consistency_state(
     for candidate in candidates:
         worksheet_id = candidate["worksheetId"]
         source_records = records_by_ws.get(worksheet_id, [])
-        relation_field_ids = [field["relationFieldId"] for field in candidate["relationFields"]]
         append_log(
             log_path,
             "load_live_rows_finished",

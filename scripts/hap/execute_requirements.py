@@ -662,8 +662,8 @@ def main() -> None:
         f3  = pool.submit(run_step_3)
         f8  = pool.submit(run_step_8)
         ok2a = f2a.result()
-        ok3  = f3.result()
-        ok8  = f8.result()
+        f3.result()
+        f8.result()
 
     if fail_fast and has_failure():
         out = save_report()
@@ -873,11 +873,11 @@ def main() -> None:
         f10  = pool.submit(run_step_10)
         f11  = pool.submit(run_step_11)
         f14a = pool.submit(run_step_14a)
-        ok4  = f4.result()
-        ok5  = f5.result()
+        f4.result()
+        f5.result()
         ok6  = f6.result()
-        ok9  = f9.result()
-        ok10 = f10.result()
+        f9.result()
+        f10.result()
         ok11 = f11.result()
         f14a.result()
 

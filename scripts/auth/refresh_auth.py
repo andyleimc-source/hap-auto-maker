@@ -89,7 +89,7 @@ def update_auth_config(account_id: str, authorization: str, cookie: str) -> None
     )
 
     AUTH_CONFIG_PATH.write_text(content, encoding="utf-8")
-    print(f"✅ auth_config.py 已更新")
+    print("✅ auth_config.py 已更新")
 
 
 # ------------------------------------------------------------------
@@ -221,7 +221,7 @@ def refresh(headless: bool = False) -> None:
             try:
                 from auth_config import AUTHORIZATION
                 authorization = AUTHORIZATION
-                print(f"   Authorization 使用已存储值（未能自动捕获）")
+                print("   Authorization 使用已存储值（未能自动捕获）")
             except Exception:
                 pass
 

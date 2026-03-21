@@ -79,7 +79,7 @@ def main() -> None:
     plan_script = CURRENT_DIR / "plan_pages_gemini.py"
     create_script = CURRENT_DIR / "create_pages_from_plan.py"
 
-    print(f"自定义页面 + 统计图流水线启动")
+    print("自定义页面 + 统计图流水线启动")
     print(f"  应用 ID  : {app_id}")
     print(f"  dry-run  : {args.dry_run}")
     print(f"  skip-plan: {args.skip_plan}")

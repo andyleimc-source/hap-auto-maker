@@ -160,7 +160,7 @@ def main() -> None:
             "--output",
             schema_json,
         ]
-        export_result = run_step(export_cmd, "Step 1/6 导出结构快照", log_path)
+        run_step(export_cmd, "Step 1/6 导出结构快照", log_path)
         context["steps"].append({"step": "export_schema", "ok": True, "schemaJson": schema_json})
         context["artifacts"]["schema_json"] = schema_json
 
@@ -176,7 +176,7 @@ def main() -> None:
             "--bundle-output",
             bundle_json,
         ]
-        plan_result = run_step(plan_cmd, "Step 2/6 规划造数", log_path)
+        run_step(plan_cmd, "Step 2/6 规划造数", log_path)
         context["steps"].append({"step": "plan_mock_data", "ok": True, "plan_json": plan_json, "bundle_json": bundle_json})
         context["artifacts"].update({"plan_json": plan_json, "bundle_json": bundle_json})
 
@@ -197,7 +197,7 @@ def main() -> None:
             write_cmd.append("--dry-run")
         if args.trigger_workflow:
             write_cmd.append("--trigger-workflow")
-        write_result = run_step(write_cmd, "Step 3/6 写入造数", log_path)
+        run_step(write_cmd, "Step 3/6 写入造数", log_path)
         context["steps"].append({"step": "write_mock_data", "ok": True, "write_result_json": write_json_path})
         context["artifacts"]["write_result_json"] = write_json_path
 
@@ -216,7 +216,7 @@ def main() -> None:
             "--output",
             relation_plan_json,
         ]
-        relation_plan_result = run_step(relation_plan_cmd, "Step 4/6 分析关联一致性", log_path)
+        run_step(relation_plan_cmd, "Step 4/6 分析关联一致性", log_path)
         context["steps"].append({"step": "analyze_relation_consistency", "ok": True, "repair_plan_json": relation_plan_json})
         context["artifacts"]["repair_plan_json"] = relation_plan_json
         repair_plan = load_json(Path(relation_plan_json))
@@ -240,7 +240,7 @@ def main() -> None:
             apply_cmd.append("--dry-run")
         if args.trigger_workflow:
             apply_cmd.append("--trigger-workflow")
-        apply_result = run_step(apply_cmd, "Step 5/6 应用关联修复", log_path)
+        run_step(apply_cmd, "Step 5/6 应用关联修复", log_path)
         context["steps"].append({"step": "apply_relation_repair", "ok": True, "relation_apply_json": relation_apply_json})
         context["artifacts"]["relation_apply_json"] = relation_apply_json
         apply_result_data = load_json(Path(relation_apply_json))
@@ -261,7 +261,7 @@ def main() -> None:
             ]
             if args.dry_run:
                 delete_cmd.append("--dry-run")
-            delete_result = run_step(delete_cmd, "Step 6/6 删除 unresolved 记录", log_path)
+            run_step(delete_cmd, "Step 6/6 删除 unresolved 记录", log_path)
             context["steps"].append({"step": "delete_unresolved_records", "ok": True, "delete_result_json": delete_result_json})
             context["artifacts"]["delete_result_json"] = delete_result_json
             delete_result_data = load_json(Path(delete_result_json))

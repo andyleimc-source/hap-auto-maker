@@ -247,7 +247,6 @@ def simplify_controls(controls: list) -> List[dict]:
 def build_prompt(app_id: str, app_name: str, worksheets_detail: List[dict],
                  icon_candidates: List[str], color_pool: List[str]) -> str:
     ws_json = json.dumps(worksheets_detail, ensure_ascii=False, indent=2)
-    icons_str = "、".join(icon_candidates)
     colors_str = "、".join(color_pool[:6])
     return f"""
 你是企业数据分析架构师。请根据下面的应用结构，为该应用规划 3~5 个自定义数据分析页（Page）。
@@ -382,7 +381,7 @@ def main() -> None:
         sys.exit(1)
 
     # Step 2: 拉取工作表字段
-    log.log(f"\n[2/3] 拉取工作表字段信息...")
+    log.log("\n[2/3] 拉取工作表字段信息...")
     worksheets_detail = []
     valid_ws_ids: set = set()
     for ws in app_info["worksheets"]:
