@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
 import sys
 import time
 from pathlib import Path
@@ -499,6 +500,35 @@ def validate_repair_plan(raw: dict, states: List[dict], write_result: dict) -> d
                         "reason": "模型响应中缺失该项，自动补全为未解决",
                     }
                 )
+
+        # 兜底：unresolved 项如果目标表有可用记录，随机选一个做 fallback update
+        fallback_promoted = []
+        remaining_unresolved = []
+        for item in unresolved:
+            field_id = item["relationFieldId"]
+            available = target_row_ids_by_field.get(field_id, set())
+            if available:
+                target_row_id = random.choice(list(available))
+                fallback_promoted.append(
+                    {
+                        k: v
+                        for k, v in item.items()
+                        if k != "reason"
+                    }
+                    | {
+                        "targetRowId": target_row_id,
+                        "fallback": True,
+                        "originalReason": item.get("reason", ""),
+                    }
+                )
+            else:
+                remaining_unresolved.append(item)
+        if fallback_promoted:
+            print(
+                f"[兜底] worksheetId={worksheet_id}: {len(fallback_promoted)} 项 unresolved 已回退为 fallback update"
+            )
+        updates.extend(fallback_promoted)
+        unresolved = remaining_unresolved
 
         total_updates += len(updates)
         total_unresolved += len(unresolved)
