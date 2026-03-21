@@ -45,7 +45,6 @@ from workflow_io import persist
 # 引入共享的健壮 JSON 解析工具
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts" / "hap"))
 from ai_utils import AI_CONFIG_PATH, create_generation_config, get_ai_client, load_ai_config  # type: ignore
-from gemini_utils import parse_gemini_json  # type: ignore
 
 
 # ── 常量 ───────────────────────────────────────────────────────────────────────

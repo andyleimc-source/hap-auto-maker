@@ -120,7 +120,7 @@ def resolve_auth(cli_cookie: str, auth_config_path: Path) -> tuple[str, str, str
 
 
 def refresh_auth(headless: bool) -> None:
-    refresh_script = _PROJECT_ROOT / "scripts" / "refresh_auth.py"
+    refresh_script = _PROJECT_ROOT / "scripts" / "auth" / "refresh_auth.py"
     if not refresh_script.exists():
         raise RuntimeError(f"Refresh script not found: {refresh_script}")
     cmd = [sys.executable, str(refresh_script)]
