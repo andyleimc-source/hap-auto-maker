@@ -17,7 +17,7 @@ import textwrap
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 from ai_utils import AI_CONFIG_PATH, create_generation_config, get_ai_client, load_ai_config
 
@@ -141,15 +141,6 @@ def extract_json(text: str) -> dict:
         except json.JSONDecodeError:
             continue
     raise ValueError(f"Gemini 未返回可解析 JSON:\n{text}")
-
-
-def make_config(response_mime_type: str, temperature: float, seed: Optional[int]):
-    return create_generation_config(
-        AI_CONFIG,
-        response_mime_type=response_mime_type,
-        temperature=temperature,
-        seed=seed,
-    )
 
 
 def read_user_input(prompt_text: str) -> str:

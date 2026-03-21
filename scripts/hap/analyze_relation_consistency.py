@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from ai_utils import create_generation_config, get_ai_client, load_ai_config, parse_ai_json
-from script_locator import resolve_script
 
 CURRENT_DIR = Path(__file__).resolve().parent
 if str(CURRENT_DIR) not in sys.path:
@@ -402,6 +401,7 @@ def validate_repair_plan(raw: dict, states: List[dict], write_result: dict) -> d
 
         seen = set()
         updates = []
+        unresolved = []
         for update in raw_item.get("updates", []):
             if not isinstance(update, dict):
                 raise ValueError(f"更新项格式错误: {update}")
@@ -452,7 +452,6 @@ def validate_repair_plan(raw: dict, states: List[dict], write_result: dict) -> d
                 }
             )
 
-        unresolved = []
         for item in raw_item.get("unresolved", []):
             if not isinstance(item, dict):
                 raise ValueError(f"未解决项格式错误: {item}")

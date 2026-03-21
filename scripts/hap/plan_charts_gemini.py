@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import auth_retry
-from ai_utils import AI_CONFIG_PATH, create_generation_config, get_ai_client, load_ai_config
+from ai_utils import create_generation_config, get_ai_client, load_ai_config
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"

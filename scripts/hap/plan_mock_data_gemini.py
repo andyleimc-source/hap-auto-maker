@@ -17,7 +17,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ai_utils import AI_CONFIG_PATH, create_generation_config, get_ai_client, load_ai_config, parse_ai_json
-from script_locator import resolve_script
 
 CURRENT_DIR = Path(__file__).resolve().parent
 if str(CURRENT_DIR) not in sys.path:

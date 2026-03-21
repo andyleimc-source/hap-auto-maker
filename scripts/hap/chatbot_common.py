@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 import auth_retry
 
@@ -17,14 +17,10 @@ from mock_data_common import (
     BASE_DIR,
     OUTPUT_ROOT,
     append_log,
-    choose_app,
-    discover_authorized_apps,
     ensure_dir,
-    extract_json_object,
     fetch_app_worksheets,
     fetch_worksheet_controls,
     fetch_worksheet_detail_v3,
-    load_gemini_api_key,
     load_json,
     load_web_auth,
     now_iso,

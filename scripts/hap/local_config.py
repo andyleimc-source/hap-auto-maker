@@ -4,7 +4,6 @@
 管理本地私有配置 (.env.local)
 """
 
-import os
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parents[2]

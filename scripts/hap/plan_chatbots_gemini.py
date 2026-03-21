@@ -13,7 +13,6 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from ai_utils import create_generation_config, get_ai_client, load_ai_config
-from script_locator import resolve_script
 
 CURRENT_DIR = Path(__file__).resolve().parent
 if str(CURRENT_DIR) not in sys.path:
@@ -25,7 +24,6 @@ from chatbot_common import (
     append_log,
     ensure_chatbot_dirs,
     extract_json_object,
-    load_gemini_api_key,
     load_schema_json,
     make_chatbot_log_path,
     now_iso,

@@ -22,8 +22,6 @@ from typing import Any, Dict, List, Optional
 import requests
 import auth_retry
 from ai_utils import AI_CONFIG_PATH, create_generation_config, get_ai_client, load_ai_config
-from script_locator import resolve_script
-from gemini_utils import load_gemini_config
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"

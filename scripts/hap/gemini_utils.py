@@ -12,9 +12,7 @@ from typing import Dict, Tuple
 from ai_utils import (
     AI_CONFIG_PATH,
     GEMINI_CONFIG_PATH,
-    create_generation_config,
     default_base_url_for_provider,
-    default_model_for_provider,
     load_ai_config,
     mask_secret,
     parse_ai_json,

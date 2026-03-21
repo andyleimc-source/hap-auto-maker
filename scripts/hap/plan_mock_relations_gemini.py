@@ -11,13 +11,12 @@ import json
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 NETWORK_MAX_RETRIES = 3
 NETWORK_RETRY_DELAY = 5
 
 from ai_utils import create_generation_config, get_ai_client, load_ai_config
-from script_locator import resolve_script
 
 CURRENT_DIR = Path(__file__).resolve().parent
 if str(CURRENT_DIR) not in sys.path:

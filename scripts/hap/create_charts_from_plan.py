@@ -12,7 +12,7 @@ import secrets
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, List
 
 import auth_retry
 

@@ -21,7 +21,6 @@ if str(CURRENT_DIR) not in sys.path:
     sys.path.insert(0, str(CURRENT_DIR))
 
 from script_locator import resolve_script
-from gemini_utils import load_gemini_config
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 CREATE_APP_SCRIPT = resolve_script("create_app.py")

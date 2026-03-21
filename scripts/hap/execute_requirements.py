@@ -19,7 +19,7 @@ import subprocess
 import sys
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, Future, wait, FIRST_COMPLETED
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -28,7 +28,7 @@ CURRENT_DIR = Path(__file__).resolve().parent
 if str(CURRENT_DIR) not in sys.path:
     sys.path.insert(0, str(CURRENT_DIR))
 
-from ai_utils import AI_CONFIG_PATH, load_ai_config
+from ai_utils import AI_CONFIG_PATH
 from script_locator import resolve_script
 
 BASE_DIR = Path(__file__).resolve().parents[2]

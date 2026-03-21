@@ -7,13 +7,11 @@
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
 from ai_utils import create_generation_config, get_ai_client, load_ai_config
-from script_locator import resolve_script
 
 CURRENT_DIR = Path(__file__).resolve().parent
 if str(CURRENT_DIR) not in sys.path:
@@ -28,7 +26,6 @@ from mock_data_common import (
     ensure_dir,
     extract_json_object,
     fetch_app_worksheets,
-    load_gemini_api_key,
     make_log_path,
     make_output_path,
     now_iso,
