@@ -186,7 +186,7 @@ class GeminiCompatibilityClient:
                     messages=messages,
                     temperature=temperature,
                     response_format=response_format,
-                    max_tokens=8192,
+                    max_tokens=32768,
                     stream=True,
                 )
                 chunks = []
