@@ -9,6 +9,8 @@
 import argparse
 import json
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
@@ -102,6 +104,7 @@ def main() -> None:
     parser.add_argument("--worksheet-ids", default="", help="可选，仅执行指定 worksheetId（逗号分隔）")
     parser.add_argument("--view-ids", default="", help="可选，仅执行指定 viewId（逗号分隔）")
     parser.add_argument("--dry-run", action="store_true", help="仅演练，不实际调用接口")
+    parser.add_argument("--max-workers", type=int, default=16, help="并发视图数（默认 16）")
     parser.add_argument("--output", default="", help="输出结果 JSON 路径")
     args = parser.parse_args()
 
@@ -147,91 +150,101 @@ def main() -> None:
             ws_list = []
         app_result = {"appId": app_id, "appName": app_name, "worksheets": []}
 
+        def _process_vp(task):
+            ws_id, ws_name, vp = task
+            view_id = str(vp.get("viewId", "")).strip()
+            view_name = str(vp.get("viewName", "")).strip()
+            view_type = str(vp.get("viewType", "")).strip()
+            view_result = {"viewId": view_id, "viewName": view_name, "viewType": view_type, "navApply": None, "fastApply": None}
+            stats = {"navAppliedCount": 0, "fastAppliedCount": 0, "failedCount": 0}
+
+            if bool(vp.get("needNavGroup", False)) and view_type in NAV_SUPPORTED_VIEW_TYPES:
+                payload = {
+                    "appId": app_id, "worksheetId": ws_id, "viewId": view_id,
+                    "editAttrs": ["navGroup", "advancedSetting"],
+                    "navGroup": vp.get("navGroup") if isinstance(vp.get("navGroup"), list) else [],
+                    "advancedSetting": to_adv_str_dict(vp.get("navAdvancedSetting")),
+                    "editAdKeys": vp.get("navEditAdKeys") if isinstance(vp.get("navEditAdKeys"), list) else [],
+                }
+                resp = save_view(payload, auth_config_path, app_id, ws_id, view_id, args.dry_run)
+                ok = bool(args.dry_run) or (isinstance(resp, dict) and int(resp.get("state", 0) or 0) == 1)
+                view_result["navApply"] = {"payload": payload, "response": resp, "success": ok}
+                if ok:
+                    stats["navAppliedCount"] += 1
+                else:
+                    stats["failedCount"] += 1
+            else:
+                reason = "needNavGroup=false"
+                if bool(vp.get("needNavGroup", False)) and view_type not in NAV_SUPPORTED_VIEW_TYPES:
+                    reason = f"viewType={view_type} 不支持筛选列表"
+                view_result["navApply"] = {"skipped": True, "reason": reason}
+
+            if bool(vp.get("needFastFilters", False)) and view_type in FAST_SUPPORTED_VIEW_TYPES:
+                payload = {
+                    "appId": app_id, "worksheetId": ws_id, "viewId": view_id,
+                    "editAttrs": ["fastFilters", "advancedSetting"],
+                    "fastFilters": vp.get("fastFilters") if isinstance(vp.get("fastFilters"), list) else [],
+                    "advancedSetting": to_adv_str_dict(vp.get("fastAdvancedSetting")),
+                    "editAdKeys": vp.get("fastEditAdKeys") if isinstance(vp.get("fastEditAdKeys"), list) else [],
+                }
+                resp = save_view(payload, auth_config_path, app_id, ws_id, view_id, args.dry_run)
+                ok = bool(args.dry_run) or (isinstance(resp, dict) and int(resp.get("state", 0) or 0) == 1)
+                view_result["fastApply"] = {"payload": payload, "response": resp, "success": ok}
+                if ok:
+                    stats["fastAppliedCount"] += 1
+                else:
+                    stats["failedCount"] += 1
+            else:
+                reason = "needFastFilters=false"
+                if bool(vp.get("needFastFilters", False)) and view_type not in FAST_SUPPORTED_VIEW_TYPES:
+                    reason = f"viewType={view_type} 不支持快速筛选"
+                view_result["fastApply"] = {"skipped": True, "reason": reason}
+
+            return ws_id, ws_name, view_result, stats
+
+        # 构建所有视图任务（跨工作表展平）
+        all_tasks = []
+        ws_order = []
+        ws_meta = {}
         for ws in ws_list:
             if not isinstance(ws, dict):
                 continue
             ws_id = str(ws.get("worksheetId", "")).strip()
             ws_name = str(ws.get("worksheetName", "")).strip() or ws_id
-            if not ws_id:
+            if not ws_id or (wanted_ws_ids and ws_id not in wanted_ws_ids):
                 continue
-            if wanted_ws_ids and ws_id not in wanted_ws_ids:
-                continue
-
             view_plans = ws.get("viewPlans")
             if not isinstance(view_plans, list):
                 view_plans = []
-            ws_result = {"worksheetId": ws_id, "worksheetName": ws_name, "views": []}
-            result["summary"]["worksheetCount"] += 1
-
+            if ws_id not in ws_meta:
+                ws_meta[ws_id] = ws_name
+                ws_order.append(ws_id)
             for vp in view_plans:
                 if not isinstance(vp, dict):
                     continue
                 view_id = str(vp.get("viewId", "")).strip()
-                view_name = str(vp.get("viewName", "")).strip()
-                view_type = str(vp.get("viewType", "")).strip()
-                if not view_id:
+                if not view_id or (wanted_view_ids and view_id not in wanted_view_ids):
                     continue
-                if wanted_view_ids and view_id not in wanted_view_ids:
-                    continue
-                result["summary"]["viewCount"] += 1
+                all_tasks.append((ws_id, ws_name, vp))
 
-                view_result = {
-                    "viewId": view_id,
-                    "viewName": view_name,
-                    "viewType": view_type,
-                    "navApply": None,
-                    "fastApply": None,
-                }
+        result["summary"]["worksheetCount"] += len(ws_meta)
+        result["summary"]["viewCount"] += len(all_tasks)
 
-                if bool(vp.get("needNavGroup", False)) and view_type in NAV_SUPPORTED_VIEW_TYPES:
-                    payload = {
-                        "appId": app_id,
-                        "worksheetId": ws_id,
-                        "viewId": view_id,
-                        "editAttrs": ["navGroup", "advancedSetting"],
-                        "navGroup": vp.get("navGroup") if isinstance(vp.get("navGroup"), list) else [],
-                        "advancedSetting": to_adv_str_dict(vp.get("navAdvancedSetting")),
-                        "editAdKeys": vp.get("navEditAdKeys") if isinstance(vp.get("navEditAdKeys"), list) else [],
-                    }
-                    resp = save_view(payload, auth_config_path, app_id, ws_id, view_id, args.dry_run)
-                    ok = bool(args.dry_run) or (isinstance(resp, dict) and int(resp.get("state", 0) or 0) == 1)
-                    view_result["navApply"] = {"payload": payload, "response": resp, "success": ok}
-                    if ok:
-                        result["summary"]["navAppliedCount"] += 1
-                    else:
-                        result["summary"]["failedCount"] += 1
-                else:
-                    reason = "needNavGroup=false"
-                    if bool(vp.get("needNavGroup", False)) and view_type not in NAV_SUPPORTED_VIEW_TYPES:
-                        reason = f"viewType={view_type} 不支持筛选列表"
-                    view_result["navApply"] = {"skipped": True, "reason": reason}
+        ws_results: dict = {ws_id: {"worksheetId": ws_id, "worksheetName": ws_meta[ws_id], "views": []} for ws_id in ws_order}
+        _lock = threading.Lock()
 
-                if bool(vp.get("needFastFilters", False)) and view_type in FAST_SUPPORTED_VIEW_TYPES:
-                    payload = {
-                        "appId": app_id,
-                        "worksheetId": ws_id,
-                        "viewId": view_id,
-                        "editAttrs": ["fastFilters", "advancedSetting"],
-                        "fastFilters": vp.get("fastFilters") if isinstance(vp.get("fastFilters"), list) else [],
-                        "advancedSetting": to_adv_str_dict(vp.get("fastAdvancedSetting")),
-                        "editAdKeys": vp.get("fastEditAdKeys") if isinstance(vp.get("fastEditAdKeys"), list) else [],
-                    }
-                    resp = save_view(payload, auth_config_path, app_id, ws_id, view_id, args.dry_run)
-                    ok = bool(args.dry_run) or (isinstance(resp, dict) and int(resp.get("state", 0) or 0) == 1)
-                    view_result["fastApply"] = {"payload": payload, "response": resp, "success": ok}
-                    if ok:
-                        result["summary"]["fastAppliedCount"] += 1
-                    else:
-                        result["summary"]["failedCount"] += 1
-                else:
-                    reason = "needFastFilters=false"
-                    if bool(vp.get("needFastFilters", False)) and view_type not in FAST_SUPPORTED_VIEW_TYPES:
-                        reason = f"viewType={view_type} 不支持快速筛选"
-                    view_result["fastApply"] = {"skipped": True, "reason": reason}
+        with ThreadPoolExecutor(max_workers=args.max_workers) as executor:
+            futures = [executor.submit(_process_vp, task) for task in all_tasks]
+            for future in as_completed(futures):
+                ws_id, ws_name, view_result, stats = future.result()
+                with _lock:
+                    ws_results[ws_id]["views"].append(view_result)
+                    for k in ("navAppliedCount", "fastAppliedCount", "failedCount"):
+                        result["summary"][k] += stats[k]
 
-                ws_result["views"].append(view_result)
+        for ws_id in ws_order:
+            app_result["worksheets"].append(ws_results[ws_id])
 
-            app_result["worksheets"].append(ws_result)
         if app_result["worksheets"]:
             result["apps"].append(app_result)
 

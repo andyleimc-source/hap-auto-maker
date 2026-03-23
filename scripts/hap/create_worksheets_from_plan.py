@@ -9,6 +9,8 @@
 import argparse
 import json
 import re
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
@@ -511,37 +513,43 @@ def verify_relation_cardinality(
     pair_to_edges: Dict[Tuple[str, str], List[dict]] = {}
     relation_edges: List[dict] = []
 
-    for source_name, source_id in name_to_id.items():
+    def _fetch_and_extract(item):
+        source_name, source_id = item
         ws = fetch_worksheet_detail(base_url, headers, source_id)
         fields = ws.get("fields", [])
+        edges = []
         if not isinstance(fields, list):
-            continue
+            return source_name, edges
         for field in fields:
             if not isinstance(field, dict):
                 continue
             if str(field.get("type", "")).strip() != "Relation":
                 continue
             target_id = str(field.get("dataSource", "")).strip()
-            target_name = id_to_name.get(target_id)
-            if not target_name:
-                # 指向非本次创建的表，不纳入 pair 检查，但保留到明细。
-                target_name = f"[external:{target_id}]"
+            target_name = id_to_name.get(target_id) or f"[external:{target_id}]"
             sub_type = int(field.get("subType", 0) or 0)
             if sub_type not in (1, 2):
                 raise RuntimeError(
                     f"检测到非法 Relation subType: {source_name}.{field.get('name')} -> {target_name}, subType={sub_type}"
                 )
-            edge = {
+            edges.append({
                 "source": source_name,
                 "target": target_name,
                 "field": str(field.get("name", "")).strip(),
                 "subType": sub_type,
-            }
-            relation_edges.append(edge)
-            if target_name.startswith("[external:"):
-                continue
-            pair_key = tuple(sorted((source_name, target_name)))
-            pair_to_edges.setdefault(pair_key, []).append(edge)
+            })
+        return source_name, edges
+
+    with ThreadPoolExecutor(max_workers=16) as executor:
+        futures = [executor.submit(_fetch_and_extract, item) for item in name_to_id.items()]
+        for future in as_completed(futures):
+            _, edges = future.result()
+            for edge in edges:
+                relation_edges.append(edge)
+                if edge["target"].startswith("[external:"):
+                    continue
+                pair_key = tuple(sorted((edge["source"], edge["target"])))
+                pair_to_edges.setdefault(pair_key, []).append(edge)
 
     violations = []
     notes: List[str] = []
@@ -687,8 +695,8 @@ def main() -> None:
     create_results = []
     relations_todo = []
 
-    # Phase 1: 创建基础工作表（不含 Relation 字段）
-    for ws in worksheets:
+    # Phase 1: 并发创建基础工作表（不含 Relation 字段）
+    def _create_one_ws(ws):
         ws_name = str(ws.get("name", "")).strip() or "未命名工作表"
         fields = ws.get("fields", [])
         normal_fields, relation_fields = split_fields(fields if isinstance(fields, list) else [])
@@ -696,34 +704,34 @@ def main() -> None:
         worksheet_id = result.get("data", {}).get("worksheetId")
         if not worksheet_id:
             raise RuntimeError(f"创建工作表后未返回 worksheetId: {ws_name} / {result}")
-        name_to_id[ws_name] = worksheet_id
-        create_results.append({"name": ws_name, "worksheetId": worksheet_id, "result": result})
-        relations_todo.append({"name": ws_name, "worksheetId": worksheet_id, "relation_fields": relation_fields})
+        return ws_name, worksheet_id, result, relation_fields
 
-    # Phase 2: 回填关联字段
+    with ThreadPoolExecutor(max_workers=16) as executor:
+        futures = {executor.submit(_create_one_ws, ws): ws for ws in worksheets}
+        for future in as_completed(futures):
+            ws_name, worksheet_id, result, relation_fields = future.result()
+            name_to_id[ws_name] = worksheet_id
+            create_results.append({"name": ws_name, "worksheetId": worksheet_id, "result": result})
+            relations_todo.append({"name": ws_name, "worksheetId": worksheet_id, "relation_fields": relation_fields})
+
+    # Phase 2: 并发回填关联字段
     relation_results = []
-    for item in relations_todo:
+
+    def _add_relations_one(item):
         ws_name = item["name"]
         ws_id = item["worksheetId"]
         relation_specs = relation_plan_by_source.get(ws_name, [])
         if not relation_specs:
-            continue
-        result = add_relation_fields(
-            args.base_url,
-            headers,
-            ws_id,
-            ws_name,
-            relation_specs,
-            name_to_id,
-        )
-        relation_results.append(
-            {
-                "name": ws_name,
-                "worksheetId": ws_id,
-                "relation_fields_count": len(relation_specs),
-                "result": result,
-            }
-        )
+            return None
+        result = add_relation_fields(args.base_url, headers, ws_id, ws_name, relation_specs, name_to_id)
+        return {"name": ws_name, "worksheetId": ws_id, "relation_fields_count": len(relation_specs), "result": result}
+
+    with ThreadPoolExecutor(max_workers=16) as executor:
+        futures = [executor.submit(_add_relations_one, item) for item in relations_todo]
+        for future in as_completed(futures):
+            r = future.result()
+            if r is not None:
+                relation_results.append(r)
 
     verification = verify_relation_cardinality(args.base_url, headers, name_to_id, normalized_relations)
 

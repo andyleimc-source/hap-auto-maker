@@ -12,6 +12,7 @@ python3 scripts/hap/update_worksheet_icons.py \
 import argparse
 import json
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -171,6 +172,7 @@ def main() -> None:
     parser.add_argument("--refresh-auth", action="store_true", help="执行前先调用已有 refresh_auth 刷新 Cookie/Authorization")
     parser.add_argument("--headless", action="store_true", help="配合 --refresh-auth 使用，无头模式刷新")
     parser.add_argument("--dry-run", action="store_true", help="仅打印请求，不实际调用")
+    parser.add_argument("--max-workers", type=int, default=16, help="并发请求数（默认 16）")
     args = parser.parse_args()
 
     mappings: List[Tuple[str, str]]
@@ -209,11 +211,10 @@ def main() -> None:
         }
         requests_plan.append(payload)
 
-    results = []
-    for payload in requests_plan:
+    def _update_icon(idx_payload):
+        idx, payload = idx_payload
         if args.dry_run:
-            results.append({"payload": payload, "dry_run": True})
-            continue
+            return idx, {"payload": payload, "dry_run": True}
         resp = auth_retry.hap_web_post(
             EDIT_ICON_URL,
             AUTH_CONFIG_PATH,
@@ -225,7 +226,15 @@ def main() -> None:
             data = resp.json()
         except Exception:
             data = {"status_code": resp.status_code, "text": resp.text}
-        results.append({"payload": payload, "response": data, "status_code": resp.status_code})
+        return idx, {"payload": payload, "response": data, "status_code": resp.status_code}
+
+    indexed: dict = {}
+    with ThreadPoolExecutor(max_workers=args.max_workers) as executor:
+        futures = [executor.submit(_update_icon, (i, p)) for i, p in enumerate(requests_plan)]
+        for future in as_completed(futures):
+            idx, r = future.result()
+            indexed[idx] = r
+    results = [indexed[i] for i in range(len(requests_plan))]
 
     summary = {
         "app_auth_json": str(app_auth_path),

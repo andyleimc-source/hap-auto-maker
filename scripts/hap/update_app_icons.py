@@ -9,6 +9,7 @@ import base64
 import hashlib
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -125,6 +126,7 @@ def main() -> None:
     parser.add_argument("--project-id", default="", help="HAP 组织Id（默认读取 organization_auth.json）")
     parser.add_argument("--operator-id", default="", help="编辑者账号Id（默认读取 organization_auth.json 的 owner_id）")
     parser.add_argument("--dry-run", action="store_true", help="仅打印请求，不实际调用")
+    parser.add_argument("--max-workers", type=int, default=8, help="并发请求数（默认 8）")
     args = parser.parse_args()
 
     mapping_path = resolve_path(
@@ -154,8 +156,9 @@ def main() -> None:
         raise ValueError("缺少 operatorId，请传 --operator-id 或在 organization_auth.json 配置 owner_id")
 
     url = args.base_url.rstrip("/") + args.endpoint
-    results = []
-    for m in mappings:
+
+    def _update_app_icon(idx_m):
+        idx, m = idx_m
         app_id = m["appId"]
         icon = m["icon"]
         row = app_auth_map.get(app_id)
@@ -173,27 +176,28 @@ def main() -> None:
         timestamp_ms = int(time.time() * 1000)
         req_sign = build_sign(org_app_key, secret_key, timestamp_ms)
         payload = {
-            "appKey": org_app_key,
-            "sign": req_sign,
-            "timestamp": timestamp_ms,
-            "projectId": project_id,
-            "appId": app_id,
-            "name": app_name,
-            "icon": icon,
-            "color": color,
-            "operatorId": operator_id,
+            "appKey": org_app_key, "sign": req_sign, "timestamp": timestamp_ms,
+            "projectId": project_id, "appId": app_id, "name": app_name,
+            "icon": icon, "color": color, "operatorId": operator_id,
         }
 
         if args.dry_run:
-            results.append({"appId": app_id, "payload": payload, "dry_run": True})
-            continue
+            return idx, {"appId": app_id, "payload": payload, "dry_run": True}
 
         resp = requests.post(url, json=payload, timeout=30)
         try:
             data = resp.json()
         except Exception:
             data = {"status_code": resp.status_code, "text": resp.text}
-        results.append({"appId": app_id, "status_code": resp.status_code, "response": data, "payload": payload})
+        return idx, {"appId": app_id, "status_code": resp.status_code, "response": data, "payload": payload}
+
+    indexed: dict = {}
+    with ThreadPoolExecutor(max_workers=args.max_workers) as executor:
+        futures = [executor.submit(_update_app_icon, (i, m)) for i, m in enumerate(mappings)]
+        for future in as_completed(futures):
+            idx, r = future.result()
+            indexed[idx] = r
+    results = [indexed[i] for i in range(len(mappings))]
 
     summary = {
         "source_mapping_json": str(mapping_path),

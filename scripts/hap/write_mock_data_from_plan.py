@@ -9,8 +9,10 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 CURRENT_DIR = Path(__file__).resolve().parent
 if str(CURRENT_DIR) not in sys.path:
@@ -23,6 +25,7 @@ from mock_data_common import (
     add_worksheet_row_with_fallback,
     append_log,
     build_v3_fields,
+    call_with_backoff,
     choose_app,
     discover_authorized_apps,
     load_json,
@@ -44,6 +47,7 @@ def main() -> None:
     parser.add_argument("--trigger-workflow", action="store_true", help="写入时触发工作流")
     parser.add_argument("--dry-run", action="store_true", help="仅预览，不实际写入")
     parser.add_argument("--output", default="", help="写入结果 JSON 路径")
+    parser.add_argument("--max-workers", type=int, default=32, help="同表并发写入数（默认 32）")
     args = parser.parse_args()
 
     bundle_path = resolve_json_input(str(args.bundle_json), [MOCK_BUNDLE_DIR])
@@ -150,11 +154,16 @@ def main() -> None:
                 written_enriched_records = list(enriched_records)
             else:
                 account_id, authorization, cookie = web_auth
-                row_responses = []
                 total_to_write = len(enriched_records)
                 print(f"  正在写入 [{worksheet['worksheetName']}] (共 {total_to_write} 条)...", end="", flush=True)
-                for i, record in enumerate(enriched_records):
-                    api_resp = add_worksheet_row_with_fallback(
+
+                _progress_lock = threading.Lock()
+                _completed = [0]
+
+                def _write_one(idx_record: tuple) -> tuple:
+                    idx, record = idx_record
+                    resp = call_with_backoff(
+                        add_worksheet_row_with_fallback,
                         base_url=args.base_url,
                         app_key=app["appKey"],
                         sign=app["sign"],
@@ -167,17 +176,43 @@ def main() -> None:
                         field_meta_map=field_meta_map,
                         trigger_workflow=bool(args.trigger_workflow),
                     )
-                    row_responses.append(api_resp)
+                    with _progress_lock:
+                        _completed[0] += 1
+                        if _completed[0] % 5 == 0:
+                            print(f"{_completed[0]}..", end="", flush=True)
+                    return idx, resp
+
+                indexed_results: Dict[int, dict] = {}
+                write_errors: List[str] = []
+                with ThreadPoolExecutor(max_workers=args.max_workers) as executor:
+                    futures = {executor.submit(_write_one, (i, r)): i for i, r in enumerate(enriched_records)}
+                    for future in as_completed(futures):
+                        try:
+                            idx, api_resp = future.result()
+                            indexed_results[idx] = api_resp
+                        except Exception as exc:
+                            orig_i = futures[future]
+                            write_errors.append(f"record[{orig_i}]: {exc}")
+
+                print("完成")
+
+                if write_errors:
+                    print(f"\n[警告] 写入有 {len(write_errors)} 条失败: {write_errors[0]}")
+
+                row_responses = [indexed_results.get(i) for i in range(len(enriched_records))]
+                response = {"success": len(write_errors) == 0, "rows": [r for r in row_responses if r is not None]}
+                for i, record in enumerate(enriched_records):
+                    api_resp = indexed_results.get(i)
+                    if api_resp is None:
+                        failed_count += 1
+                        continue
                     row_id = str(api_resp.get("rowId", "")).strip()
                     if not row_id:
                         print(f"[警告] 新增返回缺少 rowId，已跳过该记录: worksheetId={worksheet['worksheetId']}, record={record['mockRecordKey']}")
+                        failed_count += 1
                         continue
                     row_ids.append(row_id)
                     written_enriched_records.append(record)
-                    if (i + 1) % 5 == 0:
-                        print(f"{i+1}..", end="", flush=True)
-                print("完成")
-                response = {"success": True, "rows": row_responses}
             append_log(
                 log_path,
                 "worksheet_rows_created",

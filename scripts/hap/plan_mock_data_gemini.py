@@ -12,6 +12,7 @@ import json
 import random
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -428,6 +429,7 @@ def main() -> None:
     parser.add_argument("--gemini-retries", type=int, default=4, help="AI 调用失败时的最大重试次数")
     parser.add_argument("--plan-output", default="", help="mock_data_plan 输出路径")
     parser.add_argument("--bundle-output", default="", help="mock_data_bundle 输出路径")
+    parser.add_argument("--max-workers", type=int, default=8, help="DeepSeek 分片并发数（默认 8）")
     args = parser.parse_args()
 
     schema_path = resolve_json_input(str(args.schema_json), [MOCK_SCHEMA_DIR])
@@ -464,19 +466,33 @@ def main() -> None:
     validated = None
     # 策略：如果 provider 是 deepseek 且表较多，采用分片生成（每张表调用一次）
     if provider == "deepseek" and len(all_worksheets_to_plan) > 1:
-        print(f"[策略] 检测到 {provider} 且工作表较多 ({len(all_worksheets_to_plan)})，开启分片生成模式...")
-        raw_worksheets = []
-        notes = [f"DeepSeek 分片生成模式: {datetime.now().isoformat()}"]
-        for ws_to_plan in all_worksheets_to_plan:
-            print(f"  正在为 [{ws_to_plan['worksheetName']}] 生成造数规划...")
+        print(f"[策略] 检测到 {provider} 且工作表较多 ({len(all_worksheets_to_plan)})，开启并发分片生成模式（max_workers={args.max_workers}）...")
+        notes = [f"DeepSeek 并发分片生成模式: {datetime.now().isoformat()}"]
+
+        def _plan_one_ws(idx_ws):
+            idx, ws_to_plan = idx_ws
             p = build_prompt_v2(app, [ws_to_plan])
             resp = generate_with_retry(client, model_name, p, args.gemini_retries, ai_config)
             chunk = parse_ai_json(resp.text or "")
             chunk_ws = chunk.get("worksheets", [])
-            if chunk_ws and isinstance(chunk_ws, list):
-                raw_worksheets.extend(chunk_ws)
-            else:
+            if not chunk_ws or not isinstance(chunk_ws, list):
                 print(f"  [警告] [{ws_to_plan['worksheetName']}] 生成结果为空或格式错误")
+                return idx, []
+            print(f"  [{ws_to_plan['worksheetName']}] 完成")
+            return idx, chunk_ws
+
+        indexed_chunks: dict = {}
+        with ThreadPoolExecutor(max_workers=args.max_workers) as executor:
+            futures = [executor.submit(_plan_one_ws, (i, ws)) for i, ws in enumerate(all_worksheets_to_plan)]
+            for future in as_completed(futures):
+                idx, chunk_ws = future.result()
+                indexed_chunks[idx] = chunk_ws
+
+        # 按原始顺序拼接结果
+        raw_worksheets = []
+        for i in range(len(all_worksheets_to_plan)):
+            raw_worksheets.extend(indexed_chunks.get(i, []))
+
         raw = {"appId": app_id, "appName": app.get("appName", ""), "notes": notes, "worksheets": raw_worksheets}
         validated = validate_plan(raw, snapshot)
     else:

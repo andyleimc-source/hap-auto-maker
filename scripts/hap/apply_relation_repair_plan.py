@@ -9,6 +9,8 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 CURRENT_DIR = Path(__file__).resolve().parent
@@ -20,6 +22,7 @@ from mock_data_common import (
     MOCK_RELATION_REPAIR_APPLY_DIR,
     MOCK_RELATION_REPAIR_PLAN_DIR,
     append_log,
+    call_with_backoff,
     choose_app,
     discover_authorized_apps,
     load_json,
@@ -40,6 +43,7 @@ def main() -> None:
     parser.add_argument("--trigger-workflow", action="store_true", help="更新时触发工作流")
     parser.add_argument("--dry-run", action="store_true", help="仅预览，不实际更新")
     parser.add_argument("--output", default="", help="更新结果 JSON 路径")
+    parser.add_argument("--max-workers", type=int, default=32, help="同表并发修复数（默认 32）")
     args = parser.parse_args()
 
     plan_path = resolve_json_input(str(args.repair_plan_json), [MOCK_RELATION_REPAIR_PLAN_DIR])
@@ -78,43 +82,59 @@ def main() -> None:
         total_to_update = len(updates)
         if total_to_update > 0:
             print(f"  正在修复 [{worksheet['worksheetName']}] (共 {total_to_update} 条)...", end="", flush=True)
-        
-        for i, update in enumerate(updates):
-            try:
-                response = {"success": True, "dryRun": args.dry_run}
-                if not args.dry_run:
-                    response = update_row_relation(
-                        base_url=args.base_url,
-                        app_key=app["appKey"],
-                        sign=app["sign"],
-                        worksheet_id=worksheet["worksheetId"],
-                        row_id=update["rowId"],
-                        field_id=update["relationFieldId"],
-                        target_row_id=update["targetRowId"],
-                        trigger_workflow=args.trigger_workflow,
+
+        if args.dry_run:
+            result_updates = [{**u, "response": {"success": True, "dryRun": True}, "success": True} for u in updates]
+        else:
+            _progress_lock = threading.Lock()
+            _completed = [0]
+
+            def _update_one(idx_update: tuple) -> tuple:
+                idx, update = idx_update
+                resp = call_with_backoff(
+                    update_row_relation,
+                    base_url=args.base_url,
+                    app_key=app["appKey"],
+                    sign=app["sign"],
+                    worksheet_id=worksheet["worksheetId"],
+                    row_id=update["rowId"],
+                    field_id=update["relationFieldId"],
+                    target_row_id=update["targetRowId"],
+                    trigger_workflow=args.trigger_workflow,
+                )
+                with _progress_lock:
+                    _completed[0] += 1
+                    if _completed[0] % 5 == 0:
+                        print(f"{_completed[0]}..", end="", flush=True)
+                return idx, resp
+
+            indexed_results: dict = {}
+            with ThreadPoolExecutor(max_workers=args.max_workers) as executor:
+                futures = {executor.submit(_update_one, (i, u)): i for i, u in enumerate(updates)}
+                for future in as_completed(futures):
+                    orig_i = futures[future]
+                    try:
+                        idx, resp = future.result()
+                        indexed_results[idx] = (resp, True, None)
+                    except Exception as exc:
+                        indexed_results[orig_i] = ({"success": False, "error": str(exc)}, False, str(exc))
+
+            for i, update in enumerate(updates):
+                resp, success, err = indexed_results[i]
+                result_updates.append({**update, "response": resp, "success": success})
+                if not success:
+                    failed_count += 1
+                    total_failed += 1
+                    append_log(
+                        log_path,
+                        "update_failed",
+                        worksheetId=worksheet["worksheetId"],
+                        rowId=update["rowId"],
+                        relationFieldId=update["relationFieldId"],
+                        targetRowId=update["targetRowId"],
+                        error=err,
                     )
-                result_updates.append({**update, "response": response, "success": True})
-                if (i + 1) % 5 == 0:
-                    print(f"{i+1}..", end="", flush=True)
-            except Exception as exc:
-                failed_count += 1
-                total_failed += 1
-                result_updates.append(
-                    {
-                        **update,
-                        "response": {"success": False, "error": str(exc)},
-                        "success": False,
-                    }
-                )
-                append_log(
-                    log_path,
-                    "update_failed",
-                    worksheetId=worksheet["worksheetId"],
-                    rowId=update["rowId"],
-                    relationFieldId=update["relationFieldId"],
-                    targetRowId=update["targetRowId"],
-                    error=str(exc),
-                )
+
         if total_to_update > 0:
             print("完成")
         worksheet_results.append(

@@ -7,6 +7,8 @@
 import argparse
 import json
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -235,6 +237,7 @@ def main() -> None:
     parser.add_argument("--app-ids", default="", help="可选，仅执行指定 appId（逗号分隔）")
     parser.add_argument("--worksheet-ids", default="", help="可选，仅执行指定 worksheetId（逗号分隔）")
     parser.add_argument("--dry-run", action="store_true", help="仅演练，不实际调用接口")
+    parser.add_argument("--max-workers", type=int, default=16, help="并发工作表数（默认 16）")
     parser.add_argument("--output", default="", help="输出结果 JSON 路径")
     args = parser.parse_args()
 
@@ -279,21 +282,21 @@ def main() -> None:
             ws_list = []
 
         app_result = {"appId": app_id, "appName": app_name, "worksheets": []}
-        for ws in ws_list:
+
+        def _process_ws(ws):
             if not isinstance(ws, dict):
-                continue
+                return None
             ws_id = str(ws.get("worksheetId", "")).strip()
             ws_name = str(ws.get("worksheetName", "")).strip() or ws_id
             if not ws_id:
-                continue
+                return None
             if wanted_ws_ids and ws_id not in wanted_ws_ids:
-                continue
+                return None
             views = ws.get("views")
             if not isinstance(views, list):
                 views = []
             ws_result = {"worksheetId": ws_id, "worksheetName": ws_name, "views": []}
-            result["summary"]["worksheetCount"] += 1
-            result["summary"]["plannedViewCount"] += len(views)
+            stats = {"worksheetCount": 1, "plannedViewCount": len(views), "createdViewCount": 0, "updateCallCount": 0, "failedCount": 0}
 
             for view in views:
                 if not isinstance(view, dict):
@@ -336,7 +339,7 @@ def main() -> None:
                             continue
                         upd_resp = save_view(upd_payload, auth_config_path, app_id, ws_id, args.dry_run)
                         view_result["updates"].append({"payload": upd_payload, "response": upd_resp})
-                        result["summary"]["updateCallCount"] += 1
+                        stats["updateCallCount"] += 1
                         if not args.dry_run:
                             ok = isinstance(upd_resp, dict) and int(upd_resp.get("state", 0) or 0) == 1
                             if not ok:
@@ -344,12 +347,24 @@ def main() -> None:
 
                 view_result["success"] = final_success
                 if final_success:
-                    result["summary"]["createdViewCount"] += 1
+                    stats["createdViewCount"] += 1
                 else:
-                    result["summary"]["failedCount"] += 1
+                    stats["failedCount"] += 1
 
                 ws_result["views"].append(view_result)
-            app_result["worksheets"].append(ws_result)
+            return ws_result, stats
+
+        with ThreadPoolExecutor(max_workers=args.max_workers) as executor:
+            futures = [executor.submit(_process_ws, ws) for ws in ws_list]
+            for future in as_completed(futures):
+                ret = future.result()
+                if ret is None:
+                    continue
+                ws_result, stats = ret
+                app_result["worksheets"].append(ws_result)
+                for k in ("worksheetCount", "plannedViewCount", "createdViewCount", "updateCallCount", "failedCount"):
+                    result["summary"][k] += stats[k]
+
         if app_result["worksheets"]:
             result["apps"].append(app_result)
 

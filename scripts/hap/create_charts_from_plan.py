@@ -9,7 +9,9 @@ from __future__ import annotations
 import argparse
 import json
 import secrets
+import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import Any, List
@@ -368,6 +370,7 @@ def main() -> None:
     parser.add_argument("--output", default="", help="结果 JSON 输出路径")
     parser.add_argument("--page-id", default="", help="统计图 Page ID（URL 最后一段），用于 savePage 布局")
     parser.add_argument("--dry-run", action="store_true", help="仅打印请求体，不实际调用")
+    parser.add_argument("--max-workers", type=int, default=16, help="并发创建图表数（默认 16）")
     args = parser.parse_args()
 
     plan_path = resolve_plan_path(args.plan_json)
@@ -387,19 +390,17 @@ def main() -> None:
     print(f"规划文件: {plan_path}")
     print(f"准备创建 {len(charts)} 个统计图\n")
 
-    results: List[dict] = []
-    for i, chart in enumerate(charts, 1):
-        chart_name = str(chart.get("name", f"图表{i}"))
+    indexed_results: dict = {}
+
+    def _create_chart(idx_chart):
+        i, chart = idx_chart
+        chart_name = str(chart.get("name", f"图表{i + 1}"))
         report_type = int(chart.get("reportType", 1))
         type_name = REPORT_TYPE_NAMES.get(report_type, str(report_type))
-        print(f"[{i}/{len(charts)}] 创建: {chart_name}（{type_name}）")
-
         body = build_report_body(chart, app_id)
 
         if args.dry_run:
-            print(f"  [dry-run] 请求体:\n{json.dumps(body, ensure_ascii=False, indent=2)}\n")
-            results.append({"chartName": chart_name, "status": "dry-run", "body": body})
-            continue
+            return i, {"chartName": chart_name, "status": "dry-run", "body": body}
 
         try:
             resp_data = save_report_config(body, auth_config_path)
@@ -417,22 +418,26 @@ def main() -> None:
                 or bool(report_id)
             )
             status = "success" if is_success else "failed"
-            print(f"  -> {status}，reportId={report_id}")
-            results.append({
+            print(f"  [{i + 1}/{len(charts)}] {chart_name}（{type_name}）-> {status}，reportId={report_id}")
+            return i, {
                 "chartName": chart_name,
                 "reportType": report_type,
                 "worksheetId": str(chart.get("worksheetId", "")),
                 "status": status,
                 "reportId": report_id,
                 "response": resp_data,
-            })
+            }
         except Exception as exc:
-            print(f"  -> 失败: {exc}")
-            results.append({
-                "chartName": chart_name,
-                "status": "error",
-                "error": str(exc),
-            })
+            print(f"  [{i + 1}/{len(charts)}] {chart_name} -> 失败: {exc}")
+            return i, {"chartName": chart_name, "status": "error", "error": str(exc)}
+
+    with ThreadPoolExecutor(max_workers=args.max_workers) as executor:
+        futures = [executor.submit(_create_chart, (i, c)) for i, c in enumerate(charts)]
+        for future in as_completed(futures):
+            i, r = future.result()
+            indexed_results[i] = r
+
+    results: List[dict] = [indexed_results[i] for i in range(len(charts))]
 
     output_data = {
         "createdAt": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),

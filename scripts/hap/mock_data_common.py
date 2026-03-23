@@ -7,10 +7,12 @@ HAP 造数共享工具。
 from __future__ import annotations
 
 import json
+import random
 import re
+import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import requests
 from ai_utils import AI_CONFIG_PATH, load_ai_config
@@ -255,6 +257,34 @@ def build_headers(app_key: str, sign: str) -> dict:
         "Accept": "application/json, text/plain, */*",
         "Content-Type": "application/json",
     }
+
+
+_TRANSIENT_PATTERNS = ("429", "503", "rate limit", "too many", "频率", "限流", "throttl")
+
+
+def call_with_backoff(fn: Callable, *args, max_retries: int = 5, **kwargs):
+    """
+    带指数退避 + jitter 的重试包装。
+    - 网络错误（ConnectionError / Timeout）：无条件重试
+    - RuntimeError：仅当消息中含限流特征词时重试，其余直接抛出
+    退避时间：2^attempt + random(0,1) 秒，最多重试 max_retries 次。
+    """
+    for attempt in range(max_retries):
+        try:
+            return fn(*args, **kwargs)
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
+            if attempt == max_retries - 1:
+                raise
+            wait = (2 ** attempt) + random.uniform(0, 2 ** attempt)
+            print(f"\n[退避] 网络错误，第{attempt + 1}次重试，等待 {wait:.1f}s: {exc}", flush=True)
+            time.sleep(wait)
+        except RuntimeError as exc:
+            msg = str(exc).lower()
+            if not any(p in msg for p in _TRANSIENT_PATTERNS) or attempt == max_retries - 1:
+                raise
+            wait = (2 ** attempt) + random.uniform(0, 2 ** attempt)
+            print(f"\n[退避] 限流错误，第{attempt + 1}次重试，等待 {wait:.1f}s", flush=True)
+            time.sleep(wait)
 
 
 def request_json(method: str, url: str, headers: dict, payload: Optional[dict] = None, timeout: int = 30) -> dict:
