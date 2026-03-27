@@ -178,7 +178,7 @@ def normalize_spec(raw: dict) -> dict:
     workflows.setdefault("enabled", True)
     workflows.setdefault("thinking", "none")
     workflows.setdefault("no_publish", False)
-    workflows.setdefault("skip_analysis", False)
+    workflows.setdefault("skip_analysis", True)  # ER图已包含关系信息，跳过冗余预分析
     spec["workflows"] = workflows
 
     delete_default_views = spec.get("delete_default_views") if isinstance(spec.get("delete_default_views"), dict) else {}

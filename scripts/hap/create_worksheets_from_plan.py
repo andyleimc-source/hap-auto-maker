@@ -27,6 +27,7 @@ APP_AUTH_DIR = OUTPUT_ROOT / "app_authorizations"
 WORKSHEET_PLAN_DIR = OUTPUT_ROOT / "worksheet_plans"
 WORKSHEET_CREATE_RESULT_DIR = OUTPUT_ROOT / "worksheet_create_results"
 ALLOWED_CARDINALITY = {"1-1", "1-N"}
+RELATION_UPDATE_RETRYABLE_ERRORS = {"数据过时"}
 
 
 def latest_file(base_dir: Path, pattern: str) -> Optional[Path]:
@@ -477,12 +478,19 @@ def add_relation_fields(
 
     url = base_url.rstrip("/") + EDIT_WS_ENDPOINT.format(worksheet_id=worksheet_id)
     payload = {"addFields": add_fields}
-    resp = requests.post(url, headers=headers, json=payload, timeout=30)
-    data = resp.json()
-    if not data.get("success"):
-        raise RuntimeError(f"补充关联字段失败 [{worksheet_name}]: {data}")
-    data["skipped_relations"] = []
-    return data
+    last_error: Optional[dict] = None
+    for attempt in range(1, 6):
+        resp = requests.post(url, headers=headers, json=payload, timeout=30)
+        data = resp.json()
+        if data.get("success"):
+            data["skipped_relations"] = []
+            return data
+        last_error = data if isinstance(data, dict) else {"raw": data}
+        error_msg = str(last_error.get("error_msg", "")).strip()
+        if error_msg not in RELATION_UPDATE_RETRYABLE_ERRORS or attempt == 5:
+            break
+        time.sleep(min(0.6 * attempt, 2.0))
+    raise RuntimeError(f"补充关联字段失败 [{worksheet_name}]: {last_error}")
 
 
 def fetch_worksheet_detail(base_url: str, headers: dict, worksheet_id: str) -> dict:

@@ -421,8 +421,12 @@ def main() -> None:
             pass
 
     transcript: List[Dict[str, str]] = []
-    _hint = '\u300c\u5f00\u59cb\u8fd0\u884c\u300d'  # 「开始运行」
-    print(f"需求对话已启动（模型: {actual_model}）。描述你的需求，输入{_hint}并回车开始执行；/show 查看摘要；/exit 退出。")
+    print(
+        f"需求对话已启动（模型: {actual_model}）。\n"
+        "描述你的需求后，输入以下任意内容（或直接按 Enter）即可开始执行：\n"
+        "  ✅ 直接按 Enter / yes / ok / OK啦 / 可以 / 开始吧 / down / 开始运行\n"
+        "/show 查看摘要；/exit 退出。"
+    )
 
     turns = 0
     while True:
@@ -432,7 +436,10 @@ def main() -> None:
         else:
             cmd = read_user_input("\n你: ").strip()
 
-        if not cmd:
+        _START_TRIGGERS = {"", "yes", "ok", "ok啦", "OK啦", "可以", "开始吧", "down", "开始运行"}
+
+        if not cmd and not transcript:
+            # 没有输入且没有对话内容，忽略空回车
             continue
 
         if cmd == "/exit":
@@ -441,7 +448,7 @@ def main() -> None:
         if cmd == "/show":
             print_transcript_summary(transcript)
             continue
-        if cmd == "开始运行":
+        if cmd.lower() in {t.lower() for t in _START_TRIGGERS}:
             if not transcript:
                 print("当前没有对话内容，请先输入你的需求。")
                 continue

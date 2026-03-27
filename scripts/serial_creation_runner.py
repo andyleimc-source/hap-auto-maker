@@ -126,7 +126,7 @@ def build_spec(case: Dict[str, str]) -> Dict[str, Any]:
 def read_created_worksheet_count(execution_report: Dict[str, Any]) -> int:
     context = execution_report.get("context") if isinstance(execution_report.get("context"), dict) else {}
     result_path = str(context.get("worksheet_create_result_json", "")).strip()
-    if not result_path:
+    if not result_path or result_path == "None":
         return 0
     create_result = load_json(Path(result_path))
     created = create_result.get("created_worksheets", [])

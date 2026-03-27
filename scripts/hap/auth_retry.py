@@ -119,6 +119,8 @@ def hap_web_post(
     account_id, authorization, cookie = load_web_auth(auth_path)
     headers = _build_headers(account_id, authorization, cookie, referer, extra_headers)
 
+    # proxies={} 绕过系统代理，避免 www.mingdao.com 连接超时
+    kwargs.setdefault("proxies", {})
     resp = requests.post(url, headers=headers, **kwargs)
     if resp.status_code == 401:
         print(f"[auth_retry] 检测到 401（POST {url}），正在自动刷新认证后重试...")
@@ -145,6 +147,8 @@ def hap_web_get(
     account_id, authorization, cookie = load_web_auth(auth_path)
     headers = _build_headers(account_id, authorization, cookie, referer, extra_headers)
 
+    # proxies={} 绕过系统代理，避免 www.mingdao.com 连接超时
+    kwargs.setdefault("proxies", {})
     resp = requests.get(url, headers=headers, **kwargs)
     if resp.status_code == 401:
         print(f"[auth_retry] 检测到 401（GET {url}），正在自动刷新认证后重试...")
