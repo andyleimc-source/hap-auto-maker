@@ -1100,6 +1100,32 @@ def create_rows_batch(
     return request_json("POST", url, build_headers(app_key, sign), payload=payload)
 
 
+def create_rows_batch_v3(
+    base_url: str,
+    app_key: str,
+    sign: str,
+    worksheet_id: str,
+    enriched_records: List[dict],
+    field_meta_map: Dict[str, dict],
+    trigger_workflow: bool,
+) -> List[str]:
+    """批量写入记录（使用 build_v3_fields 做字段校验），返回 rowId 列表。"""
+    rows = []
+    for record in enriched_records:
+        rows.append({"fields": build_v3_fields(record, field_meta_map)})
+    payload = {
+        "rows": rows,
+        "triggerWorkflow": trigger_workflow,
+    }
+    url = base_url.rstrip("/") + ROW_BATCH_CREATE_URL.format(worksheet_id=worksheet_id)
+    data = request_json("POST", url, build_headers(app_key, sign), payload=payload)
+    # 批量接口返回 {"success": true, "data": {"ids": ["rowId1", ...]}}
+    ids = data.get("data", {}).get("ids", [])
+    if not isinstance(ids, list):
+        ids = []
+    return [str(rid).strip() for rid in ids if str(rid).strip()]
+
+
 def delete_rows_batch(
     base_url: str,
     app_key: str,
@@ -1173,6 +1199,28 @@ def fetch_rows(
             break
         page_index += 1
     return rows
+
+
+def call_with_backoff(
+    fn: Callable,
+    *,
+    max_retries: int = 3,
+    base_delay: float = 1.0,
+    **kwargs: Any,
+) -> dict:
+    """调用 fn(**kwargs)，失败时以指数退避最多重试 max_retries 次。"""
+    last_exc: Exception = RuntimeError("call_with_backoff: 未执行")
+    for attempt in range(max_retries + 1):
+        try:
+            result = fn(**kwargs)
+            if isinstance(result, dict) and result.get("success") is False and attempt < max_retries:
+                raise RuntimeError(f"API 返回 success=false: {result.get('error', '')}")
+            return result
+        except Exception as exc:
+            last_exc = exc
+            if attempt < max_retries:
+                time.sleep(base_delay * (2 ** attempt))
+    raise last_exc
 
 
 def summarize_write_result(write_result: dict) -> str:
