@@ -10,6 +10,7 @@ import argparse
 import json
 import re
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
