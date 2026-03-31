@@ -498,12 +498,21 @@ def main() -> None:
     else:
         # Gemini 或少量表，仍采用全量模式，带验证重试
         base_prompt = build_prompt(snapshot)
-        validation_retries = 3
+        validation_retries = 4
         last_error: Optional[str] = None
         for val_attempt in range(1, validation_retries + 1):
             prompt = base_prompt
             if last_error:
-                prompt = base_prompt + f"\n\n# 上次输出验证失败（第 {val_attempt - 1} 次）\n错误信息：{last_error}\n请仔细检查并修正后重新输出。"
+                prompt = base_prompt + (
+                    f"\n\n# 上次输出验证失败（第 {val_attempt - 1} 次）\n"
+                    f"错误信息：{last_error}\n\n"
+                    f"常见修正方向：\n"
+                    f"- 记录数量不匹配 → records 数组长度必须严格等于 recordCount\n"
+                    f"- worksheetId 错误 → 必须与输入的 worksheetId 完全一致\n"
+                    f"- 格式错误 → records 是数组，valuesByFieldId 是对象\n"
+                    f"- 不要输出 skippedFields 中的字段\n"
+                    f"请严格修正后重新输出完整 JSON。"
+                )
             response = generate_with_retry(client, model_name, prompt, args.gemini_retries, ai_config)
             raw = parse_ai_json(response.text or "")
             try:

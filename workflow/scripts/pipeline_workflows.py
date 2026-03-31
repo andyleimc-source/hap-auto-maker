@@ -633,26 +633,36 @@ _THINKING_BUDGETS: dict[str, int] = {
     "high": 24576,
 }
 
-_MAX_JSON_RETRIES = 2  # JSON 解析失败时最多重试 Gemini 调用的次数
+_MAX_JSON_RETRIES = 3  # JSON 解析失败时最多重试 Gemini 调用的次数
 
 
 def _call_ai_once(prompt: str, ai_config: dict, thinking: str) -> str:
-    """发起一次 AI API 调用，返回原始文本。"""
+    """发起一次 AI API 调用，返回原始文本。含 API 级重试（网络超时/限流）。"""
     budget = None if thinking == "none" else _THINKING_BUDGETS.get(thinking, 8192)
     client = get_ai_client(ai_config)
     model_name = ai_config["model"]
     provider = ai_config.get("provider", "gemini")
     print(f"[ai] 正在生成工作流规划（provider={provider}，model={model_name}，thinking={thinking}）...", file=sys.stderr)
-    resp = client.models.generate_content(
-        model=model_name,
-        contents=prompt,
-        config=create_generation_config(
-            ai_config,
-            response_mime_type="application/json",
-            thinking_budget=budget,
-        ),
-    )
-    return resp.text
+    last_exc = None
+    for attempt in range(1, 4):
+        try:
+            resp = client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+                config=create_generation_config(
+                    ai_config,
+                    response_mime_type="application/json",
+                    thinking_budget=budget,
+                ),
+            )
+            return resp.text
+        except Exception as exc:
+            last_exc = exc
+            if attempt < 3:
+                wait = min(16, 2 ** (attempt - 1))
+                print(f"[ai] API 调用失败（第 {attempt} 次），{wait}s 后重试：{exc}", file=sys.stderr)
+                time.sleep(wait)
+    raise last_exc
 
 
 def call_ai(prompt: str, ai_config: dict, thinking: str = "none") -> dict:

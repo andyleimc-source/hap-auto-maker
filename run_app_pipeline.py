@@ -4,8 +4,8 @@
 一键串联入口：需求对话 → 应用创建 → 全流程执行
 
 用法：
-    python3 scripts/run_app_pipeline.py               # 默认：不录屏
-    python3 scripts/run_app_pipeline.py --add-recording  # 开启 Playwright 录屏
+    python3 run_app_pipeline.py               # 默认：不录屏
+    python3 run_app_pipeline.py --add-recording  # 开启 Playwright 录屏
 """
 
 import argparse
@@ -13,7 +13,7 @@ import runpy
 import sys
 from pathlib import Path
 
-HAP_SCRIPT = (Path(__file__).resolve().parent / "hap" / "run_app_to_video.py").resolve()
+HAP_SCRIPT = (Path(__file__).resolve().parent / "scripts" / "hap" / "run_app_to_video.py").resolve()
 
 
 def main() -> None:
