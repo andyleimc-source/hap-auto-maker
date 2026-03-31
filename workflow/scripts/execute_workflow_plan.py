@@ -114,35 +114,40 @@ def fetch_existing_names(session: Session, app_id: str) -> set[str]:
 # ── 发布工作流 ────────────────────────────────────────────────────────────────
 
 def publish_process(session: Session, process_id: str) -> bool:
-    """调用 process/publish 将工作流设为开启状态，返回是否成功。"""
-    try:
-        resp = session.get(
-            f"https://api.mingdao.com/workflow/process/publish?isPublish=true&processId={process_id}",
-        )
-        data = resp.get("data") or {}
-        is_publish = data.get("isPublish")
-        error_nodes = data.get("errorNodeIds") or []
-        warnings = data.get("processWarnings") or []
-        if is_publish:
-            print("    process/publish → ✓ 已开启", file=sys.stderr)
-            return True
-        else:
+    """调用 process/publish 将工作流设为开启状态，返回是否成功。含重试。"""
+    url = f"https://api.mingdao.com/workflow/process/publish?isPublish=true&processId={process_id}"
+    for attempt in range(1, 4):
+        try:
+            resp = session.get(url)
+            data = resp.get("data") or {}
+            is_publish = data.get("isPublish")
+            error_nodes = data.get("errorNodeIds") or []
+            warnings = data.get("processWarnings") or []
+            if is_publish:
+                print("    process/publish → ✓ 已开启", file=sys.stderr)
+                return True
             print(f"    process/publish → ✗ 未开启  errorNodes={error_nodes}  warnings={warnings}", file=sys.stderr)
-            # 如果有错误节点，尝试第二次发布（某些场景下首次调用仅做校验）
+            # 如果有错误节点，立即重试一次（某些场景下首次调用仅做校验）
             if error_nodes:
                 print("    process/publish → 重试发布...", file=sys.stderr)
-                resp2 = session.get(
-                    f"https://api.mingdao.com/workflow/process/publish?isPublish=true&processId={process_id}",
-                )
+                resp2 = session.get(url)
                 data2 = resp2.get("data") or {}
                 if data2.get("isPublish"):
                     print("    process/publish → ✓ 重试成功，已开启", file=sys.stderr)
                     return True
                 print(f"    process/publish → ✗ 重试仍失败  errorNodes={data2.get('errorNodeIds')}", file=sys.stderr)
+            if attempt < 3:
+                time.sleep(2)
+                continue
             return False
-    except Exception as exc:
-        print(f"    process/publish → 异常：{exc}", file=sys.stderr)
-        return False
+        except Exception as exc:
+            if attempt < 3:
+                print(f"    process/publish → 异常：{exc}，{2}s 后重试...", file=sys.stderr)
+                time.sleep(2)
+                continue
+            print(f"    process/publish → 异常：{exc}", file=sys.stderr)
+            return False
+    return False
 
 
 # ── 动作节点：字段值处理 & 创建 ───────────────────────────────────────────────

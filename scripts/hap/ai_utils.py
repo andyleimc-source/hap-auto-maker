@@ -6,8 +6,11 @@ AI 模型统一调用工具。
 统一从 config/credentials/ai_auth.json 加载配置，同时兼容旧 gemini_auth.json。
 """
 
+import fcntl
 import json
 import re
+import time
+from datetime import date
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -18,11 +21,73 @@ DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 DEFAULT_DEEPSEEK_MODEL = "deepseek-chat"
 DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 
+# RPD 使用量追踪（跨进程，按日期 + 模型统计）
+_RPD_USAGE_FILE = BASE_DIR / "config" / "gemini_rpd_usage.json"
+_RPD_USAGE_LOCK = BASE_DIR / "config" / "gemini_rpd_usage.json.lock"
+
+# RPD 配置上限（每日请求次数限额）
+RPD_LIMITS = {
+    "gemini-2.5-flash": 10000,
+    "gemini-2.5-pro":   1000,
+}
+# 留 5% 安全余量
+RPD_SAFETY_MARGIN = 0.05
+
+
+def _record_rpd(model: str) -> Dict[str, int]:
+    """
+    记录一次 Gemini 请求，返回今日当前计数 {"count": N, "limit": M}。
+    多进程安全（文件锁 + 合并写入）。
+    """
+    today = date.today().isoformat()
+    _RPD_USAGE_LOCK.touch(exist_ok=True)
+    with open(_RPD_USAGE_LOCK, "r") as lock_fh:
+        fcntl.flock(lock_fh, fcntl.LOCK_EX)
+        try:
+            if _RPD_USAGE_FILE.exists() and _RPD_USAGE_FILE.stat().st_size > 0:
+                data = json.loads(_RPD_USAGE_FILE.read_text(encoding="utf-8"))
+            else:
+                data = {}
+            day_data = data.setdefault(today, {})
+            day_data[model] = day_data.get(model, 0) + 1
+            _RPD_USAGE_FILE.write_text(
+                json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            )
+            count = day_data[model]
+        finally:
+            fcntl.flock(lock_fh, fcntl.LOCK_UN)
+    limit = RPD_LIMITS.get(model, 0)
+    return {"count": count, "limit": limit}
+
+
+def get_rpd_usage(model: str = None) -> Dict:
+    """查询今日 RPD 使用量。不传 model 则返回所有模型的汇总。"""
+    today = date.today().isoformat()
+    if not _RPD_USAGE_FILE.exists():
+        return {}
+    data = json.loads(_RPD_USAGE_FILE.read_text(encoding="utf-8"))
+    day_data = data.get(today, {})
+    if model:
+        count = day_data.get(model, 0)
+        limit = RPD_LIMITS.get(model, 0)
+        used_pct = round(count / limit * 100, 1) if limit else 0
+        return {"model": model, "date": today, "count": count, "limit": limit, "used_pct": used_pct}
+    # 返回所有模型
+    result = {}
+    for m, cnt in day_data.items():
+        lim = RPD_LIMITS.get(m, 0)
+        result[m] = {
+            "count": cnt,
+            "limit": lim,
+            "used_pct": round(cnt / lim * 100, 1) if lim else 0,
+        }
+    return {"date": today, "models": result}
+
 # 任务档位映射
 TIER_MODELS = {
     "gemini": {
         "reasoning": "gemini-2.5-pro",
-        "fast": "gemini-2.5-flash",
+        "fast": "gemini-2.5-pro",
     },
     "deepseek": {
         "reasoning": "deepseek-reasoner",
@@ -245,6 +310,48 @@ class FakeChat:
         return FakeResponse(reply)
 
 
+class _GeminiRpdWrapper:
+    """
+    包装原生 genai.Client，拦截 models.generate_content 和 chats.create，
+    在每次实际请求前后记录 RPD 使用量。
+    """
+
+    def __init__(self, client, model: str):
+        self._client = client
+        self._model = model
+
+    @property
+    def models(self):
+        return self
+
+    @property
+    def chats(self):
+        return _GeminiChatsProxy(self._client.chats, self._model)
+
+    def generate_content(self, model: str, contents, config=None):
+        _record_rpd(model or self._model)
+        return self._client.models.generate_content(model=model, contents=contents, config=config)
+
+
+class _GeminiChatsProxy:
+    def __init__(self, chats_obj, model: str):
+        self._chats = chats_obj
+        self._model = model
+
+    def create(self, model: str, config=None):
+        return _GeminiChatWrapper(self._chats.create(model=model, config=config), model or self._model)
+
+
+class _GeminiChatWrapper:
+    def __init__(self, chat, model: str):
+        self._chat = chat
+        self._model = model
+
+    def send_message(self, message):
+        _record_rpd(self._model)
+        return self._chat.send_message(message)
+
+
 def get_ai_client(config: Optional[Dict[str, str]] = None, tier: Optional[str] = None):
     """
     根据配置获取相应的 AI 客户端。
@@ -264,7 +371,8 @@ def get_ai_client(config: Optional[Dict[str, str]] = None, tier: Optional[str] =
     if provider == "gemini":
         from google import genai
 
-        return genai.Client(api_key=api_key)
+        raw_client = genai.Client(api_key=api_key)
+        return _GeminiRpdWrapper(raw_client, model)
     if provider == "deepseek":
         return GeminiCompatibilityClient(provider, api_key, model, config.get("base_url"))
     raise ValueError(f"不支持的 AI 供应商: {provider}")
@@ -374,10 +482,27 @@ def parse_gemini_json(raw: str) -> dict:
 
 
 if __name__ == "__main__":
-    try:
-        cfg = load_ai_config()
-        print(f"Provider: {cfg['provider']}")
-        print(f"Model: {cfg['model']}")
-        print(f"API Key: {mask_secret(cfg['api_key'], show=6)}")
-    except Exception as e:
-        print(f"Error: {e}")
+    import sys as _sys
+    if len(_sys.argv) > 1 and _sys.argv[1] == "rpd":
+        # 查询今日 RPD 使用量：python ai_utils.py rpd [model]
+        model_arg = _sys.argv[2] if len(_sys.argv) > 2 else None
+        usage = get_rpd_usage(model_arg)
+        print(json.dumps(usage, ensure_ascii=False, indent=2))
+    else:
+        try:
+            cfg = load_ai_config()
+            print(f"Provider: {cfg['provider']}")
+            print(f"Model: {cfg['model']}")
+            print(f"API Key: {mask_secret(cfg['api_key'], show=6)}")
+            print()
+            usage = get_rpd_usage()
+            today = usage.get("date", "")
+            models_data = usage.get("models", {})
+            if models_data:
+                print(f"今日 RPD 使用量 ({today}):")
+                for m, info in models_data.items():
+                    print(f"  {m}: {info['count']}/{info['limit']} ({info['used_pct']}%)")
+            else:
+                print(f"今日 ({today}) 暂无 RPD 记录")
+        except Exception as e:
+            print(f"Error: {e}")

@@ -393,6 +393,11 @@ def main() -> None:
         default=3,
         help="Gemini API 最大并发调用数（默认 3）",
     )
+    parser.add_argument(
+        "--app-id",
+        default="",
+        help="已有应用 ID，跳过创建步骤并使用该 appId 初始化 context（配合 --only-steps 补跑）",
+    )
     args = parser.parse_args()
 
     # 根据参数调整信号量
@@ -404,6 +409,9 @@ def main() -> None:
     ensure_scripts_exist()
     spec_path = Path(args.spec_json).expanduser().resolve()
     spec = normalize_spec(load_json(spec_path))
+    if args.app_id.strip():
+        spec["app"]["target_mode"] = "use_existing"
+        spec["app"]["app_id"] = args.app_id.strip()
     if spec.get("schema_version") != "workflow_requirement_v1":
         raise ValueError("schema_version 必须是 workflow_requirement_v1")
 
@@ -494,11 +502,11 @@ def main() -> None:
     ) -> bool:
         if not step_selected(step_id, step_key, selected_steps):
             with steps_lock:
-                steps_report.append({"step_id": step_id, "step_key": step_key, "title": title, "skipped": True, "reason": "not_selected"})
+                steps_report.append({"step_id": step_id, "step_key": step_key, "title": title, "skipped": True, "reason": "not_selected", "result": {}})
             return True
         if cmd is None:
             with steps_lock:
-                steps_report.append({"step_id": step_id, "step_key": step_key, "title": title, "skipped": True, "reason": "disabled_by_spec"})
+                steps_report.append({"step_id": step_id, "step_key": step_key, "title": title, "skipped": True, "reason": "disabled_by_spec", "result": {}})
             return True
 
         elapsed_total = time.time() - pipeline_start
@@ -588,7 +596,7 @@ def main() -> None:
         context["app_id"] = existing_app_id
         context["app_auth_json"] = str(auth_file)
         with steps_lock:
-            steps_report.append({"step_id": 1, "step_key": "create_app", "title": "创建应用+授权+应用icon", "skipped": True, "reason": "use_existing"})
+            steps_report.append({"step_id": 1, "step_key": "create_app", "title": "创建应用+授权+应用icon", "skipped": True, "reason": "use_existing", "result": {}})
 
     app_id = str(context.get("app_id") or "")
     app_auth_json = str(context.get("app_auth_json") or "")
@@ -606,7 +614,7 @@ def main() -> None:
     def run_step_2a() -> bool:
         if not ws.get("enabled", True):
             with steps_lock:
-                steps_report.append({"step_id": 2, "step_key": "worksheets_plan", "title": "规划工作表", "skipped": True, "reason": "disabled_by_spec"})
+                steps_report.append({"step_id": 2, "step_key": "worksheets_plan", "title": "规划工作表", "skipped": True, "reason": "disabled_by_spec", "result": {}})
             return True
         cmd2a = [
             sys.executable, str(SCRIPT_PLAN_WORKSHEETS),
@@ -620,7 +628,7 @@ def main() -> None:
     def run_step_3() -> bool:
         if not roles.get("enabled", True):
             with steps_lock:
-                steps_report.append({"step_id": 3, "step_key": "roles", "title": "规划并创建应用角色", "skipped": True, "reason": "disabled_by_spec"})
+                steps_report.append({"step_id": 3, "step_key": "roles", "title": "规划并创建应用角色", "skipped": True, "reason": "disabled_by_spec", "result": {}})
             return True
         cmd3 = [
             sys.executable, str(SCRIPT_PIPELINE_APP_ROLES),
@@ -646,7 +654,7 @@ def main() -> None:
     def run_step_8() -> bool:
         if not app["navi_style"].get("enabled", True):
             with steps_lock:
-                steps_report.append({"step_id": 8, "step_key": "navi", "title": "设置应用导航风格", "skipped": True, "reason": "disabled_by_spec"})
+                steps_report.append({"step_id": 8, "step_key": "navi", "title": "设置应用导航风格", "skipped": True, "reason": "disabled_by_spec", "result": {}})
             return True
         cmd8 = [
             sys.executable, str(SCRIPT_UPDATE_NAVI),
@@ -693,7 +701,7 @@ def main() -> None:
             return
     elif not ws.get("enabled", True):
         with steps_lock:
-            steps_report.append({"step_id": 2, "step_key": "worksheets_create", "title": "创建工作表", "skipped": True, "reason": "disabled_by_spec"})
+            steps_report.append({"step_id": 2, "step_key": "worksheets_create", "title": "创建工作表", "skipped": True, "reason": "disabled_by_spec", "result": {}})
 
     if fail_fast and has_failure():
         out = save_report()
@@ -715,7 +723,7 @@ def main() -> None:
     def run_step_4() -> bool:
         if not ws["icon_update"].get("enabled", True):
             with steps_lock:
-                steps_report.append({"step_id": 4, "step_key": "worksheet_icon", "title": "更新工作表icon", "skipped": True, "reason": "disabled_by_spec"})
+                steps_report.append({"step_id": 4, "step_key": "worksheet_icon", "title": "更新工作表icon", "skipped": True, "reason": "disabled_by_spec", "result": {}})
             return True
         cmd4 = [
             sys.executable, str(SCRIPT_PIPELINE_ICON),
@@ -729,7 +737,7 @@ def main() -> None:
     def run_step_5() -> bool:
         if not ws["layout"].get("enabled", True):
             with steps_lock:
-                steps_report.append({"step_id": 5, "step_key": "layout", "title": "规划并应用字段布局", "skipped": True, "reason": "disabled_by_spec"})
+                steps_report.append({"step_id": 5, "step_key": "layout", "title": "规划并应用字段布局", "skipped": True, "reason": "disabled_by_spec", "result": {}})
             return True
         cmd5 = [
             sys.executable, str(SCRIPT_PIPELINE_LAYOUT),
@@ -750,7 +758,7 @@ def main() -> None:
     def run_step_6() -> bool:
         if not views.get("enabled", True):
             with steps_lock:
-                steps_report.append({"step_id": 6, "step_key": "views", "title": "规划并创建视图", "skipped": True, "reason": "disabled_by_spec"})
+                steps_report.append({"step_id": 6, "step_key": "views", "title": "规划并创建视图", "skipped": True, "reason": "disabled_by_spec", "result": {}})
             return True
         cmd6 = [
             sys.executable, str(SCRIPT_PIPELINE_VIEWS),
@@ -767,7 +775,7 @@ def main() -> None:
     def run_step_9() -> bool:
         if not mock_data.get("enabled", True):
             with steps_lock:
-                steps_report.append({"step_id": 9, "step_key": "mock_data", "title": "执行造数流水线", "skipped": True, "reason": "disabled_by_spec"})
+                steps_report.append({"step_id": 9, "step_key": "mock_data", "title": "执行造数流水线", "skipped": True, "reason": "disabled_by_spec", "result": {}})
             return True
         cmd9 = [
             sys.executable, str(SCRIPT_PIPELINE_MOCK_DATA),
@@ -785,7 +793,7 @@ def main() -> None:
     def run_step_10() -> bool:
         if not chatbots.get("enabled", True):
             with steps_lock:
-                steps_report.append({"step_id": 10, "step_key": "chatbots", "title": "创建对话机器人", "skipped": True, "reason": "disabled_by_spec"})
+                steps_report.append({"step_id": 10, "step_key": "chatbots", "title": "创建对话机器人", "skipped": True, "reason": "disabled_by_spec", "result": {}})
             return True
         cmd10 = [
             sys.executable, str(SCRIPT_PIPELINE_CHATBOTS),
@@ -805,7 +813,7 @@ def main() -> None:
     def run_step_11() -> bool:
         if not workflows.get("enabled", True):
             with steps_lock:
-                steps_report.append({"step_id": 11, "step_key": "workflows_plan", "title": "规划工作流（AI）", "skipped": True, "reason": "disabled_by_spec"})
+                steps_report.append({"step_id": 11, "step_key": "workflows_plan", "title": "规划工作流（AI）", "skipped": True, "reason": "disabled_by_spec", "result": {}})
             return True
         WORKFLOW_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         cmd11 = [
@@ -824,7 +832,7 @@ def main() -> None:
     def run_step_13() -> bool:
         if not delete_default_views_cfg.get("enabled", True):
             with steps_lock:
-                steps_report.append({"step_id": 13, "step_key": "delete_default_views", "title": "删除[全部]默认视图", "skipped": True, "reason": "disabled_by_spec"})
+                steps_report.append({"step_id": 13, "step_key": "delete_default_views", "title": "删除[全部]默认视图", "skipped": True, "reason": "disabled_by_spec", "result": {}})
             return True
         cmd13 = [
             sys.executable, str(SCRIPT_DELETE_DEFAULT_VIEWS),
@@ -899,11 +907,11 @@ def main() -> None:
     def run_step_7() -> bool:
         if not view_filters.get("enabled", True):
             with steps_lock:
-                steps_report.append({"step_id": 7, "step_key": "view_filters", "title": "规划并应用视图筛选", "skipped": True, "reason": "disabled_by_spec"})
+                steps_report.append({"step_id": 7, "step_key": "view_filters", "title": "规划并应用视图筛选", "skipped": True, "reason": "disabled_by_spec", "result": {}})
             return True
         if not ok6:
             with steps_lock:
-                steps_report.append({"step_id": 7, "step_key": "view_filters", "title": "规划并应用视图筛选", "skipped": True, "reason": "step6_failed"})
+                steps_report.append({"step_id": 7, "step_key": "view_filters", "title": "规划并应用视图筛选", "skipped": True, "reason": "step6_failed", "result": {}})
             return True
         cmd7 = [
             sys.executable, str(SCRIPT_PIPELINE_TABLEVIEW_FILTERS),
@@ -923,11 +931,11 @@ def main() -> None:
     def run_step_12() -> bool:
         if not workflows.get("enabled", True):
             with steps_lock:
-                steps_report.append({"step_id": 12, "step_key": "workflows_execute", "title": "创建工作流", "skipped": True, "reason": "disabled_by_spec"})
+                steps_report.append({"step_id": 12, "step_key": "workflows_execute", "title": "创建工作流", "skipped": True, "reason": "disabled_by_spec", "result": {}})
             return True
         if not ok11:
             with steps_lock:
-                steps_report.append({"step_id": 12, "step_key": "workflows_execute", "title": "创建工作流", "skipped": True, "reason": "step11_failed"})
+                steps_report.append({"step_id": 12, "step_key": "workflows_execute", "title": "创建工作流", "skipped": True, "reason": "step11_failed", "result": {}})
             return True
         workflow_execute_output = (WORKFLOW_OUTPUT_DIR / "execute_workflow_plan_latest.json").resolve()
         cmd12 = [
@@ -955,7 +963,7 @@ def main() -> None:
     def run_step_14() -> bool:
         if not pages_cfg.get("enabled", True):
             with steps_lock:
-                steps_report.append({"step_id": 14, "step_key": "pages", "title": "创建统计图表页", "skipped": True, "reason": "disabled_by_spec"})
+                steps_report.append({"step_id": 14, "step_key": "pages", "title": "创建统计图表页", "skipped": True, "reason": "disabled_by_spec", "result": {}})
             return True
         cmd14 = [
             sys.executable, str(SCRIPT_PIPELINE_PAGES),
