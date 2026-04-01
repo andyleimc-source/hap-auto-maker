@@ -178,7 +178,7 @@ def parse_worksheet_create_result(result_path: Path) -> List[dict]:
     if isinstance(data, list):
         items = data
     elif isinstance(data, dict):
-        items = data.get("worksheets", data.get("results", data.get("data", [])))
+        items = data.get("worksheets", data.get("created_worksheets", data.get("results", data.get("data", []))))
         if isinstance(items, dict):
             items = list(items.values())
     else:

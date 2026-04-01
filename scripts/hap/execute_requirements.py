@@ -501,7 +501,7 @@ def main() -> None:
 
     def has_failure() -> bool:
         with steps_lock:
-            return any(x.get("ok") is False for x in steps_report)
+            return any(x.get("ok") is False and not x.get("non_fatal") for x in steps_report)
 
     def execute_step(
         step_id: int,
@@ -861,6 +861,13 @@ def main() -> None:
         ok9 = execute_step(9, "mock_data", "执行造数流水线", cmd9, uses_gemini=True)
         if ok9 and not execution_dry_run:
             context["mock_data_run_json"] = extract_report_path(str(steps_report[-1]["result"].get("stdout", "")))
+        if not ok9:
+            # 造数失败不应阻断后续步骤（视图筛选、工作流、图表页），标记为非致命
+            with steps_lock:
+                for sr in steps_report:
+                    if sr.get("step_id") == 9 and not sr.get("ok", True):
+                        sr["non_fatal"] = True
+                        break
         return ok9
 
     def run_step_10() -> bool:
