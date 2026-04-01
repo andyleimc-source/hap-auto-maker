@@ -255,21 +255,31 @@ def run_mode_two(args, sections_create_result: dict) -> List[dict]:
         # 跳过已在目标分组的（source == target）
         if source_section_id == target_section_id:
             continue
-        payload = {
-            "sourceAppId": args.app_id,
-            "resultAppId": args.app_id,
-            "sourceAppSectionId": source_section_id,
-            "ResultAppSectionId": target_section_id,
-            "workSheetsInfo": ws_list,
-        }
-        resp = hap_post(MOVE_WORKSHEET_URL, args.app_id, payload, args.dry_run)
-        ws_names = [w["workSheetName"] for w in ws_list]
-        if args.dry_run or resp.get("state") == 1 or resp.get("dry_run"):
-            print(f"  ✓ 移动 {len(ws_list)} 张工作表到分组 {target_section_id}: {ws_names}")
-            move_results.append({"targetSectionId": target_section_id, "worksheets": ws_names, "ok": True})
-        else:
-            print(f"  ✗ 移动失败 (section={target_section_id}): {resp}")
-            move_results.append({"targetSectionId": target_section_id, "worksheets": ws_names, "ok": False, "resp": resp})
+        # API 每次只能移动一张表，必须逐张调用
+        ok_names = []
+        fail_names = []
+        for ws in ws_list:
+            payload = {
+                "sourceAppId": args.app_id,
+                "resultAppId": args.app_id,
+                "sourceAppSectionId": source_section_id,
+                "ResultAppSectionId": target_section_id,
+                "workSheetsInfo": [ws],
+            }
+            resp = hap_post(MOVE_WORKSHEET_URL, args.app_id, payload, args.dry_run)
+            if args.dry_run or resp.get("state") == 1 or resp.get("dry_run"):
+                ok_names.append(ws["workSheetName"])
+            else:
+                fail_names.append(ws["workSheetName"])
+                print(f"  ✗ 移动失败「{ws['workSheetName']}」(section={target_section_id}): {resp}")
+        if ok_names:
+            print(f"  ✓ 移动 {len(ok_names)} 张到分组 {target_section_id}: {ok_names}")
+        move_results.append({
+            "targetSectionId": target_section_id,
+            "worksheets": ok_names,
+            "failed": fail_names,
+            "ok": len(fail_names) == 0,
+        })
 
     return move_results
 

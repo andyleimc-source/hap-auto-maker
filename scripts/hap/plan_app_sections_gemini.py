@@ -63,10 +63,10 @@ def build_prompt(app_name: str, worksheets: List[dict]) -> str:
 
 分组原则：
 1. 同一业务领域的工作表放一组（如客户相关、财务相关、生产相关）
-2. 每个分组不超过 8 张工作表，不少于 1 张
+2. 每个分组最少 2 张工作表，最多 8 张工作表
 3. 所有工作表都必须被分配，不能遗漏
 4. 分组名称用 2-6 个中文字，简洁明了
-5. 如果工作表总数不超过 6 张，可以只创建 1-2 个分组
+5. 如果某分组只剩 1 张工作表，将其合并到最相关的分组中
 
 ## 输出格式（严格 JSON，不要任何解释文字）
 
@@ -104,6 +104,10 @@ def validate_sections_plan(plan: dict, worksheet_names: Set[str]) -> None:
         ws_list = sec.get("worksheets")
         if not isinstance(ws_list, list):
             raise ValueError(f"sections[{i}].worksheets 必须是列表")
+        if len(ws_list) < 2:
+            raise ValueError(f"分组「{name}」只有 {len(ws_list)} 张工作表，每个分组最少需要 2 张")
+        if len(ws_list) > 8:
+            raise ValueError(f"分组「{name}」有 {len(ws_list)} 张工作表，每个分组最多允许 8 张")
         for ws_name in ws_list:
             ws_name = str(ws_name).strip()
             if ws_name not in worksheet_names:
@@ -138,8 +142,8 @@ def main() -> None:
 
     worksheet_names: Set[str] = {str(ws.get("name", "")).strip() for ws in worksheets if ws.get("name")}
 
-    if len(worksheets) <= 2:
-        # 太少的工作表直接放一个默认分组
+    if len(worksheets) < 4:
+        # 工作表数量不足以形成多分组，全部放一个默认分组
         result = {
             "app_name": app_name,
             "sections": [{"name": "全部", "worksheets": list(worksheet_names)}]
