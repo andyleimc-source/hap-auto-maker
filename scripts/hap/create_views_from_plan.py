@@ -75,6 +75,8 @@ def normalize_advanced_setting(view_type: str, value: Any) -> dict:
     if "coverstyle" not in raw:
         if str(view_type) == "3":
             raw["coverstyle"] = '{"position":"2"}'
+        elif str(view_type) in ("2", "5"):
+            pass  # 层级视图和甘特图不需要 coverstyle
         else:
             raw["coverstyle"] = '{"position":"1","style":3}'
     out = {}

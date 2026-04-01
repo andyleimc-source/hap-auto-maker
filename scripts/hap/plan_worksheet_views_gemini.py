@@ -37,7 +37,7 @@ CURRENT_AI_CONFIG: Dict[str, str] = {}
 
 APP_INFO_URL = "https://api.mingdao.com/v3/app"
 GET_CONTROLS_URL = "https://www.mingdao.com/api/Worksheet/GetWorksheetControls"
-ALLOWED_VIEW_TYPES = {"0", "1", "3", "4"}
+ALLOWED_VIEW_TYPES = {"0", "1", "2", "3", "4", "5"}
 
 
 def now_ts() -> str:
@@ -286,7 +286,7 @@ def build_prompt(app_name: str, worksheet_name: str, worksheet_id: str, fields: 
   "views": [
     {{
       "name": "视图名",
-      "viewType": "0|1|3|4",
+      "viewType": "0|1|2|3|4|5",
       "reason": "建议理由",
       "displayControls": ["字段ID1", "字段ID2"],
       "coverCid": "封面字段ID或空字符串",
@@ -304,13 +304,15 @@ def build_prompt(app_name: str, worksheet_name: str, worksheet_id: str, fields: 
 }}
 
 规则：
-1) 仅允许 viewType=0(表格),1(看板),3(画廊),4(日历)。
-2) 视图数量 1-4 个，必须实用，不要凑数。
+1) 允许 viewType=0(表格),1(看板),2(层级视图),3(画廊),4(日历),5(甘特图)。
+2) 视图数量 1-5 个，必须实用，不要凑数。
 3) displayControls / coverCid / viewControl 必须来自提供的字段ID；无法确定时填空或省略。
 4) 日历视图必须在 postCreateUpdates.advancedSetting 中提供 calendarcids（字符串化 JSON），格式必须为：'[{{"begin":"日期字段ID","end":"结束日期字段ID或空字符串"}}]'。begin 为开始日期字段ID（必填），end 为结束日期字段ID（无则填空字符串）。
 5) 看板视图建议设置 viewControl 为单选字段ID（若存在）。
-6) 若字段不支持某视图，请不要输出该视图类型。
-7) 输出必须是可解析 JSON。
+6) 甘特图视图（viewType=5）需要工作表含有开始日期和结束日期字段，适合项目管理、任务排期类场景。
+7) 层级视图（viewType=2）适合有上下级/父子关系的数据（如部门树、分类层级）。
+8) 若字段不支持某视图，请不要输出该视图类型。
+9) 输出必须是可解析 JSON。
 """.strip()
 
 
@@ -398,7 +400,7 @@ def build_batch_prompt(app_name: str, worksheets_data: List[dict]) -> str:
       "views": [
         {{
           "name": "视图名",
-          "viewType": "0|1|3|4",
+          "viewType": "0|1|2|3|4|5",
           "reason": "建议理由",
           "displayControls": ["字段ID1", "字段ID2"],
           "coverCid": "封面字段ID或空字符串",
@@ -418,13 +420,15 @@ def build_batch_prompt(app_name: str, worksheets_data: List[dict]) -> str:
 }}
 
 规则：
-1) 仅允许 viewType=0(表格),1(看板),3(画廊),4(日历)。
-2) 每个工作表视图数量 1-4 个，必须实用，不要凑数。
+1) 允许 viewType=0(表格),1(看板),2(层级视图),3(画廊),4(日历),5(甘特图)。
+2) 每个工作表视图数量 1-5 个，必须实用，不要凑数。
 3) displayControls / coverCid / viewControl 必须来自对应工作表提供的字段ID；无法确定时填空或省略。
 4) 日历视图必须在 postCreateUpdates.advancedSetting 中提供 calendarcids（字符串化 JSON），格式必须为：'[{{"begin":"日期字段ID","end":"结束日期字段ID或空字符串"}}]'。begin 为开始日期字段ID（必填），end 为结束日期字段ID（无则填空字符串）。
 5) 看板视图建议设置 viewControl 为单选字段ID（若存在）。
-6) 若字段不支持某视图，请不要输出该视图类型。
-7) 输出必须是可解析 JSON，worksheets 数组长度必须等于 {count}。""".strip()
+6) 甘特图视图（viewType=5）需要工作表含有开始日期和结束日期字段，适合项目管理、任务排期类场景。
+7) 层级视图（viewType=2）适合有上下级/父子关系的数据（如部门树、分类层级）。
+8) 若字段不支持某视图，请不要输出该视图类型。
+9) 输出必须是可解析 JSON，worksheets 数组长度必须等于 {count}。""".strip()
 
 
 def plan_views_batch(
