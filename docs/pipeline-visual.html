@@ -1,0 +1,872 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HAP Auto Maker — 工作流总览</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: #f5f5f7; color: #1d1d1f; min-height: 100vh; }
+
+/* ── 顶栏 ── */
+.topbar { background: #fff; border-bottom: 1px solid #e5e5e7; padding: 14px 28px; display: flex; align-items: center; gap: 14px; position: sticky; top: 0; z-index: 100; }
+.topbar h1 { font-size: 17px; font-weight: 700; }
+.topbar .sub { font-size: 13px; color: #86868b; }
+.topbar .badge { background: #f0f0f2; border-radius: 12px; padding: 3px 12px; font-size: 12px; color: #6e6e73; }
+
+/* ── 主布局 ── */
+.layout { display: flex; height: calc(100vh - 53px); }
+
+/* ── 左侧流程 ── */
+.canvas { flex: 1; overflow-y: auto; padding: 32px 40px; }
+.flow { max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; align-items: center; }
+
+/* ── 连接线 ── */
+.connector { display: flex; flex-direction: column; align-items: center; padding: 4px 0; }
+.conn-line { width: 2px; height: 24px; background: #d1d1d6; }
+.conn-arrow { width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 6px solid #d1d1d6; }
+.conn-label { font-size: 10px; color: #86868b; background: #f5f5f7; padding: 2px 8px; border-radius: 8px; margin: 4px 0; max-width: 200px; text-align: center; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ── 阶段标签 ── */
+.wave-tag { display: inline-flex; align-items: center; gap: 6px; padding: 4px 14px; border-radius: 16px; font-size: 11px; font-weight: 600; margin-bottom: 10px; }
+.wave-tag.seq { background: #e8e8ed; color: #6e6e73; }
+.wave-tag.par { background: #fff3e0; color: #e65100; }
+
+/* ── 节点卡片 Zapier风格 ── */
+.node-card { width: 100%; max-width: 560px; background: #fff; border: 1px solid #e5e5e7; border-radius: 14px; cursor: pointer; transition: all .15s; overflow: hidden; }
+.node-card:hover { box-shadow: 0 4px 20px rgba(0,0,0,.08); transform: translateY(-1px); }
+.node-card.active { border-color: #0071e3; box-shadow: 0 0 0 3px rgba(0,113,227,.15); }
+
+.card-header { display: flex; align-items: center; gap: 12px; padding: 14px 18px; border-bottom: 1px solid #f0f0f2; }
+.card-icon { width: 36px; height: 36px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0; }
+.icon-ai { background: #f3e8ff; }
+.icon-api { background: #e0f2fe; }
+.icon-exec { background: #dcfce7; }
+.icon-user { background: #fef3c7; }
+.icon-clean { background: #f1f5f9; }
+.card-title-area { flex: 1; min-width: 0; }
+.card-title { font-size: 14px; font-weight: 600; color: #1d1d1f; }
+.card-script { font-size: 11px; color: #86868b; font-family: "SF Mono", Menlo, monospace; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card-step-num { font-size: 10px; color: #86868b; background: #f0f0f2; border-radius: 6px; padding: 2px 8px; white-space: nowrap; }
+
+/* 卡片体：输入→处理→输出 */
+.card-body { padding: 0; }
+.io-section { padding: 10px 18px; display: flex; align-items: flex-start; gap: 10px; border-bottom: 1px solid #f5f5f7; }
+.io-section:last-child { border-bottom: none; }
+.io-icon { width: 20px; height: 20px; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 11px; flex-shrink: 0; margin-top: 1px; }
+.io-icon.in { background: #dbeafe; color: #2563eb; }
+.io-icon.proc { background: #fef3c7; color: #d97706; }
+.io-icon.out { background: #dcfce7; color: #16a34a; }
+.io-content { flex: 1; min-width: 0; }
+.io-label { font-size: 10px; font-weight: 600; color: #86868b; text-transform: uppercase; letter-spacing: .03em; margin-bottom: 3px; }
+.io-text { font-size: 12px; color: #3a3a3c; line-height: 1.5; }
+.io-pill { display: inline-block; font-size: 10px; padding: 1px 7px; border-radius: 6px; margin-right: 4px; margin-bottom: 3px; }
+.pill-file { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }
+.pill-ctx { background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe; }
+.pill-dep { background: #fef3c7; color: #92400e; border: 1px solid #fde68a; }
+
+/* ── 并行容器 ── */
+.parallel-box { width: 100%; max-width: 680px; border: 2px dashed #fbbf24; border-radius: 16px; padding: 16px 12px; background: #fffbeb; }
+.parallel-inner { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
+.parallel-inner .node-card { width: 260px; max-width: 260px; }
+
+/* ── 右侧详情面板 ── */
+.panel { width: 420px; min-width: 360px; background: #fff; border-left: 1px solid #e5e5e7; overflow-y: auto; }
+.panel-placeholder { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; gap: 10px; color: #86868b; }
+.panel-placeholder p { font-size: 14px; text-align: center; line-height: 1.5; }
+
+.detail-wrap { padding: 24px; display: none; }
+.detail-wrap.visible { display: block; }
+.detail-wrap h2 { font-size: 20px; font-weight: 700; margin-bottom: 2px; }
+.detail-script { font-size: 12px; color: #86868b; font-family: "SF Mono", Menlo, monospace; margin-bottom: 12px; }
+.copy-btn { display: block; width: 100%; padding: 10px; background: #0071e3; border: none; border-radius: 10px; color: #fff; font-size: 13px; font-weight: 600; cursor: pointer; transition: all .12s; font-family: inherit; margin-bottom: 20px; }
+.copy-btn:hover { background: #0077ed; }
+.copy-btn.copied { background: #34c759; }
+.detail-desc { font-size: 14px; color: #3a3a3c; line-height: 1.7; white-space: pre-line; margin-bottom: 24px; }
+
+.detail-section { margin-bottom: 20px; }
+.detail-section-title { font-size: 11px; font-weight: 700; color: #86868b; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
+.detail-section-title .dot { width: 8px; height: 8px; border-radius: 2px; }
+.dot-in { background: #2563eb; }
+.dot-proc { background: #d97706; }
+.dot-out { background: #16a34a; }
+.dot-dep { background: #9333ea; }
+
+.detail-list { list-style: none; }
+.detail-list li { padding: 7px 10px; background: #f9fafb; border: 1px solid #f0f0f2; border-radius: 8px; margin-bottom: 5px; font-size: 12px; color: #1d1d1f; line-height: 1.4; }
+.detail-list li code { font-family: "SF Mono", Menlo, monospace; font-size: 11px; color: #6e6e73; background: #f0f0f2; padding: 1px 5px; border-radius: 4px; }
+
+.substep-list { list-style: none; counter-reset: sub; }
+.substep-list li { counter-increment: sub; display: flex; gap: 8px; padding: 6px 0; border-bottom: 1px solid #f0f0f2; font-size: 13px; color: #1d1d1f; }
+.substep-list li::before { content: counter(sub); width: 20px; height: 20px; background: #f0f0f2; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 10px; color: #86868b; flex-shrink: 0; }
+
+.dep-link { display: inline-block; padding: 3px 10px; background: #faf5ff; border: 1px solid #e9d5ff; border-radius: 8px; font-size: 12px; color: #7c3aed; margin-right: 4px; margin-bottom: 4px; cursor: pointer; }
+.dep-link:hover { background: #ede9fe; }
+
+/* 定位说明 */
+.role-bar { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 10px; padding: 10px 14px; margin-bottom: 16px; font-size: 13px; color: #1e40af; line-height: 1.5; }
+.role-bar strong { color: #1d4ed8; }
+
+/* 为什么这样处理 */
+.why-box { background: #fffbeb; border: 1px solid #fde68a; border-radius: 10px; padding: 10px 14px; margin-top: 6px; font-size: 12px; color: #92400e; line-height: 1.5; }
+.why-box strong { color: #b45309; }
+
+/* 示例代码块 */
+.example-block { margin-top: 8px; margin-bottom: 4px; }
+.example-toggle { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: #6e6e73; cursor: pointer; padding: 3px 10px; border-radius: 6px; border: 1px solid #e5e5e7; background: #fafafa; transition: all .12s; }
+.example-toggle:hover { background: #f0f0f2; color: #3a3a3c; }
+.example-toggle.open { background: #eff6ff; border-color: #bfdbfe; color: #2563eb; }
+.example-pre { display: none; margin-top: 6px; padding: 12px 14px; background: #1e1e2e; color: #cdd6f4; border-radius: 10px; font-family: "SF Mono", Menlo, monospace; font-size: 11px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; overflow-x: auto; max-height: 320px; overflow-y: auto; }
+.example-pre.show { display: block; }
+.example-pre .hl-key { color: #89b4fa; }
+.example-pre .hl-str { color: #a6e3a1; }
+.example-pre .hl-num { color: #fab387; }
+.example-pre .hl-comment { color: #6c7086; font-style: italic; }
+
+/* ── 图例 ── */
+.legend { display: flex; gap: 16px; justify-content: center; margin-top: 28px; flex-wrap: wrap; padding-bottom: 32px; }
+.legend-item { display: flex; align-items: center; gap: 5px; font-size: 12px; color: #86868b; }
+.legend-dot { width: 10px; height: 10px; border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>HAP Auto Maker</h1>
+  <span class="sub">工作流总览</span>
+  <span class="badge">7 个阶段 · 14 个步骤</span>
+  <span class="badge">点击节点查看 输入→处理→输出</span>
+</div>
+
+<div class="layout">
+<div class="canvas">
+<div class="flow" id="flow"></div>
+</div>
+
+<div class="panel" id="panel">
+  <div class="panel-placeholder" id="placeholder">
+    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#86868b" stroke-width="1.5" opacity=".4">
+      <circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>
+    </svg>
+    <p>点击左侧任意节点<br>查看完整的输入→处理→输出</p>
+  </div>
+  <div class="detail-wrap" id="detail">
+    <h2 id="d-title"></h2>
+    <div class="detail-script" id="d-script"></div>
+    <button class="copy-btn" id="copy-btn">📋 复制提示词 → 粘贴到 Claude Code</button>
+    <div id="d-sections"></div>
+  </div>
+</div>
+</div>
+
+<script>
+var currentKey = null;
+
+/* ═════════ 节点数据 ═════════ */
+var NODES = {
+  entry: {
+    title: "启动入口", icon: "▶", iconClass: "icon-user", step: "入口",
+    script: "run_app_pipeline.py",
+    role: "整个流水线的统一启动点，确保所有步骤在同一进程上下文中按顺序衔接。",
+    desc: "使用 runpy 直接载入 run_app_to_video.py 执行，默认附加 --skip-recording。",
+    inputs: ["用户命令行参数（--add-recording 可选）"],
+    process: "runpy.run_path() 载入 run_app_to_video.py，设置 sys.argv 后在同进程执行",
+    whyProcess: "用 runpy 而不是 subprocess，是因为需要在同一进程内共享 Python 运行时和模块缓存，避免重复初始化开销。",
+    outputs: ["启动 agent_collect_requirements.py 交互子进程"],
+    outputFiles: [],
+    inputExample: "python3 run_app_pipeline.py --add-recording",
+    outputExample: "# 无文件输出，直接进入交互对话界面",
+    deps: [], usedBy: ["req"]
+  },
+  req: {
+    title: "需求收集对话", icon: "💬", iconClass: "icon-user", step: "交互",
+    script: "agent_collect_requirements.py",
+    role: "唯一的人工参与环节。将模糊的自然语言需求转化为机器可执行的结构化 JSON 规格，驱动后续所有自动化步骤。",
+    desc: "与你多轮自然语言对话，深入了解应用需求。输入「开始运行」后，AI 将对话浓缩为结构化需求规格 JSON。",
+    inputs: ["用户自然语言需求描述"],
+    process: "Gemini 多轮对话 → 用户确认 → AI 结构化整理 → 生成 requirement_spec.json → subprocess 启动 execute_requirements.py",
+    whyProcess: "用多轮对话而非一次性提问，是因为用户通常不会一次说清所有需求。AI 会主动追问业务场景、工作表数量、字段细节，确保需求规格完整可靠，减少后续返工。",
+    outputs: ["requirement_spec.json（需求规格）"],
+    outputFiles: ["requirement_specs/requirement_spec_{时间戳}.json", "requirement_specs/requirement_spec_latest.json"],
+    inputExample: '用户: 我想创建一个项目管理系统，\n     需要管理任务、成员和里程碑，至少10张工作表',
+    outputExample: '{\n  "app": {\n    "name": "项目管理系统",\n    "target_mode": "create_new",\n    "icon_mode": "ai_match"\n  },\n  "worksheets": {\n    "business_context": "管理项目全生命周期，涵盖任务分配、\\n                       成员协作、里程碑追踪等核心业务。",\n    "requirements": "至少10张工作表"\n  },\n  "views": { "enabled": true },\n  "mock_data": { "enabled": true },\n  // ... 更多配置项\n}',
+    deps: ["entry"], usedBy: ["s1"],
+    steps: []
+  },
+  s1: {
+    title: "创建应用 & 初始化", icon: "🏗️", iconClass: "icon-api", step: "Step 1",
+    script: "pipeline_create_app.py",
+    role: "后续所有步骤的基础。创建明道云应用实体并获取 API 授权密钥，相当于「先盖楼的地基」。没有这一步的 appId，后续步骤无法执行。",
+    desc: "在明道云中新建应用并完成初始化：获取授权密钥、AI 匹配图标。",
+    inputs: ["requirement_spec.json 中的 app.name、group_ids、icon_mode"],
+    process: "依次调用 5 个子脚本：创建应用 → 获取授权 → 获取图标库 → AI 匹配图标 → 写入图标",
+    whyProcess: "必须顺序执行这 5 步，因为每步依赖上一步的输出：创建应用才有 appId → 有 appId 才能获取授权 → 有授权才能获取图标库 → 有图标库才能让 AI 匹配 → 最后写入。",
+    outputs: ["appId（应用唯一标识）", "app_auth_json（授权密钥文件路径）"],
+    outputFiles: ["app_authorizations/app_authorize_{appId}.json", "app_inventory/app_inventory_{appId}.json"],
+    inputExample: '// 从 requirement_spec.json 提取：\n{\n  "app_name": "项目管理系统",\n  "group_ids": "",\n  "icon_mode": "ai_match"\n}',
+    outputExample: '// 写入运行上下文 context：\n{\n  "app_id": "ca56c6c1-bb95-40b8-be59-8f0ede44ef16",\n  "app_auth_json": "data/outputs/app_authorizations/\n                   app_authorize_ca56c6c1.json"\n}\n\n// 授权文件内容：\n{\n  "appKey": "xxxx",\n  "sign": "yyyy",\n  "appId": "ca56c6c1-bb95-40b8-be59-8f0ede44ef16"\n}',
+    deps: ["req"], usedBy: ["s2a","s3","s8","s2b","s4","s5","s6","s9","s10","s11","s12","s7","s14a","s14","s13"],
+    steps: ["create_app.py — 调用 API 新建应用，返回 appId", "get_app_authorize.py — 获取 appKey + sign 授权信息", "list_apps_for_icon.py — 列出所有应用图标作为候选集", "match_app_icons_gemini.py — AI 语义匹配最佳图标", "update_app_icons.py — 将图标写入应用"]
+  },
+  s2a: {
+    title: "AI 规划工作表结构", icon: "🧠", iconClass: "icon-ai", step: "Step 2a",
+    script: "plan_app_worksheets_gemini.py",
+    role: "整个数据结构的「总设计师」。这一步决定了应用有哪些工作表、每张表有哪些字段、表之间怎么关联——后续所有步骤都建立在这个规划之上。",
+    desc: "Gemini 根据需求设计整个应用的数据结构，输出经 repair_plan() 自动修复后再通过 validate_*() 校验。",
+    inputs: ["spec.app.name → --app-name", "spec.worksheets.business_context → --business-context", "spec.worksheets.requirements → --requirements"],
+    process: "Gemini AI 设计数据结构 → repair_plan() 补全 creation_order → validate_*() 校验",
+    whyProcess: "AI 输出经常遗漏 creation_order 或写错字段类型，所以必须用 repair_plan() 做自动修复（补全顺序、修正类型名），再用 validate_*() 做严格校验。这比让 AI 重新生成快 3-5 倍。",
+    outputs: ["worksheet_plan.json（工作表 + 字段 + 关联的完整规划）"],
+    outputFiles: ["worksheet_plans/worksheet_plan_{appId}_{时间戳}.json"],
+    inputExample: '// 传给 Gemini 的核心参数：\n{\n  "app_name": "汽车运输物流管理系统",\n  "business_context": "管理汽车运输全流程，涵盖\\n    订单、调度、追踪、结算等核心业务",\n  "requirements": "至少10张工作表"\n}',
+    outputExample: '{\n  "app_name": "汽车运输物流管理系统",\n  "worksheets": [\n    {\n      "name": "客户",\n      "purpose": "管理客户基本信息",\n      "fields": [\n        {\n          "name": "客户名称",\n          "type": "Text",\n          "required": true\n        },\n        {\n          "name": "客户类型",\n          "type": "SingleSelect",\n          "option_values": ["个人", "企业", "政府机构"]\n        }\n      ],\n      "depends_on": []\n    },\n    {\n      "name": "运输订单",\n      "fields": [\n        {\n          "name": "关联客户",\n          "type": "Relation",\n          "relation_target": "客户"  // ← 关联到客户表\n        },\n        {\n          "name": "订单状态",\n          "type": "SingleSelect",\n          "option_values": ["待接单","运输中","已完成"]\n        }\n      ],\n      "depends_on": ["客户"]  // ← 必须先创建客户表\n    }\n  ],\n  "creation_order": ["客户","司机","车辆","运输订单","调度"]\n}',
+    deps: ["s1"], usedBy: ["s2b"]
+  },
+  s3: {
+    title: "AI 规划角色权限", icon: "👥", iconClass: "icon-ai", step: "Step 3",
+    script: "pipeline_app_roles.py",
+    role: "为应用建立权限管控体系。没有角色权限，所有人看到同样的数据，无法区分管理者和普通用户的操作边界。",
+    desc: "AI 根据业务需求设计角色体系和权限矩阵，然后通过 API 创建角色。",
+    inputs: ["context.app_id → --app-id"],
+    process: "AI 分析业务场景 → 设计 3-8 个角色 → 确定每个角色的权限等级 → API 批量创建",
+    whyProcess: "权限等级用数字编码 (0=只读, 20=编辑, 30=新增+编辑, 60=管理员, 80=完整管理员)，AI 根据角色职责自动匹配合适的等级，比手动设置更准确且一致。",
+    outputs: ["role_pipeline_report.json", "role_plan.json", "role_create_result.json"],
+    outputFiles: ["（路径通过 stdout RESULT_JSON 标记输出）"],
+    inputExample: '// 传入参数：\n{ "app_id": "ca56c6c1-..." }',
+    outputExample: '{\n  "recommendedRoles": [\n    {\n      "name": "应用管理员",\n      "description": "负责应用整体配置和用户权限管理",\n      "permissionWay": 80,  // ← 最高权限\n      "permissions": {\n        "generalAdd": true,\n        "generalExport": true,\n        "generalImport": true\n      }\n    },\n    {\n      "name": "生产主管",\n      "description": "监控生产流程，审批计划，查看报表",\n      "permissionWay": 60,  // ← 管理员但无配置权\n      "permissions": {\n        "generalAdd": false,\n        "generalExport": true\n      }\n    }\n  ]\n}',
+    deps: ["s1"], usedBy: []
+  },
+  s8: {
+    title: "配置导航样式", icon: "🧭", iconClass: "icon-api", step: "Step 8",
+    script: "update_app_navi_style.py",
+    role: "纯视觉配置，设定用户打开应用时看到的导航栏样式。虽然简单，但影响用户第一印象。",
+    desc: "按需求规格设置应用导航栏样式（侧边栏/顶栏），不需要 AI，直接调用 API。",
+    inputs: ["context.app_id → --app-id", "spec.app.navi_style.pcNaviStyle → --pc-navi-style"],
+    process: "调用 HAP Web API 设置导航样式整数值",
+    whyProcess: "这是一个简单的 API 调用，不需要 AI 参与。放在 Wave 2 并行是因为它不依赖工作表规划，可以和其他规划任务同时进行，节省时间。",
+    outputs: ["（无文件产出，纯 API 副作用）"],
+    outputFiles: [],
+    inputExample: '// 传入参数：\n{\n  "app_id": "ca56c6c1-...",\n  "pc_navi_style": 1  // 1=侧边栏, 2=顶栏\n}',
+    outputExample: '// 无文件输出\n// 效果：应用导航栏变为侧边栏模式',
+    deps: ["s1"], usedBy: []
+  },
+  s2b: {
+    title: "创建所有工作表 & 字段", icon: "📋", iconClass: "icon-exec", step: "Step 2b",
+    script: "create_worksheets_from_plan.py",
+    role: "将 AI 的「纸上规划」变成明道云里真实存在的工作表和字段。这是从虚到实的关键一步——之后所有步骤（视图、数据、工作流）都是在这些已创建的表上操作。",
+    desc: "读取工作表规划 JSON，按 creation_order 顺序创建每张表及其字段。关联字段必须等被关联表先创建。",
+    inputs: ["worksheet_plan.json（来自 Step 2a）→ --plan-json", "app_auth.json（来自 Step 1）→ --app-auth-json"],
+    process: "第一遍：按 creation_order 依次创建每张工作表和非关联字段\n第二遍：回填所有关联字段（Relation 类型），因为此时被关联的表已存在",
+    whyProcess: "分两遍执行是因为关联字段（如「运输订单」关联「客户」）需要目标表已经存在才能创建。第一遍先把所有表建好，第二遍才能正确建立表间关联。creation_order 确保依赖顺序正确。",
+    outputs: ["worksheet_create_result.json（所有表和字段的 ID 映射）", "工作表在明道云中实际创建完成（后续步骤隐式依赖）"],
+    outputFiles: ["worksheet_create_results/...（路径通过 stdout 输出）"],
+    inputExample: '// 来自 Step 2a 的 worksheet_plan.json：\n{\n  "creation_order": ["客户","司机","车辆","运输订单"],\n  "worksheets": [\n    { "name": "客户", "fields": [...] },\n    { "name": "运输订单",\n      "fields": [\n        { "name": "关联客户", "type": "Relation",\n          "relation_target": "客户" }\n      ]\n    }\n  ]\n}',
+    outputExample: '{\n  "app_id": "ca56c6c1-...",\n  "created_worksheets": [\n    {\n      "name": "客户",\n      "worksheetId": "69c5eee7a97577e6377534ed",\n      "success": true\n    },\n    {\n      "name": "运输订单",\n      "worksheetId": "69c5eee7f045950b80f92b66",\n      "success": true\n    }\n  ],\n  "name_to_worksheet_id": {\n    "客户": "69c5eee7a97577e6377534ed",\n    "运输订单": "69c5eee7f045950b80f92b66"\n    // ← 这个映射表被后续所有步骤使用\n  }\n}',
+    deps: ["s2a", "s1"], usedBy: ["s4","s5","s6","s9","s10","s11","s14a","s14","s13"]
+  },
+  s4: {
+    title: "工作表图标配置", icon: "🎨", iconClass: "icon-ai", step: "Step 4",
+    script: "pipeline_icon.py",
+    role: "视觉优化。让每张工作表有一个语义匹配的图标，用户一眼就能区分「客户」和「订单」，提升应用专业感。",
+    desc: "AI 为每张工作表匹配合适图标并批量写入。纯视觉优化，无数据产出。",
+    inputs: ["context.app_id", "context.app_auth_json"],
+    process: "读取应用工作表列表 → Gemini 语义匹配图标 → API 批量更新",
+    whyProcess: "图标匹配需要理解工作表名称的业务含义（如「客户」→ 人物图标），只有 AI 能做到。",
+    outputs: ["（无文件产出，纯 API 副作用）"],
+    outputFiles: [],
+    inputExample: '// 传入：应用中的工作表列表\n["客户", "运输订单", "司机", "车辆", "结算"]',
+    outputExample: '// AI 匹配结果（内部）：\n{\n  "客户": "icon-person",\n  "运输订单": "icon-shipping",\n  "司机": "icon-driver",\n  "车辆": "icon-truck"\n}\n// 直接通过 API 写入，不保存文件',
+    deps: ["s2b"], usedBy: []
+  },
+  s5: {
+    title: "AI 字段布局配置", icon: "📐", iconClass: "icon-ai", step: "Step 5",
+    script: "pipeline_worksheet_layout.py",
+    role: "优化用户打开工作表时看到的字段排列。把最重要的字段放在最前面，次要字段折叠，提升数据录入效率。",
+    desc: "AI 规划每张工作表的字段显示顺序和布局，然后调用 API 应用。",
+    inputs: ["context.app_id", "应用中已存在的工作表和字段（隐式依赖 Step 2b）"],
+    process: "查询当前字段布局 → Gemini 规划更优布局（重要字段前置、分组折叠）→ API 应用",
+    whyProcess: "明道云默认按创建顺序排列字段，但业务上最重要的字段（如「订单状态」）应该在最前面。AI 理解字段的业务重要性，自动优化排列。",
+    outputs: ["layout_plan.json", "layout_apply_result.json"],
+    outputFiles: ["worksheet_layout_plans/...", "worksheet_layout_apply_results/..."],
+    inputExample: '// 当前字段顺序（默认=创建顺序）：\n["客户名称","创建时间","备注","客户类型","负责人"]',
+    outputExample: '// AI 优化后的顺序：\n{\n  "客户": {\n    "field_order": [\n      "客户名称",  // ← 标题字段，最重要\n      "客户类型",  // ← 分类字段，常用\n      "负责人",    // ← 协作字段\n      "备注",      // ← 次要信息\n      "创建时间"   // ← 系统字段，最后\n    ]\n  }\n}',
+    deps: ["s2b"], usedBy: []
+  },
+  s6: {
+    title: "视图创建流水线", icon: "🔭", iconClass: "icon-ai", step: "Step 6",
+    script: "pipeline_views.py",
+    role: "为每张工作表创建多角度的数据视图。没有视图，用户只能看到一张平铺的大表。有了「按状态看板」「我的任务」等视图，数据才变得可管理。\n\n⚡ 产出的视图 ID 是 Step 7（过滤器）的直接输入。",
+    desc: "AI 为每张工作表规划视图类型和筛选分组方式，然后批量创建。",
+    inputs: ["context.app_id → --app-ids", "应用中已存在的工作表和字段（通过 API 实时获取）"],
+    process: "plan_worksheet_views_gemini.py → AI 规划视图 → create_views_from_plan.py → API 批量创建",
+    whyProcess: "分为「规划」和「创建」两步，是因为 AI 输出需要校验后才能使用。如果创建失败，可以修改规划 JSON 重新执行，不需要重新调 AI（省钱省时间）。",
+    outputs: ["view_plan.json（视图规划方案）", "view_create_result.json ⚡ 直接传给 Step 7"],
+    outputFiles: ["view_plans/view_plan_{appId}_{ts}.json", "view_create_results/view_create_result_{appId}_{ts}.json"],
+    inputExample: '// AI 接收到的信息（每张工作表）：\n{\n  "worksheet_name": "货物",\n  "worksheet_id": "69c5eee7...",\n  "fields": [\n    { "name": "货物编号", "type": "Text", "isTitle": true },\n    { "name": "货物状态", "type": "SingleSelect",\n      "options": ["待提货","运输中","已签收"] }\n  ]\n}',
+    outputExample: '// AI 规划的视图：\n{\n  "worksheetName": "货物",\n  "views": [\n    {\n      "name": "所有货物",\n      "viewType": "0",  // 0=表格视图\n      "reason": "默认全量表格视图，供日常查阅"\n    },\n    {\n      "name": "按状态看板",\n      "viewType": "1",  // 1=看板视图\n      "viewControl": "69c5eee82...",  // 用状态字段分组\n      "reason": "用货物状态做看板分组，便于追踪进度"\n    }\n  ]\n}',
+    deps: ["s2b"], usedBy: ["s7", "s14"],
+    steps: ["plan_worksheet_views_gemini.py — AI 规划视图方案", "create_views_from_plan.py — API 批量创建视图"]
+  },
+  s9: {
+    title: "测试数据生成流水线", icon: "🧪", iconClass: "icon-ai", step: "Step 9",
+    script: "pipeline_mock_data.py",
+    role: "让应用一创建好就有真实感的演示数据。没有数据的空应用无法展示价值——有了「大华物流集团」「京沪线运输订单」这样的真实数据，用户立刻理解应用能做什么。",
+    desc: "6 步流水线，最复杂的是关联字段修复。最后一步（清理无效记录）为条件执行。",
+    inputs: ["context.app_id → --app-id", "应用中已存在的工作表和字段（隐式依赖 Step 2b）"],
+    process: "导出表结构 → AI 规划数据 → 批量写入 → 分析关联一致性 → 修复关联 → 清理无效记录",
+    whyProcess: "六步这么多是因为关联数据的生成特别复杂：先写各自表的记录，再检查跨表关联是否匹配（比如「运输订单」关联的「客户」是否真的存在）。如果不匹配就修复，修不了的就删除，确保数据完整可用。",
+    outputs: ["mock_data_run.json（完整执行报告）"],
+    outputFiles: ["mock_schemas/...", "mock_plans/...", "mock_write_results/...", "mock_runs/mock_data_run_{appId}_{ts}.json"],
+    inputExample: '// Step 1 导出的表结构快照：\n{\n  "worksheets": [\n    {\n      "worksheetName": "客户",\n      "writableFields": [\n        { "name": "客户名称", "type": "Text" },\n        { "name": "客户类型", "type": "SingleSelect",\n          "options": [\n            {"key":"opt_k1","value":"个人"},\n            {"key":"opt_k2","value":"企业"}\n          ] }\n      ]\n    }\n  ]\n}',
+    outputExample: '// AI 生成的测试数据：\n{\n  "worksheetName": "客户",\n  "records": [\n    {\n      "recordSummary": "大华物流集团，主营长途货运",\n      "valuesByFieldId": {\n        "客户名称字段ID": "大华物流集团",\n        "客户类型字段ID": ["opt_k2"]\n        // ← 注意：SingleSelect 必须传 key\n        //   数组，不能传 "企业" 这个文字\n      }\n    },\n    {\n      "recordSummary": "张三，个人散户",\n      "valuesByFieldId": {\n        "客户名称字段ID": "张三",\n        "客户类型字段ID": ["opt_k1"]\n      }\n    }\n  ]\n}',
+    deps: ["s2b"], usedBy: [],
+    steps: ["export_app_mock_schema.py — 导出当前表结构快照", "plan_mock_data_gemini.py — AI 生成每张表的测试数据计划", "write_mock_data_from_plan.py — 批量 API 写入数据", "analyze_relation_consistency.py — 检查关联字段孤儿记录", "apply_relation_repair_plan.py — 修复不一致的关联", "delete_unresolved_records.py — 删除无法修复的无效记录（条件执行）"]
+  },
+  s10: {
+    title: "机器人创建流水线", icon: "🤖", iconClass: "icon-ai", step: "Step 10",
+    script: "pipeline_chatbots.py",
+    role: "为应用创建 AI 助手，让终端用户可以用自然语言查询数据、录入信息。相当于给应用配一个「智能客服」。",
+    desc: "创建智能机器人，可帮用户查询数据、填写表单。",
+    inputs: ["context.app_id → --app-id", "应用中已存在的工作表（隐式依赖 Step 2b）"],
+    process: "提取应用数据结构摘要 → AI 设计机器人方案 → API 创建",
+    whyProcess: "先提取结构摘要再规划，是因为机器人需要「知道」应用里有哪些表和字段，才能正确回答用户问题。摘要让 AI 在有限的上下文窗口内理解整个应用。",
+    outputs: ["chatbot_pipeline_result.json"],
+    outputFiles: ["chatbot_schemas/...", "chatbot_plans/...", "chatbot_create_results/..."],
+    inputExample: '// 应用结构摘要（传给 AI）：\n{\n  "appName": "建设工咨·企业运营与决策支持",\n  "worksheets": [\n    {\n      "worksheetName": "项目台账",\n      "fields": [\n        { "fieldName": "项目名称", "fieldType": "Text" },\n        { "fieldName": "项目状态", "fieldType": "SingleSelect",\n          "values": ["立项","进行中","结项"] }\n      ]\n    }\n  ]\n}',
+    outputExample: '// AI 设计的机器人方案：\n{\n  "proposals": [\n    {\n      "name": "项目洞察官",\n      "description": "专为项目经理设计，可即时\\n        查询项目进度、成本数据和风险预警"\n    },\n    {\n      "name": "经营决策罗盘",\n      "description": "面向管理者，提供公司整体\\n        经营数据的宏观分析"\n    }\n  ]\n}',
+    deps: ["s2b"], usedBy: [],
+    steps: ["select_chatbot_app_schema.py — 提取应用结构摘要", "plan_chatbots_gemini.py — AI 设计机器人方案", "create_chatbots_from_plan.py — API 创建机器人"]
+  },
+  s11: {
+    title: "AI 规划工作流", icon: "⚡", iconClass: "icon-ai", step: "Step 11",
+    script: "pipeline_workflows.py",
+    role: "设计应用的自动化逻辑——当数据发生变化时自动触发动作（通知、创建记录、定时汇报等）。没有工作流的应用就像没有引擎的汽车，数据只能手动操作。\n\n⚡ 产出的规划 JSON 是 Step 12 的直接输入。",
+    desc: "AI 设计自动化工作流（事件触发/定时触发/自定义动作）。",
+    inputs: ["context.app_id → --relation-id", "app_auth.json（读取 appKey + sign）", "应用工作表结构（通过 HAP v3 API 实时获取）"],
+    process: "获取应用结构 → AI 分析业务关系 → 设计工作流（3 类触发器）→ 修复字段引用 → 输出规划",
+    whyProcess: "AI 规划时用的是字段名称（如 {{trigger.项目名称}}），但 API 需要字段 ID（如 {{trigger.69cb12ff...}}）。所以必须在规划后做一次字段引用修复，把名称替换成真实 ID。",
+    outputs: ["workflow_plan.json ⚡ 直接传给 Step 12"],
+    outputFiles: ["workflow/output/pipeline_workflows_{appId}_{ts}.json"],
+    inputExample: '// AI 接收到的工作表结构（含字段ID）：\n{\n  "worksheet_name": "项目建议书表",\n  "fields": [\n    { "fieldId": "69cb12ff...", "name": "项目名称", "type": 2 },\n    { "fieldId": "69cb12ff...", "name": "项目阶段", "type": 9,\n      "options": [{"key":"50389e..","value":"立项"}] }\n  ]\n}',
+    outputExample: '// AI 设计的工作流：\n{\n  "worksheet_name": "项目建议书表",\n  "custom_actions": [\n    {\n      "name": "提交评审",\n      "confirm_msg": "确认提交该建议书进入评审吗？",\n      "action_nodes": [\n        {\n          "name": "创建项目基础信息",\n          "type": "add_record",\n          "target_worksheet_id": "69cb12ff...",\n          "fields": [\n            {\n              "fieldId": "69cb12ff...",\n              "fieldValue": "{{trigger.69cb12ff...}}"\n              // ← 引用触发记录的字段值\n            }\n          ]\n        }\n      ]\n    }\n  ]\n}',
+    deps: ["s2b"], usedBy: ["s12"]
+  },
+  s14a: {
+    title: "预规划统计页", icon: "📊", iconClass: "icon-ai", step: "Step 14a",
+    script: "plan_pages_gemini.py",
+    role: "优化策略：把耗时的统计页 AI 规划提前到 Wave 4 并行执行，与其他任务同时进行。如果成功，Wave 6 可以跳过重复规划，直接创建页面。",
+    desc: "提前并行触发统计页 AI 规划，节省整体等待时间。",
+    inputs: ["context.app_id", "应用中已存在的工作表和字段（通过 Web API 获取）"],
+    process: "列举工作表和字段 → Gemini 规划统计页布局（固定 2 个页面）→ 指定图表类型",
+    whyProcess: "强制生成恰好 2 个统计页面，是因为太多页面会分散注意力，太少则无法覆盖核心数据。2 个页面通常分别对应「运营概览」和「分析报表」两大场景。",
+    outputs: ["page_plan.json → 传递给 Step 14"],
+    outputFiles: ["page_plans/page_plan_{appId}_pipeline.json"],
+    inputExample: '// AI 接收到的信息：\n{\n  "appName": "汽车运输物流管理系统",\n  "worksheets": [\n    { "worksheetName": "货物",\n      "fields": [\n        { "controlName": "货物状态",\n          "controlType": 9,\n          "_isSelect": true }\n      ] }\n  ]\n}',
+    outputExample: '// 统计页规划（固定 2 个页面）：\n{\n  "pages": [\n    {\n      "name": "运营概览",\n      "desc": "实时查看运输订单与货物状态",\n      "worksheetNames": ["货物","运输订单"]\n    },\n    {\n      "name": "结算分析",\n      "desc": "财务结算与对账数据汇总",\n      "worksheetNames": ["结算"]\n    }\n  ]\n}',
+    deps: ["s2b"], usedBy: ["s14"]
+  },
+  s7: {
+    title: "AI 配置视图过滤器", icon: "🔍", iconClass: "icon-ai", step: "Step 7",
+    script: "pipeline_tableview_filters.py",
+    role: "让视图「开箱即用」。光有视图还不够，还需要预设快捷过滤器，让用户一点就能筛选数据。例如「我的任务」自动显示当前用户的记录。\n\n⚠️ 如果 Step 6 失败，此步跳过。",
+    desc: "对 Step 6 创建的视图配置智能过滤条件。",
+    inputs: ["context.app_id → --app-ids", "view_create_result.json（来自 Step 6）⚡ 直接文件依赖"],
+    process: "读取已创建的视图列表 → AI 分析每个视图用途 → 设计快捷筛选器和导航分组 → API 应用",
+    whyProcess: "需要读取 Step 6 的 view_create_result.json 才能知道视图的真实 ID，然后 AI 分析每个视图适合用哪个字段做筛选。比如看板视图适合用状态字段做导航分组，表格视图适合用日期做快捷筛选。",
+    outputs: ["tableview_filter_plan.json", "tableview_filter_apply_result.json"],
+    outputFiles: ["tableview_filter_plans/...", "tableview_filter_apply_results/..."],
+    inputExample: '// 来自 Step 6 的 view_create_result + 实时字段信息：\n{\n  "worksheetName": "时刻分配",\n  "targetViews": [\n    { "viewId": "69c9fa8d...",\n      "viewName": "所有时刻分配",\n      "viewType": "0" }  // 表格视图\n  ],\n  "fields": [\n    { "name": "分配状态", "type": 9,\n      "isDropdown": true, "optionCount": 4 }\n  ]\n}',
+    outputExample: '// AI 设计的过滤器配置：\n{\n  "viewName": "所有时刻分配",\n  "needNavGroup": true,  // ← 启用左侧导航分组\n  "navGroup": [{\n    "controlId": "69c9fa5b...",  // 状态字段\n    "dataType": 9,\n    "isAsc": true\n  }],\n  "needFastFilters": true,  // ← 启用快捷筛选\n  "fastFilters": [\n    { "controlId": "状态字段ID", "filterType": 1 },\n    { "controlId": "日期字段ID", "filterType": 2 }\n  ],\n  "reason": "状态字段适合做导航分组；日期字段支持快速筛选"\n}',
+    deps: ["s6"], usedBy: ["s14"],
+    steps: ["plan_tableview_filters_gemini.py — AI 规划过滤条件", "apply_tableview_filters_from_plan.py — API 应用过滤器"]
+  },
+  s12: {
+    title: "执行工作流创建", icon: "⚙️", iconClass: "icon-exec", step: "Step 12",
+    script: "execute_workflow_plan.py",
+    role: "将 Step 11 的工作流「蓝图」变为真实运行的自动化流程。这一步之后，应用里的按钮、触发器、定时任务才真正生效。\n\n⚠️ 如果 Step 11 失败，此步跳过。",
+    desc: "读取工作流规划 JSON，调用 API 创建并发布所有工作流。",
+    inputs: ["workflow_plan.json（来自 Step 11）→ --plan-file ⚡ 直接文件依赖"],
+    process: "按类型分批创建：自定义动作 → 事件触发器 → 定时触发器 → 可选发布",
+    whyProcess: "三种工作流类型需要分别调用不同的 API 端点创建。自定义动作是按钮触发，事件触发器是数据变更触发，定时触发器是时间驱动——创建方式各不相同。",
+    outputs: ["execute_workflow_plan_latest.json"],
+    outputFiles: ["workflow/output/execute_workflow_plan_latest.json"],
+    inputExample: '// 来自 Step 11 的工作流规划：\n{\n  "custom_actions": [\n    { "name": "提交评审",\n      "confirm_msg": "确认提交？",\n      "action_nodes": [{ "type": "add_record", ... }] }\n  ],\n  "worksheet_events": [\n    { "trigger": "当状态变为已完成",\n      "actions": [{ "type": "notify", ... }] }\n  ]\n}',
+    outputExample: '// 创建结果：\n{\n  "created_workflows": [\n    { "name": "提交评审",\n      "type": "custom_action",\n      "workflowId": "wf_abc123",\n      "published": true,\n      "success": true }\n  ],\n  "summary": {\n    "total": 5,\n    "success": 5,\n    "failed": 0\n  }\n}',
+    deps: ["s11"], usedBy: []
+  },
+  s14: {
+    title: "创建统计图表页", icon: "📈", iconClass: "icon-exec", step: "Step 14",
+    script: "pipeline_pages.py",
+    role: "为应用创建数据仪表板，让管理者一眼看到关键指标——而不是翻遍每张工作表去找数据。图表页是应用的「驾驶舱」。",
+    desc: "创建统计仪表板页面并添加图表组件。若 Step 14a 预规划成功则跳过重复规划。",
+    inputs: ["context.app_id", "page_plan.json（来自 Step 14a）→ 若成功则 --skip-plan", "视图和过滤器已就绪（隐式依赖 Step 6, 7）"],
+    process: "规划统计页（或跳过）→ 创建页面 → 为每个页面添加图表组件",
+    whyProcess: "图表需要绑定到具体的工作表字段上（如「用订单状态字段做饼图」），所以必须在工作表和视图都创建完成之后才能执行。Step 14a 预规划可以节省这里的 AI 等待时间。",
+    outputs: ["page_create_result.json", "每个页面的 chart 文件"],
+    outputFiles: ["page_create_results/page_create_{appId}_pipeline.json", "chart_plans/chart_plan_{appId}_page_{pageId}.json"],
+    inputExample: '// 来自 Step 14a 的统计页规划：\n{\n  "pages": [\n    {\n      "name": "运营概览",\n      "worksheetNames": ["货物","运输订单"],\n      "desc": "实时查看运输订单与货物状态"\n    }\n  ]\n}',
+    outputExample: '// 创建结果（含图表）：\n{\n  "pages": [\n    {\n      "name": "运营概览",\n      "pageId": "page_xyz",\n      "charts": [\n        {\n          "type": "饼图",\n          "title": "货物状态分布",\n          "field": "货物状态",\n          "success": true\n        },\n        {\n          "type": "柱状图",\n          "title": "月度订单数量",\n          "field": "创建日期",\n          "success": true\n        }\n      ]\n    }\n  ]\n}',
+    deps: ["s14a", "s6", "s7"], usedBy: ["s13"],
+    steps: ["plan_pages_gemini.py — AI 规划统计页布局（若 14a 成功则跳过）", "create_pages_from_plan.py — API 创建页面和图表组件"]
+  },
+  s13: {
+    title: "清理默认视图", icon: "🧹", iconClass: "icon-clean", step: "Step 13",
+    script: "delete_default_views.py",
+    role: "收尾清理。明道云自动生成的「全部」视图是多余的——我们已经有了 AI 精心设计的自定义视图，留着「全部」会让用户困惑。必须最后执行，确保所有自定义视图和页面都已就绪。",
+    desc: "删除每张工作表的默认「全部」视图。",
+    inputs: ["context.app_id", "context.app_auth_json"],
+    process: "列出所有工作表 → 查找名为「全部」的视图 → API 逐个删除",
+    whyProcess: "放在最后（Wave 7）是因为如果在视图还没创建完时就删除默认视图，用户可能短暂看到一个「无视图」的空白状态。等所有自定义视图就绪后再删除，过渡无感知。",
+    outputs: ["（无文件产出，纯 API 副作用）"],
+    outputFiles: [],
+    inputExample: '// 传入参数：\n{\n  "app_id": "ca56c6c1-...",\n  "app_auth_json": "data/outputs/app_authorizations/\n                   app_authorize_ca56c6c1.json"\n}',
+    outputExample: '// 控制台输出：\n// ✓ 客户：已删除默认视图「全部」\n// ✓ 运输订单：已删除默认视图「全部」\n// ✓ 司机：已删除默认视图「全部」\n// ...',
+    deps: ["s6", "s14"], usedBy: ["archive"]
+  },
+  archive: {
+    title: "归档所有产物", icon: "📦", iconClass: "icon-exec", step: "归档",
+    script: "run_app_to_video.py（归档逻辑段）",
+    role: "将本次运行的所有产物集中归档，方便事后查阅和排障。每次运行有独立的归档目录，互不干扰。tech_log.json 是排障的第一入口。",
+    desc: "统一复制所有 JSON 到时间戳+appId 命名的归档目录，生成 summary.md 和 tech_log.json。",
+    inputs: ["所有步骤产出的 JSON 文件", "execution_run.json（执行报告）"],
+    process: "收集 context 中所有产物路径 → 复制到归档目录 → 生成摘要和技术日志",
+    whyProcess: "各步骤的输出散落在不同目录下（view_plans/、mock_runs/、workflow/output/ 等），归档将它们统一到一个目录，配上可读的 summary.md，让你不用翻遍整个 data/outputs/ 就能找到本次运行的所有信息。",
+    outputs: ["归档目录 app_runs/{时间戳}_{appId}/"],
+    outputFiles: ["app_runs/{ts}_{appId}/requirement_spec.json", "app_runs/{ts}_{appId}/execution_run.json", "app_runs/{ts}_{appId}/artifacts/*.json", "app_runs/{ts}_{appId}/tech_log.json", "app_runs/{ts}_{appId}/summary.md"],
+    inputExample: '// context 中记录的所有产物路径：\n{\n  "worksheet_plan_json": "data/outputs/worksheet_plans/...",\n  "view_plan_json": "data/outputs/view_plans/...",\n  "mock_data_run_json": "data/outputs/mock_runs/...",\n  "workflow_plan_json": "workflow/output/...",\n  // ... 共 15+ 个产物路径\n}',
+    outputExample: '// 归档目录结构：\napp_runs/20260331_114406_ca56c6c1/\n  ├── requirement_spec.json\n  ├── execution_run.json  // ← 每步状态和耗时\n  ├── tech_log.json       // ← 排障入口\n  ├── summary.md          // ← 人类可读摘要\n  └── artifacts/\n      ├── worksheet_plan.json\n      ├── view_plan.json\n      ├── mock_data_run.json\n      └── ...',
+    deps: ["s13"], usedBy: []
+  }
+};
+
+/* ═════════ 阶段定义 ═════════ */
+var WAVES = [
+  { label: "入口", type: "seq", nodes: ["entry"] },
+  { label: "需求收集", type: "seq", nodes: ["req"], connLabel: "启动交互" },
+  { label: "阶段 1 · 创建应用", type: "seq", nodes: ["s1"], connLabel: "requirement_spec.json" },
+  { label: "阶段 2 · 并行规划", type: "par", nodes: ["s2a","s3","s8"], connLabel: "appId + app_auth.json" },
+  { label: "阶段 3 · 创建工作表", type: "seq", nodes: ["s2b"], connLabel: "worksheet_plan.json" },
+  { label: "阶段 4 · 并行构建", type: "par", nodes: ["s4","s5","s6","s9","s10","s11","s14a"], connLabel: "工作表已创建（实体存在于明道云）" },
+  { label: "阶段 5 · 并行应用", type: "par", nodes: ["s7","s12"], connLabel: "view_create_result / workflow_plan" },
+  { label: "阶段 6 · 统计图表页", type: "seq", nodes: ["s14"], connLabel: "视图 + 过滤器 + page_plan" },
+  { label: "阶段 7 · 清理", type: "seq", nodes: ["s13"], connLabel: "所有视图和页面已就绪" },
+  { label: "归档", type: "seq", nodes: ["archive"], connLabel: "所有产物" }
+];
+
+/* ═════════ 渲染流程图 ═════════ */
+function buildFlow() {
+  var flow = document.getElementById('flow');
+  WAVES.forEach(function(wave, wi) {
+    // 连接线 + 数据流标签
+    if (wi > 0) {
+      var conn = document.createElement('div');
+      conn.className = 'connector';
+      var line = document.createElement('div');
+      line.className = 'conn-line';
+      conn.appendChild(line);
+      if (wave.connLabel) {
+        var lbl = document.createElement('div');
+        lbl.className = 'conn-label';
+        lbl.textContent = wave.connLabel;
+        lbl.title = wave.connLabel;
+        conn.appendChild(lbl);
+      }
+      var arrow = document.createElement('div');
+      arrow.className = 'conn-arrow';
+      conn.appendChild(arrow);
+      flow.appendChild(conn);
+    }
+
+    // 阶段标签
+    var wtag = document.createElement('div');
+    wtag.className = 'wave-tag ' + wave.type;
+    wtag.textContent = wave.label + (wave.type === 'par' ? ' ⚡ 并行' : '');
+    flow.appendChild(wtag);
+
+    if (wave.type === 'par') {
+      var box = document.createElement('div');
+      box.className = 'parallel-box';
+      var inner = document.createElement('div');
+      inner.className = 'parallel-inner';
+      wave.nodes.forEach(function(key) { inner.appendChild(createCard(key)); });
+      box.appendChild(inner);
+      flow.appendChild(box);
+    } else {
+      wave.nodes.forEach(function(key) {
+        var card = createCard(key);
+        card.style.maxWidth = '560px';
+        flow.appendChild(card);
+      });
+    }
+  });
+
+  // 图例
+  var legend = document.createElement('div');
+  legend.className = 'legend';
+  [
+    ['#2563eb', '输入数据'],
+    ['#d97706', '处理逻辑'],
+    ['#16a34a', '输出结果'],
+    ['#9333ea', '数据依赖'],
+    ['#fbbf24', '并行执行边界']
+  ].forEach(function(item) {
+    var d = document.createElement('div');
+    d.className = 'legend-item';
+    var dot = document.createElement('div');
+    dot.className = 'legend-dot';
+    dot.style.background = item[0];
+    d.appendChild(dot);
+    var t = document.createTextNode(item[1]);
+    d.appendChild(t);
+    legend.appendChild(d);
+  });
+  flow.appendChild(legend);
+}
+
+function createCard(key) {
+  var n = NODES[key];
+  var card = document.createElement('div');
+  card.className = 'node-card';
+  card.setAttribute('data-key', key);
+  card.addEventListener('click', function(e) { e.stopPropagation(); show(key); });
+
+  // header
+  var hdr = document.createElement('div');
+  hdr.className = 'card-header';
+
+  var icon = document.createElement('div');
+  icon.className = 'card-icon ' + n.iconClass;
+  icon.textContent = n.icon;
+  hdr.appendChild(icon);
+
+  var ta = document.createElement('div');
+  ta.className = 'card-title-area';
+  var title = document.createElement('div');
+  title.className = 'card-title';
+  title.textContent = n.title;
+  ta.appendChild(title);
+  var scr = document.createElement('div');
+  scr.className = 'card-script';
+  scr.textContent = n.script;
+  ta.appendChild(scr);
+  hdr.appendChild(ta);
+
+  var sn = document.createElement('div');
+  sn.className = 'card-step-num';
+  sn.textContent = n.step;
+  hdr.appendChild(sn);
+
+  card.appendChild(hdr);
+
+  // body: 输入 / 处理 / 输出
+  var body = document.createElement('div');
+  body.className = 'card-body';
+
+  // 输入
+  var inSec = createIOSection('in', '输入', summarize(n.inputs));
+  body.appendChild(inSec);
+
+  // 处理（缩短显示）
+  var procSec = createIOSection('proc', '处理', truncate(n.process, 60));
+  body.appendChild(procSec);
+
+  // 输出
+  var outSec = createIOSection('out', '输出', summarize(n.outputs));
+  body.appendChild(outSec);
+
+  card.appendChild(body);
+  return card;
+}
+
+function createIOSection(type, label, text) {
+  var sec = document.createElement('div');
+  sec.className = 'io-section';
+  var ic = document.createElement('div');
+  ic.className = 'io-icon ' + type;
+  ic.textContent = type === 'in' ? '↓' : type === 'proc' ? '⚙' : '↑';
+  sec.appendChild(ic);
+  var content = document.createElement('div');
+  content.className = 'io-content';
+  var lbl = document.createElement('div');
+  lbl.className = 'io-label';
+  lbl.textContent = label;
+  content.appendChild(lbl);
+  var txt = document.createElement('div');
+  txt.className = 'io-text';
+  txt.textContent = text;
+  content.appendChild(txt);
+  sec.appendChild(content);
+  return sec;
+}
+
+function summarize(arr) {
+  if (!arr || !arr.length) return '—';
+  if (arr.length === 1) return arr[0];
+  return arr[0] + '，+' + (arr.length - 1) + ' 项';
+}
+function truncate(s, max) {
+  if (!s) return '—';
+  return s.length > max ? s.substring(0, max) + '...' : s;
+}
+
+/* ═════════ 详情面板 ═════════ */
+function show(key) {
+  var n = NODES[key];
+  if (!n) return;
+  currentKey = key;
+
+  document.querySelectorAll('.node-card.active').forEach(function(el) { el.classList.remove('active'); });
+  document.querySelectorAll('[data-key="' + key + '"]').forEach(function(el) { el.classList.add('active'); });
+
+  document.getElementById('placeholder').style.display = 'none';
+  var detail = document.getElementById('detail');
+  detail.classList.add('visible');
+
+  document.getElementById('d-title').textContent = n.icon + ' ' + n.title;
+  document.getElementById('d-script').textContent = n.script;
+
+  // 重置复制按钮
+  var btn = document.getElementById('copy-btn');
+  btn.textContent = '📋 复制提示词 → 粘贴到 Claude Code';
+  btn.className = 'copy-btn';
+
+  // 构建各 section
+  var sections = document.getElementById('d-sections');
+  sections.textContent = '';
+
+  // 定位说明（role）
+  if (n.role) {
+    var roleBar = document.createElement('div');
+    roleBar.className = 'role-bar';
+    var roleStrong = document.createElement('strong');
+    roleStrong.textContent = '定位：';
+    roleBar.appendChild(roleStrong);
+    roleBar.appendChild(document.createTextNode(n.role));
+    sections.appendChild(roleBar);
+  }
+
+  // 描述
+  var descEl = document.createElement('div');
+  descEl.className = 'detail-desc';
+  descEl.textContent = n.desc;
+  sections.appendChild(descEl);
+
+  // 输入 + 示例
+  addDetailSection(sections, '输入', 'dot-in', n.inputs);
+  if (n.inputExample) addExample(sections, '输入示例', n.inputExample, 'ex-in-' + key);
+
+  // 处理 + 为什么
+  addDetailSection(sections, '处理逻辑', 'dot-proc', [n.process]);
+  if (n.whyProcess) {
+    var whyBox = document.createElement('div');
+    whyBox.className = 'why-box';
+    var whyStrong = document.createElement('strong');
+    whyStrong.textContent = '为什么这样处理？ ';
+    whyBox.appendChild(whyStrong);
+    whyBox.appendChild(document.createTextNode(n.whyProcess));
+    sections.appendChild(whyBox);
+  }
+
+  // 子步骤
+  if (n.steps && n.steps.length) {
+    var stepSec = document.createElement('div');
+    stepSec.className = 'detail-section';
+    var stepTitle = document.createElement('div');
+    stepTitle.className = 'detail-section-title';
+    stepTitle.textContent = '内部子步骤';
+    stepSec.appendChild(stepTitle);
+    var ul = document.createElement('ul');
+    ul.className = 'substep-list';
+    n.steps.forEach(function(s) {
+      var li = document.createElement('li');
+      li.textContent = s;
+      ul.appendChild(li);
+    });
+    stepSec.appendChild(ul);
+    sections.appendChild(stepSec);
+  }
+
+  // 输出 + 示例
+  addDetailSection(sections, '输出', 'dot-out', n.outputs);
+  if (n.outputExample) addExample(sections, '输出示例', n.outputExample, 'ex-out-' + key);
+
+  // 输出文件
+  if (n.outputFiles && n.outputFiles.length) {
+    addDetailSection(sections, '输出文件路径', 'dot-out', n.outputFiles);
+  }
+
+  // 数据依赖：上游
+  if (n.deps && n.deps.length) {
+    var depSec = document.createElement('div');
+    depSec.className = 'detail-section';
+    var depTitle = document.createElement('div');
+    depTitle.className = 'detail-section-title';
+    var depDot = document.createElement('span');
+    depDot.className = 'dot dot-dep';
+    depTitle.appendChild(depDot);
+    depTitle.appendChild(document.createTextNode(' 上游依赖（点击跳转）'));
+    depSec.appendChild(depTitle);
+    var depDiv = document.createElement('div');
+    n.deps.forEach(function(dk) {
+      if (!NODES[dk]) return;
+      var link = document.createElement('span');
+      link.className = 'dep-link';
+      link.textContent = NODES[dk].step + ' ' + NODES[dk].title;
+      link.addEventListener('click', function(e) { e.stopPropagation(); show(dk); scrollToCard(dk); });
+      depDiv.appendChild(link);
+    });
+    depSec.appendChild(depDiv);
+    sections.appendChild(depSec);
+  }
+
+  // 数据依赖：下游
+  if (n.usedBy && n.usedBy.length) {
+    var useSec = document.createElement('div');
+    useSec.className = 'detail-section';
+    var useTitle = document.createElement('div');
+    useTitle.className = 'detail-section-title';
+    var useDot = document.createElement('span');
+    useDot.className = 'dot dot-dep';
+    useTitle.appendChild(useDot);
+    useTitle.appendChild(document.createTextNode(' 下游消费者（点击跳转）'));
+    useSec.appendChild(useTitle);
+    var useDiv = document.createElement('div');
+    n.usedBy.forEach(function(uk) {
+      if (!NODES[uk]) return;
+      var link = document.createElement('span');
+      link.className = 'dep-link';
+      link.textContent = NODES[uk].step + ' ' + NODES[uk].title;
+      link.addEventListener('click', function(e) { e.stopPropagation(); show(uk); scrollToCard(uk); });
+      useDiv.appendChild(link);
+    });
+    useSec.appendChild(useDiv);
+    sections.appendChild(useSec);
+  }
+}
+
+function addExample(parent, label, code, toggleId) {
+  var block = document.createElement('div');
+  block.className = 'example-block';
+  var toggle = document.createElement('div');
+  toggle.className = 'example-toggle';
+  toggle.textContent = '▶ ' + label;
+  var pre = document.createElement('pre');
+  pre.className = 'example-pre';
+  pre.textContent = code;
+  toggle.addEventListener('click', function() {
+    var open = pre.classList.toggle('show');
+    toggle.classList.toggle('open', open);
+    toggle.textContent = (open ? '▼ ' : '▶ ') + label;
+  });
+  block.appendChild(toggle);
+  block.appendChild(pre);
+  parent.appendChild(block);
+}
+
+function addDetailSection(parent, label, dotClass, items) {
+  if (!items || !items.length) return;
+  var sec = document.createElement('div');
+  sec.className = 'detail-section';
+  var title = document.createElement('div');
+  title.className = 'detail-section-title';
+  var dot = document.createElement('span');
+  dot.className = 'dot ' + dotClass;
+  title.appendChild(dot);
+  title.appendChild(document.createTextNode(' ' + label));
+  sec.appendChild(title);
+  var ul = document.createElement('ul');
+  ul.className = 'detail-list';
+  items.forEach(function(item) {
+    var li = document.createElement('li');
+    li.textContent = item;
+    ul.appendChild(li);
+  });
+  sec.appendChild(ul);
+  parent.appendChild(sec);
+}
+
+function scrollToCard(key) {
+  var card = document.querySelector('[data-key="' + key + '"]');
+  if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+/* ═════════ 复制提示词 ═════════ */
+document.getElementById('copy-btn').addEventListener('click', function() {
+  if (!currentKey) return;
+  var n = NODES[currentKey];
+  var lines = [];
+  lines.push('我想深入了解并调整这个流程节点，请帮我分析。');
+  lines.push('');
+  lines.push('【节点】' + n.title);
+  lines.push('【脚本】' + n.script);
+  if (n.role) {
+    lines.push('【定位】' + n.role);
+  }
+  lines.push('');
+  lines.push('【输入】');
+  n.inputs.forEach(function(s) { lines.push('- ' + s); });
+  if (n.inputExample) {
+    lines.push('');
+    lines.push('【输入示例】');
+    lines.push(n.inputExample);
+  }
+  lines.push('');
+  lines.push('【处理逻辑】');
+  lines.push(n.process);
+  if (n.whyProcess) {
+    lines.push('');
+    lines.push('【为什么这样处理】');
+    lines.push(n.whyProcess);
+  }
+  lines.push('');
+  lines.push('【输出】');
+  n.outputs.forEach(function(s) { lines.push('- ' + s); });
+  if (n.outputExample) {
+    lines.push('');
+    lines.push('【输出示例】');
+    lines.push(n.outputExample);
+  }
+  if (n.outputFiles && n.outputFiles.length) {
+    lines.push('');
+    lines.push('【输出文件路径】');
+    n.outputFiles.forEach(function(s) { lines.push('- ' + s); });
+  }
+  if (n.steps && n.steps.length) {
+    lines.push('');
+    lines.push('【内部子步骤】');
+    n.steps.forEach(function(s, i) { lines.push((i + 1) + '. ' + s); });
+  }
+  if (n.deps && n.deps.length) {
+    lines.push('');
+    lines.push('【上游依赖】');
+    n.deps.forEach(function(dk) {
+      if (NODES[dk]) lines.push('- ' + NODES[dk].step + ': ' + NODES[dk].title + ' (' + NODES[dk].script + ')');
+    });
+  }
+  if (n.usedBy && n.usedBy.length) {
+    lines.push('');
+    lines.push('【下游消费者】');
+    n.usedBy.forEach(function(uk) {
+      if (NODES[uk]) lines.push('- ' + NODES[uk].step + ': ' + NODES[uk].title + ' (' + NODES[uk].script + ')');
+    });
+  }
+  lines.push('');
+  lines.push('【我的问题】');
+  lines.push('（请在此描述你想了解或调整的内容）');
+
+  navigator.clipboard.writeText(lines.join('\n')).then(function() {
+    var btn = document.getElementById('copy-btn');
+    btn.textContent = '✓ 已复制到剪贴板';
+    btn.classList.add('copied');
+    setTimeout(function() {
+      btn.textContent = '📋 复制提示词 → 粘贴到 Claude Code';
+      btn.classList.remove('copied');
+    }, 1500);
+  });
+});
+
+/* ═════════ 初始化 ═════════ */
+buildFlow();
+</script>
+</body>
+</html>
