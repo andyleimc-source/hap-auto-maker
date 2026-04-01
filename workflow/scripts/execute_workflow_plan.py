@@ -229,39 +229,53 @@ def _sanitize_action_nodes(action_nodes: list, trigger_worksheet_id: str) -> tup
             continue
 
         node_type = str(node.get("type", "update_record")).strip() or "update_record"
-        if node_type not in {"add_record", "update_record"}:
+        _ALLOWED_NODE_TYPES = {
+            "add_record", "update_record", "delete_record",
+            "get_record", "get_records",
+            "branch", "copy", "notify", "delay_duration", "delay_until",
+            "calc", "aggregate", "approval", "ai_text",
+        }
+        if node_type not in _ALLOWED_NODE_TYPES:
             warnings.append(f"动作{index} 类型非法({node_type})，已跳过")
             continue
 
-        target_ws = str(node.get("target_worksheet_id", "")).strip()
-        if not target_ws and node_type == "update_record":
-            target_ws = trigger_worksheet_id
-        if not _WORKSHEET_ID_RE.fullmatch(target_ws):
-            warnings.append(f"动作{index} 目标工作表ID非法({target_ws or '空'})，已跳过")
-            continue
+        # 记录操作类节点需要工作表ID和字段映射
+        _RECORD_NODE_TYPES = {"add_record", "update_record", "delete_record", "get_record", "get_records", "aggregate"}
+        if node_type in _RECORD_NODE_TYPES:
+            target_ws = str(node.get("target_worksheet_id", "")).strip()
+            if not target_ws and node_type in ("update_record", "delete_record"):
+                target_ws = trigger_worksheet_id
+            if not _WORKSHEET_ID_RE.fullmatch(target_ws):
+                warnings.append(f"动作{index} 目标工作表ID非法({target_ws or '空'})，已跳过")
+                continue
 
-        raw_fields = node.get("fields")
-        if not isinstance(raw_fields, list) or not raw_fields:
-            warnings.append(f"动作{index} 未提供字段映射，已跳过")
-            continue
+            raw_fields = node.get("fields")
+            if node_type in ("add_record", "update_record"):
+                if not isinstance(raw_fields, list) or not raw_fields:
+                    warnings.append(f"动作{index} 未提供字段映射，已跳过")
+                    continue
+                sanitized_fields, field_warnings = _sanitize_action_fields(raw_fields, index)
+                warnings.extend(field_warnings)
+                if not sanitized_fields:
+                    warnings.append(f"动作{index} 清洗后无有效字段映射，已跳过")
+                    continue
+                if node_type == "add_record" and len(sanitized_fields) < 2:
+                    warnings.append(f"动作{index} add_record 字段映射过少({len(sanitized_fields)})，已跳过")
+                    continue
+            else:
+                sanitized_fields = raw_fields if isinstance(raw_fields, list) else []
 
-        sanitized_fields, field_warnings = _sanitize_action_fields(raw_fields, index)
-        warnings.extend(field_warnings)
-        if not sanitized_fields:
-            warnings.append(f"动作{index} 清洗后无有效字段映射，已跳过")
-            continue
-        if node_type == "add_record" and len(sanitized_fields) < 2:
-            warnings.append(f"动作{index} add_record 字段映射过少({len(sanitized_fields)})，已跳过")
-            continue
-
-        sanitized.append(
-            {
-                **node,
-                "type": node_type,
-                "target_worksheet_id": target_ws,
-                "fields": sanitized_fields,
-            }
-        )
+            sanitized.append(
+                {
+                    **node,
+                    "type": node_type,
+                    "target_worksheet_id": target_ws,
+                    "fields": sanitized_fields,
+                }
+            )
+        else:
+            # 非记录节点（branch, copy, notify, delay, calc, approval, ai_text 等）
+            sanitized.append({**node, "type": node_type})
 
     return sanitized, warnings
 
@@ -289,78 +303,229 @@ def add_action_nodes(
     results: list[dict]  = []
     prev_node_id: str    = start_node_id
 
+    # Import NODE_CONFIGS for non-record node types
+    try:
+        from add_workflow_node import NODE_CONFIGS, build_save_node_body
+    except ImportError:
+        NODE_CONFIGS = {}
+        build_save_node_body = None
+
     for i, node_plan in enumerate(action_nodes, 1):
         node_type = node_plan.get("type", "update_record")
-        action_id = "1" if node_type == "add_record" else "2"
         name      = node_plan.get("name", f"动作节点{i}")
-        target_ws = node_plan.get("target_worksheet_id", "") or worksheet_id
-        fields    = _build_fields(node_plan.get("fields", []), start_node_id)
 
-        print(
-            f"      [动作{i}] {name}  type={node_type}  fields={len(fields)}  target={target_ws[:16]}",
-            file=sys.stderr,
-        )
+        # Record operation nodes (add/update/delete/get)
+        _RECORD_TYPES = {"add_record", "update_record", "delete_record", "get_record", "get_records"}
+        if node_type in _RECORD_TYPES:
+            action_id_map = {"add_record": "1", "update_record": "2", "delete_record": "3", "get_record": "4", "get_records": "5"}
+            action_id = action_id_map.get(node_type, "2")
+            target_ws = node_plan.get("target_worksheet_id", "") or worksheet_id
+            fields    = _build_fields(node_plan.get("fields", []), start_node_id)
 
-        # Step A: 添加节点骨架
-        add_resp = session.post(
-            "https://api.mingdao.com/workflow/flowNode/add",
-            {
-                "processId": process_id,
-                "actionId":  action_id,
-                "appType":   1,
-                "name":      name,
-                "prveId":    prev_node_id,
-                "typeId":    6,
-            },
-        )
-        print(f"        flowNode/add → status={add_resp.get('status')}", file=sys.stderr)
+            print(
+                f"      [动作{i}] {name}  type={node_type}  fields={len(fields)}  target={target_ws[:16]}",
+                file=sys.stderr,
+            )
 
-        if add_resp.get("status") != 1:
-            results.append({"ok": False, "step": "flowNode/add", "name": name, "raw": add_resp})
-            continue
+            # Step A: 添加节点骨架
+            add_resp = session.post(
+                "https://api.mingdao.com/workflow/flowNode/add",
+                {
+                    "processId": process_id,
+                    "actionId":  action_id,
+                    "appType":   1,
+                    "name":      name,
+                    "prveId":    prev_node_id,
+                    "typeId":    6,
+                },
+            )
+            print(f"        flowNode/add → status={add_resp.get('status')}", file=sys.stderr)
 
-        added = add_resp.get("data", {}).get("addFlowNodes", [])
-        if not added:
-            results.append({"ok": False, "step": "addFlowNodes empty", "name": name})
-            continue
+            if add_resp.get("status") != 1:
+                results.append({"ok": False, "step": "flowNode/add", "name": name, "raw": add_resp})
+                continue
 
-        node_id = added[0]["id"]
+            added = add_resp.get("data", {}).get("addFlowNodes", [])
+            if not added:
+                results.append({"ok": False, "step": "addFlowNodes empty", "name": name})
+                continue
 
-        # Step B: 保存节点配置（含字段映射）
-        save_resp = session.post(
-            "https://api.mingdao.com/workflow/flowNode/saveNode",
-            {
+            node_id = added[0]["id"]
+
+            # Step B: 保存节点配置（含字段映射）
+            save_body = {
                 "processId":    process_id,
                 "nodeId":       node_id,
                 "flowNodeType": 6,
                 "actionId":     action_id,
                 "name":         name,
-                # update_record: selectNodeId = 触发节点（提供记录上下文）
-                # add_record:    selectNodeId = ""
                 "selectNodeId": start_node_id if action_id == "2" else "",
                 "appId":        target_ws,
                 "appType":      1,
                 "fields":       fields,
                 "filters":      [],
-            },
-        )
-        ok = save_resp.get("status") == 1
-        print(
-            f"        flowNode/saveNode → status={save_resp.get('status')} msg={save_resp.get('msg')!r}",
-            file=sys.stderr,
-        )
+            }
+            save_resp = session.post(
+                "https://api.mingdao.com/workflow/flowNode/saveNode", save_body,
+            )
+            ok = save_resp.get("status") == 1
+            print(
+                f"        flowNode/saveNode → status={save_resp.get('status')} msg={save_resp.get('msg')!r}",
+                file=sys.stderr,
+            )
 
-        results.append({
-            "ok":          ok,
-            "node_id":     node_id,
-            "type":        node_type,
-            "name":        name,
-            "fields_count": len(fields),
-        })
-        if ok:
-            prev_node_id = node_id  # 下一个节点接在本节点之后
+            results.append({
+                "ok":          ok,
+                "node_id":     node_id,
+                "type":        node_type,
+                "name":        name,
+                "fields_count": len(fields),
+            })
+            if ok:
+                prev_node_id = node_id
+        else:
+            # Non-record node types (branch, copy, notify, delay, calc, etc.)
+            cfg = NODE_CONFIGS.get(node_type) if NODE_CONFIGS else None
+            if not cfg:
+                print(f"      [动作{i}] {name}  type={node_type} — 未知节点类型，跳过", file=sys.stderr)
+                results.append({"ok": False, "step": "unknown_node_type", "name": name, "type": node_type})
+                continue
+
+            print(f"      [动作{i}] {name}  type={node_type}  typeId={cfg['typeId']}", file=sys.stderr)
+
+            add_payload = {
+                "processId": process_id,
+                "prveId":    prev_node_id,
+                "name":      name,
+                "typeId":    cfg["typeId"],
+            }
+            if "actionId" in cfg:
+                add_payload["actionId"] = cfg["actionId"]
+            if "appType" in cfg:
+                add_payload["appType"] = cfg["appType"]
+            if cfg.get("needs_worksheet") and worksheet_id:
+                add_payload["appId"] = worksheet_id
+
+            add_resp = session.post("https://api.mingdao.com/workflow/flowNode/add", add_payload)
+            print(f"        flowNode/add → status={add_resp.get('status')}", file=sys.stderr)
+
+            if add_resp.get("status") != 1:
+                results.append({"ok": False, "step": "flowNode/add", "name": name, "raw": add_resp})
+                continue
+
+            added = add_resp.get("data", {}).get("addFlowNodes", [])
+            if not added:
+                results.append({"ok": False, "step": "addFlowNodes empty", "name": name})
+                continue
+
+            node_id = added[0]["id"]
+
+            # Configure via saveNode if applicable
+            if build_save_node_body:
+                save_body = build_save_node_body(
+                    node_type, cfg, process_id, node_id,
+                    worksheet_id, name, {"gatewayType": 1},
+                )
+                if save_body:
+                    save_resp = session.post("https://api.mingdao.com/workflow/flowNode/saveNode", save_body)
+                    print(f"        flowNode/saveNode → status={save_resp.get('status')}", file=sys.stderr)
+
+            results.append({
+                "ok": True, "node_id": node_id,
+                "type": node_type, "name": name,
+            })
+            prev_node_id = node_id
 
     return results
+
+
+# ── 创建日期字段触发工作流 ─────────────────────────────────────────────────────
+
+def create_date_trigger(
+    session:      Session,
+    relation_id:  str,
+    worksheet_id: str,
+    trigger_plan: dict,
+    publish:      bool = False,
+) -> dict:
+    name             = trigger_plan.get("name", "按日期字段触发")
+    assign_field_id  = trigger_plan.get("assign_field_id", "ctime")
+    execute_time_type = int(trigger_plan.get("execute_time_type", 0))
+    number           = int(trigger_plan.get("number", 0))
+    unit             = int(trigger_plan.get("unit", 3))
+    end_time         = trigger_plan.get("end_time", "08:00")
+    frequency        = int(trigger_plan.get("frequency", 1))
+
+    if execute_time_type == 2:
+        end_time = ""
+
+    # Step 1: 创建工作流（startEventAppType=6 日期字段触发）
+    add_resp = session.post(
+        "https://api.mingdao.com/workflow/process/add",
+        {"companyId": "", "relationId": relation_id, "relationType": 2,
+         "startEventAppType": 6, "name": name, "explain": ""},
+    )
+    print(f"    process/add → status={add_resp.get('status')}", file=sys.stderr)
+    if add_resp.get("status") != 1:
+        return {"ok": False, "step": "process/add", "raw": add_resp}
+
+    data       = add_resp.get("data") or {}
+    process_id = str(data.get("id", "")).strip()
+    company_id = str(data.get("companyId", "")).strip()
+    if not (process_id and company_id):
+        return {"ok": False, "step": "process_id/company_id empty", "raw": add_resp}
+
+    # Step 2: 注册到 AppManagement
+    session.post(
+        "https://www.mingdao.com/api/AppManagement/AddWorkflow",
+        {"projectId": company_id, "name": name},
+        extra_headers={"Referer": f"https://www.mingdao.com/workflowedit/{process_id}"},
+    )
+
+    # Step 3: 获取 startNodeId
+    pub_resp = session.get(
+        f"https://api.mingdao.com/workflow/process/getProcessPublish?processId={process_id}",
+    )
+    start_node_id = ""
+    if pub_resp.get("status") == 1:
+        start_node_id = str((pub_resp.get("data") or {}).get("startNodeId", "")).strip()
+    print(f"    getProcessPublish → startNodeId={start_node_id!r}", file=sys.stderr)
+
+    if start_node_id:
+        # Step 4: 配置日期字段触发节点
+        session.post(
+            "https://api.mingdao.com/workflow/flowNode/saveNode",
+            {
+                "appId": worksheet_id, "appType": 6,
+                "processId": process_id, "nodeId": start_node_id,
+                "flowNodeType": 0, "name": "按日期字段触发",
+                "triggerId": "2",
+                "assignFieldId": assign_field_id,
+                "assignFieldIds": [],
+                "executeTimeType": execute_time_type,
+                "number": number, "unit": unit,
+                "time": "", "endTime": end_time,
+                "executeEndTime": "",
+                "frequency": frequency,
+                "operateCondition": [], "controls": [], "returns": [],
+            },
+        )
+
+    # Step 5: 发布
+    published = False
+    if publish and process_id:
+        published = publish_process(session, process_id)
+
+    return {
+        "ok": True, "trigger_type": "date_trigger",
+        "name": name, "process_id": process_id,
+        "assign_field_id": assign_field_id,
+        "execute_time_type": execute_time_type,
+        "frequency": frequency,
+        "trigger_configured": bool(start_node_id),
+        "publish_status": 1 if published else 0,
+        "workflow_edit_url": f"https://www.mingdao.com/workflowedit/{process_id}",
+    }
 
 
 # ── 创建自定义动作工作流 ───────────────────────────────────────────────────────
@@ -714,6 +879,23 @@ def execute_worksheet_plan(
         results.append(r)
         print(f"    {'✓' if r.get('ok') else '✗'}  process_id={r.get('process_id')}", file=sys.stderr)
 
+    # ── 日期字段触发 ─────────────────────────────────────────────────────────
+    dt_plans = (ws_plan.get("date_triggers") or [])[:2]
+    seq_offset = len(ca_plans) + len(ev_plans)
+    for k, dt_plan in enumerate(dt_plans, 1):
+        dt_name = dt_plan.get("name", f"日期字段触发{k}")
+        print(f"\n  [日期触发 {k}/{len(dt_plans)}]「{dt_name}」", file=sys.stderr)
+        if _skip(dt_name):
+            results.append({"ok": True, "skipped": True, "name": dt_name, "seq": seq_offset + k}); continue
+        try:
+            r = create_date_trigger(session, app_id, worksheet_id, dt_plan, publish)
+        except Exception as exc:
+            r = {"ok": False, "step": "exception", "error": str(exc)}
+            print(f"    ❌ 异常：{exc}", file=sys.stderr)
+        r["seq"] = seq_offset + k
+        results.append(r)
+        print(f"    {'✓' if r.get('ok') else '✗'}  process_id={r.get('process_id')}", file=sys.stderr)
+
     ok_count = sum(1 for r in results if r.get("ok"))
     return {
         "worksheet_id": worksheet_id, "worksheet_name": worksheet_name,
@@ -793,7 +975,7 @@ def main() -> int:
             return 2
 
     total_estimated = sum(
-        len(ws.get("custom_actions") or []) + len(ws.get("worksheet_events") or [])
+        len(ws.get("custom_actions") or []) + len(ws.get("worksheet_events") or []) + len(ws.get("date_triggers") or [])
         for ws in worksheets
     ) + len(time_triggers)
     print(
@@ -879,7 +1061,34 @@ def main() -> int:
         icon = "✅" if tt_failed == 0 else "⚠️ "
         print(f"  {icon} 时间触发 {tt_ok}/{len(tt_results)} 成功", file=sys.stderr)
 
-    # 6. 汇总输出
+    # 6. 批量发布所有新创建的工作流（若未 --no-publish）
+    if do_publish:
+        all_process_ids = []
+        for ws_res in all_results:
+            for wf in ws_res.get("workflows", []):
+                pid = wf.get("process_id", "")
+                if pid and wf.get("ok") and not wf.get("skipped") and wf.get("publish_status", 0) != 1:
+                    all_process_ids.append(pid)
+        for tr in tt_results:
+            pid = tr.get("process_id", "")
+            if pid and tr.get("ok") and not tr.get("skipped") and tr.get("publish_status", 0) != 1:
+                all_process_ids.append(pid)
+
+        if all_process_ids:
+            print(f"\n[publish] 批量发布 {len(all_process_ids)} 个未发布工作流...", file=sys.stderr)
+            pub_ok = pub_fail = 0
+            for pid in all_process_ids:
+                try:
+                    if publish_process(session, pid):
+                        pub_ok += 1
+                    else:
+                        pub_fail += 1
+                except Exception as exc:
+                    print(f"    publish {pid} 异常: {exc}", file=sys.stderr)
+                    pub_fail += 1
+            print(f"[publish] 完成：成功 {pub_ok}，失败 {pub_fail}", file=sys.stderr)
+
+    # 7. 汇总输出
     import datetime as _dt
     output = {
         "app_id": app_id, "app_name": app_name,

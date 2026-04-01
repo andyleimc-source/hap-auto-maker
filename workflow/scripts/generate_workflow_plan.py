@@ -241,20 +241,30 @@ def build_prompt(app_structure: dict) -> str:
 
 {app_desc}
 
-请为每个工作表规划 **5 个工作流**，内容要专业、贴合业务，像真实企业管理系统中的工作流命名：
+请为每个工作表规划 **6 个工作流**，内容要专业、贴合业务，像真实企业管理系统中的工作流命名：
   1. custom_actions：3 个自定义动作按钮（name 要体现业务动作，如"审批通过""标记发货""结案处理"）
   2. worksheet_event：1 个工作表事件触发（监听数据变化，触发相关业务流程）
   3. time_trigger：1 个定时触发（定期执行数据维护、状态归档、统计汇总等任务）
+  4. date_trigger：1 个日期字段触发（按工作表中的日期字段到期时自动触发，如合同到期提醒、任务截止日通知）
 
 规划要求：
 - 充分利用字段含义（尤其是下拉选项），让工作流反映字段的业务状态流转
 - confirm_msg 要清晰说明操作影响（用户能理解这个操作会做什么）
 - worksheet_event 的 trigger_id 要根据业务场景合理选择
 - time_trigger 执行时间设为近期（参考：首次执行 {example_execute_time}，结束时间 {example_end_time}）
+- date_trigger 的 assign_field_id 应选择工作表中的日期/日期时间字段ID（type=15 或 16），也可用系统字段 ctime（创建时间）或 mtime（更新时间）
 - 不同工作表的工作流不能雷同，要体现各表的业务特点
 
 {_TRIGGER_ID_HINT}
 {_FREQUENCY_HINT}
+
+_DATE_TRIGGER_HINT:
+  assign_field_id: 日期字段 ID（工作表中的字段 ID，或系统字段 ctime/mtime）
+  execute_time_type: 0=当天指定时刻触发, 1=日期前N单位, 2=日期后N单位
+  number: 偏移数量（execute_time_type=1/2 时有效）
+  unit: 1=分钟, 2=小时, 3=天
+  end_time: 当天执行时刻（HH:MM 格式，execute_time_type=2 时为空字符串）
+  frequency: 0=不重复, 1=每年, 2=每月, 3=每周
 
 当前工作表列表（请严格使用这些 worksheet_id，不要编造）：
 {ws_list_json}
@@ -283,6 +293,15 @@ def build_prompt(app_structure: dict) -> str:
         "interval": 1,
         "frequency": 7,
         "week_days": []
+      }},
+      "date_trigger": {{
+        "name": "...",
+        "assign_field_id": "日期字段ID或ctime/mtime",
+        "execute_time_type": 0,
+        "number": 0,
+        "unit": 3,
+        "end_time": "08:00",
+        "frequency": 1
       }}
     }}
   ]
