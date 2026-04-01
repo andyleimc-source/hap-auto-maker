@@ -134,7 +134,7 @@ body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
 <div class="topbar">
   <h1>HAP Auto Maker</h1>
   <span class="sub">工作流总览</span>
-  <span class="badge">7 个阶段 · 14 个步骤</span>
+  <span class="badge">9 个阶段 · 16 个步骤</span>
   <span class="badge">点击节点查看 输入→处理→输出</span>
 </div>
 
@@ -220,7 +220,35 @@ var NODES = {
     outputFiles: ["worksheet_plans/worksheet_plan_{appId}_{时间戳}.json"],
     inputExample: '// 传给 Gemini 的核心参数：\n{\n  "app_name": "汽车运输物流管理系统",\n  "business_context": "管理汽车运输全流程，涵盖\\n    订单、调度、追踪、结算等核心业务",\n  "requirements": "至少10张工作表"\n}',
     outputExample: '{\n  "app_name": "汽车运输物流管理系统",\n  "worksheets": [\n    {\n      "name": "客户",\n      "purpose": "管理客户基本信息",\n      "fields": [\n        {\n          "name": "客户名称",\n          "type": "Text",\n          "required": true\n        },\n        {\n          "name": "客户类型",\n          "type": "SingleSelect",\n          "option_values": ["个人", "企业", "政府机构"]\n        }\n      ],\n      "depends_on": []\n    },\n    {\n      "name": "运输订单",\n      "fields": [\n        {\n          "name": "关联客户",\n          "type": "Relation",\n          "relation_target": "客户"  // ← 关联到客户表\n        },\n        {\n          "name": "订单状态",\n          "type": "SingleSelect",\n          "option_values": ["待接单","运输中","已完成"]\n        }\n      ],\n      "depends_on": ["客户"]  // ← 必须先创建客户表\n    }\n  ],\n  "creation_order": ["客户","司机","车辆","运输订单","调度"]\n}',
-    deps: ["s1"], usedBy: ["s2b"]
+    deps: ["s1"], usedBy: ["s2c"]
+  },
+  s2c: {
+    title: "AI 规划工作表分组", icon: "🗂️", iconClass: "icon-ai", step: "Step 2c",
+    script: "plan_app_sections_gemini.py",
+    role: "按业务领域将工作表归类为 2-5 个分组，让用户在应用导航中快速定位相关功能模块，避免大量工作表堆在一起。",
+    desc: "Gemini 读取工作表规划，按业务领域语义分组，输出 sections_plan.json。",
+    inputs: ["worksheet_plan.json（来自 Step 2a）→ --plan-json"],
+    process: "提取工作表 name + purpose → Gemini 语义分组（fast tier）→ validate 覆盖率 → 输出 sections_plan.json",
+    whyProcess: "分组需要理解工作表的业务含义（如「客户」「联系人」「合同」同属「客户管理」域），只有 AI 能做到准确归类。工作表少于 3 张时直接输出单分组，不调用 AI。",
+    outputs: ["sections_plan.json（分组名称 + 所含工作表列表）"],
+    outputFiles: ["sections_plans/sections_plan_{appId}_{ts}.json"],
+    inputExample: '{ "worksheets": [\n  {"name": "客户", "purpose": "管理客户基本信息"},\n  {"name": "合同", "purpose": "管理销售合同"}\n]}',
+    outputExample: '{\n  "sections": [\n    {"name": "客户管理", "worksheets": ["客户","联系人","合同"]},\n    {"name": "生产管理", "worksheets": ["生产计划","物料清单"]}\n  ]\n}',
+    deps: ["s2a"], usedBy: ["s2d"]
+  },
+  s2d: {
+    title: "创建分组 & 移动工作表", icon: "📁", iconClass: "icon-exec", step: "Step 2d",
+    script: "create_sections_from_plan.py",
+    role: "调用 HomeApp API 创建真实分组，并将真实 appSectionId 写回 worksheet_plan，工作表创建后再批量移入正确分组，让应用导航层次清晰。",
+    desc: "两步创建分组（AddAppSection + UpdateAppSectionName）→ 写回 worksheet_plan.json → 工作表创建后调用 RemoveWorkSheetAscription 移动。",
+    inputs: ["sections_plan.json（来自 Step 2c）→ --sections-plan-json", "worksheet_plan.json（来自 Step 2a）→ --plan-json（原地更新 appSectionId）", "app_auth.json → --app-auth-json"],
+    process: "模式一：遍历分组 → POST AddAppSection → POST UpdateAppSectionName → 写回 plan\n模式二：读取 worksheet_create_result → POST RemoveWorkSheetAscription 批量移动",
+    whyProcess: "HAP 创建分组需要两步（先创空分组得 ID，再改名），这是 Web API 的固定流程。工作表无法在创建时指定分组，只能建好后移动，故分两个阶段执行。",
+    outputs: ["sections_create_result.json（分组 ID 映射）", "worksheet_plan.json（原地更新 appSectionId 字段）"],
+    outputFiles: ["sections_create_results/sections_create_result_{appId}_{ts}.json"],
+    inputExample: '{ "sections": [\n  {"name": "客户管理", "worksheets": ["客户","联系人"]}\n]}',
+    outputExample: '{\n  "sections": [\n    {"name": "客户管理", "appSectionId": "xxx-yyy", "worksheets": ["客户","联系人"]}\n  ],\n  "worksheet_name_to_section_id": {"客户": "xxx-yyy", "联系人": "xxx-yyy"}\n}',
+    deps: ["s2c"], usedBy: ["s2b"]
   },
   s3: {
     title: "AI 规划角色权限", icon: "👥", iconClass: "icon-ai", step: "Step 3",
@@ -262,7 +290,7 @@ var NODES = {
     outputFiles: ["worksheet_create_results/...（路径通过 stdout 输出）"],
     inputExample: '// 来自 Step 2a 的 worksheet_plan.json：\n{\n  "creation_order": ["客户","司机","车辆","运输订单"],\n  "worksheets": [\n    { "name": "客户", "fields": [...] },\n    { "name": "运输订单",\n      "fields": [\n        { "name": "关联客户", "type": "Relation",\n          "relation_target": "客户" }\n      ]\n    }\n  ]\n}',
     outputExample: '{\n  "app_id": "ca56c6c1-...",\n  "created_worksheets": [\n    {\n      "name": "客户",\n      "worksheetId": "69c5eee7a97577e6377534ed",\n      "success": true\n    },\n    {\n      "name": "运输订单",\n      "worksheetId": "69c5eee7f045950b80f92b66",\n      "success": true\n    }\n  ],\n  "name_to_worksheet_id": {\n    "客户": "69c5eee7a97577e6377534ed",\n    "运输订单": "69c5eee7f045950b80f92b66"\n    // ← 这个映射表被后续所有步骤使用\n  }\n}',
-    deps: ["s2a", "s1"], usedBy: ["s4","s5","s6","s9","s10","s11","s14a","s14","s13"]
+    deps: ["s2d", "s2a", "s1"], usedBy: ["s4","s5","s6","s9","s10","s11","s14a","s14","s13"]
   },
   s4: {
     title: "工作表图标配置", icon: "🎨", iconClass: "icon-ai", step: "Step 4",
@@ -445,7 +473,9 @@ var WAVES = [
   { label: "需求收集", type: "seq", nodes: ["req"], connLabel: "启动交互" },
   { label: "阶段 1 · 创建应用", type: "seq", nodes: ["s1"], connLabel: "requirement_spec.json" },
   { label: "阶段 2 · 并行规划", type: "par", nodes: ["s2a","s3","s8"], connLabel: "appId + app_auth.json" },
-  { label: "阶段 3 · 创建工作表", type: "seq", nodes: ["s2b"], connLabel: "worksheet_plan.json" },
+  { label: "阶段 2.5 · AI 规划分组", type: "seq", nodes: ["s2c"], connLabel: "worksheet_plan.json（来自 Step 2a）" },
+  { label: "阶段 2.6 · 创建分组", type: "seq", nodes: ["s2d"], connLabel: "sections_plan.json" },
+  { label: "阶段 3 · 创建工作表", type: "seq", nodes: ["s2b"], connLabel: "worksheet_plan.json（含 appSectionId）" },
   { label: "阶段 4 · 并行构建", type: "par", nodes: ["s4","s5","s6","s9","s10","s11","s14a"], connLabel: "工作表已创建（实体存在于明道云）" },
   { label: "阶段 5 · 并行应用", type: "par", nodes: ["s7","s12"], connLabel: "view_create_result / workflow_plan" },
   { label: "阶段 6 · 统计图表页", type: "seq", nodes: ["s14"], connLabel: "视图 + 过滤器 + page_plan" },
