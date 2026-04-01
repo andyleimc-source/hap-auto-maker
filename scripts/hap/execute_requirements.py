@@ -5,11 +5,13 @@
 读取 workflow_requirement_v1 JSON，并编排现有脚本执行全流程。
 
 并行策略：
-  - Wave 2: Step 2a + Step 3 + Step 8 并行（2a/3 受 Gemini 信号量约束）
-  - Wave 3: Step 2b（依赖 2a）
-  - Wave 4: Step 4/5/6/9/10/11/13 全部提交，Semaphore(3) 限制同时 Gemini 调用数；13 不用 Gemini
-  - Wave 5: Step 7（依赖 6）、Step 12（依赖 11），无 Gemini 限制
-  - Wave 6: Step 14 统计图表 Pages（串行，依赖 Wave 4/5 完成，用 Gemini）
+  - Wave 2:   Step 2a + Step 3 + Step 8 并行（2a/3 受 Gemini 信号量约束）
+  - Wave 2.5: Step 2c AI 规划工作表分组（串行，依赖 2a）
+  - Wave 3:   Step 2d 创建分组+写回 plan（串行，依赖 2c）；Step 2b 创建工作表（依赖 2d）；
+              Step 2d-2 移动工作表到分组（串行，依赖 2b）
+  - Wave 4:   Step 4/5/6/9/10/11/13 全部提交，Semaphore(3) 限制同时 Gemini 调用数；13 不用 Gemini
+  - Wave 5:   Step 7（依赖 6）、Step 12（依赖 11），无 Gemini 限制
+  - Wave 6:   Step 14 统计图表 Pages（串行，依赖 Wave 4/5 完成，用 Gemini）
 """
 
 import argparse
@@ -59,10 +61,14 @@ SCRIPT_EXECUTE_WORKFLOWS = WORKFLOW_SCRIPTS_DIR / "execute_workflow_plan.py"
 SCRIPT_DELETE_DEFAULT_VIEWS = resolve_script("delete_default_views.py")
 SCRIPT_PIPELINE_PAGES = resolve_script("pipeline_pages.py")
 SCRIPT_PLAN_PAGES = resolve_script("plan_pages_gemini.py")
+SCRIPT_PLAN_SECTIONS    = resolve_script("plan_app_sections_gemini.py")
+SCRIPT_CREATE_SECTIONS  = resolve_script("create_sections_from_plan.py")
 VIEW_PLAN_DIR = OUTPUT_ROOT / "view_plans"
 VIEW_CREATE_RESULT_DIR = OUTPUT_ROOT / "view_create_results"
 TABLEVIEW_FILTER_PLAN_DIR = OUTPUT_ROOT / "tableview_filter_plans"
 TABLEVIEW_FILTER_APPLY_RESULT_DIR = OUTPUT_ROOT / "tableview_filter_apply_results"
+SECTIONS_PLAN_DIR          = OUTPUT_ROOT / "sections_plans"
+SECTIONS_CREATE_RESULT_DIR = OUTPUT_ROOT / "sections_create_results"
 
 # Gemini 并发上限（同时最多 3 个步骤调用 Gemini）
 GEMINI_SEMAPHORE = threading.Semaphore(3)
@@ -427,6 +433,8 @@ def main() -> None:
         "app_id": None,
         "app_auth_json": None,
         "worksheet_plan_json": None,
+        "sections_plan_json": None,
+        "sections_create_result_json": None,
         "worksheet_create_result_json": None,
         "role_pipeline_report_json": None,
         "role_plan_json": None,
@@ -462,6 +470,8 @@ def main() -> None:
             "artifacts": {
                 "app_auth_json": context.get("app_auth_json"),
                 "worksheet_plan_json": context.get("worksheet_plan_json"),
+                "sections_plan_json": context.get("sections_plan_json"),
+                "sections_create_result_json": context.get("sections_create_result_json"),
                 "worksheet_create_result_json": context.get("worksheet_create_result_json"),
                 "role_pipeline_report_json": context.get("role_pipeline_report_json"),
                 "role_plan_json": context.get("role_plan_json"),
@@ -679,13 +689,62 @@ def main() -> None:
         return
 
     # ──────────────────────────────────────────────
-    # Wave 3: Step 2b 创建工作表（依赖 2a，串行）
+    # Wave 2.5: Step 2c AI 规划工作表分组（串行，依赖 2a）
+    # ──────────────────────────────────────────────
+    print(f"\n── Wave 2.5: AI 规划工作表分组 ─── 总计 {time.time()-pipeline_start:.0f}s", flush=True)
+
+    sections_plan_output = (SECTIONS_PLAN_DIR / f"sections_plan_{app_id}_{now_ts()}.json").resolve()
+    sections_create_output = (SECTIONS_CREATE_RESULT_DIR / f"sections_create_{app_id}_{now_ts()}.json").resolve()
+    ok2c = True
+    ok2d = True
+    sections_create_result_path: Optional[str] = None
+
+    if ws.get("enabled", True) and ok2a:
+        context["worksheet_plan_json"] = str(plan_output)
+        cmd2c = [
+            sys.executable, str(SCRIPT_PLAN_SECTIONS),
+            "--plan-json", str(plan_output),
+            "--output", str(sections_plan_output),
+        ]
+        ok2c = execute_step(2, "sections_plan", "AI 规划工作表分组", cmd2c, uses_gemini=True)
+        if ok2c and not execution_dry_run:
+            context["sections_plan_json"] = str(sections_plan_output)
+        if fail_fast and not ok2c:
+            out = save_report()
+            print(f"\n执行失败并终止，报告: {out}")
+            return
+
+    if fail_fast and has_failure():
+        out = save_report()
+        print(f"\n执行失败并终止，报告: {out}")
+        return
+
+    # ──────────────────────────────────────────────
+    # Wave 3: Step 2d 创建分组（依赖 2c）；Step 2b 创建工作表（依赖 2d）；Step 2d-2 移动工作表（依赖 2b）
     # ──────────────────────────────────────────────
     print(f"\n── Wave 3: 创建工作表 ─── 总计 {time.time()-pipeline_start:.0f}s", flush=True)
 
+    # Step 2d 模式一：创建分组，写回 worksheet_plan
+    if ws.get("enabled", True) and ok2c and not execution_dry_run:
+        cmd2d = [
+            sys.executable, str(SCRIPT_CREATE_SECTIONS),
+            "--sections-plan-json", str(sections_plan_output),
+            "--plan-json", str(plan_output),
+            "--app-id", app_id,
+            "--app-auth-json", str(app_auth_json),
+            "--output", str(sections_create_output),
+        ]
+        ok2d = execute_step(2, "sections_create", "创建工作表分组", cmd2d, uses_gemini=False)
+        if ok2d:
+            sections_create_result_path = str(sections_create_output)
+            context["sections_create_result_json"] = sections_create_result_path
+        if fail_fast and not ok2d:
+            out = save_report()
+            print(f"\n执行失败并终止，报告: {out}")
+            return
+
     worksheet_create_result_path: Optional[str] = None
     if ws.get("enabled", True) and ok2a:
-        context["worksheet_plan_json"] = str(plan_output)
         cmd2b = [
             sys.executable, str(SCRIPT_CREATE_WORKSHEETS),
             "--plan-json", str(plan_output),
@@ -699,6 +758,20 @@ def main() -> None:
             out = save_report()
             print(f"\n执行失败并终止，报告: {out}")
             return
+
+        # Step 2d 模式二：移动工作表到分组
+        if ok2b and ok2d and sections_create_result_path and worksheet_create_result_path and not execution_dry_run:
+            cmd2d2 = [
+                sys.executable, str(SCRIPT_CREATE_SECTIONS),
+                "--sections-plan-json", str(sections_plan_output),
+                "--plan-json", str(plan_output),
+                "--app-id", app_id,
+                "--app-auth-json", str(app_auth_json),
+                "--output", str(sections_create_output),
+                "--ws-create-result", str(worksheet_create_result_path),
+            ]
+            execute_step(2, "sections_move", "移动工作表到分组", cmd2d2, uses_gemini=False)
+
     elif not ws.get("enabled", True):
         with steps_lock:
             steps_report.append({"step_id": 2, "step_key": "worksheets_create", "title": "创建工作表", "skipped": True, "reason": "disabled_by_spec", "result": {}})
