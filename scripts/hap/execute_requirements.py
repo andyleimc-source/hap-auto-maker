@@ -5,8 +5,8 @@
 读取 workflow_requirement_v1 JSON，并编排现有脚本执行全流程。
 
 并行策略：
-  - Wave 2:   Step 2a + Step 3 + Step 8 并行（2a/3 受 Gemini 信号量约束）
-  - Wave 2.5: Step 2c AI 规划工作表分组（串行，依赖 2a）
+  - Wave 2:   Step 2a + Step 3 并行（受 Gemini 信号量约束）
+  - Wave 2.5: Step 2c AI 规划工作表分组（串行，依赖 2a）；Step 8 在此之后执行（依赖分组数动态决定导航样式）
   - Wave 3:   Step 2d 创建分组+写回 plan（串行，依赖 2c）；Step 2b 创建工作表（依赖 2d）；
               Step 2d-2 移动工作表到分组（串行，依赖 2b）
   - Wave 4:   Step 4/5/6/9/10/11/13 全部提交，Semaphore(3) 限制同时 Gemini 调用数；13 不用 Gemini
@@ -675,13 +675,11 @@ def main() -> None:
             cmd8.append("--refresh-auth")
         return execute_step(8, "navi", "设置应用导航风格", cmd8, uses_gemini=False)
 
-    with ThreadPoolExecutor(max_workers=3) as pool:
+    with ThreadPoolExecutor(max_workers=2) as pool:
         f2a = pool.submit(run_step_2a)
         f3  = pool.submit(run_step_3)
-        f8  = pool.submit(run_step_8)
         ok2a = f2a.result()
         f3.result()
-        f8.result()
 
     if fail_fast and has_failure():
         out = save_report()
@@ -713,6 +711,20 @@ def main() -> None:
             out = save_report()
             print(f"\n执行失败并终止，报告: {out}")
             return
+
+    # 根据分组数动态决定导航样式：>3 个分组 → 经典导航（pcNaviStyle=2）
+    if ok2c and sections_plan_output.exists() and not execution_dry_run:
+        try:
+            sections_data = json.loads(sections_plan_output.read_text(encoding="utf-8"))
+            section_count = len(sections_data.get("sections", []))
+            if section_count > 3:
+                app["navi_style"]["pcNaviStyle"] = 2
+                print(f"  ℹ 分组数={section_count} > 3，自动切换为经典导航（pcNaviStyle=2）", flush=True)
+        except Exception as e:
+            print(f"  ⚠ 读取分组数失败，使用默认导航样式: {e}", flush=True)
+
+    # Step 8：设置应用导航风格（依赖分组数，在 Wave 2.5 后串行执行）
+    run_step_8()
 
     if fail_fast and has_failure():
         out = save_report()
