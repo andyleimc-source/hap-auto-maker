@@ -144,7 +144,7 @@
 | `group_ids` | string | 应用分组 ID，多个逗号分隔，可为空 |
 | `icon_mode` | string | `ai_match`（AI 匹配）或其他 |
 | `color_mode` | string | `random`（随机）或具体颜色值如 `#00bcd4` |
-| `navi_style.pcNaviStyle` | int | 导航风格：`1`=左侧，`2`=顶部 |
+| `navi_style.pcNaviStyle` | int | 导航风格：`0`=经典，`1`=分组列表（左侧），`2`=卡片，`3`=树形列表 |
 
 #### `worksheets` — 工作表规划配置
 

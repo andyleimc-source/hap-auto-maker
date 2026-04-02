@@ -718,8 +718,8 @@ def main() -> None:
             sections_data = json.loads(sections_plan_output.read_text(encoding="utf-8"))
             section_count = len(sections_data.get("sections", []))
             if section_count > 3:
-                app["navi_style"]["pcNaviStyle"] = 2
-                print(f"  ℹ 分组数={section_count} > 3，自动切换为经典导航（pcNaviStyle=2）", flush=True)
+                app["navi_style"]["pcNaviStyle"] = 0
+                print(f"  ℹ 分组数={section_count} > 3，自动切换为经典导航（pcNaviStyle=0）", flush=True)
         except Exception as e:
             print(f"  ⚠ 读取分组数失败，使用默认导航样式: {e}", flush=True)
 
