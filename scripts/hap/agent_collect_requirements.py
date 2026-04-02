@@ -218,7 +218,7 @@ def build_chat_prompt(transcript: List[Dict[str, str]], latest_user_input: str) 
 要求：
 1) 用中文回复，简洁直接。
 2) 采用“默认优先”策略：以下项若用户未明确指定，不要追问，直接使用默认值。
-   - 导航布局: 左侧（pcNaviStyle=1）
+   - 导航布局: 分组列表/左侧（pcNaviStyle=1）；经典=0，卡片=2，树形列表=3
    - 主题色: random
 3) 如果信息不完整，只追问关键缺口（应用名称/行业场景、是否需要工作表规划、业务范围）。
 4) 避免一次提太多问题，优先单问单答。
