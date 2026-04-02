@@ -73,8 +73,10 @@
 
 - `"0"`：表格视图
 - `"1"`：看板视图
+- `"2"`：层级视图
 - `"3"`：画廊视图
 - `"4"`：日历视图
+- `"5"`：甘特图视图
 
 ### 成功响应（样本）
 
@@ -143,7 +145,21 @@
   - `coverCid`: 图片字段 ID
   - `advancedSetting.coverstyle: "{\"position\":\"2\"}"`
 
-### 2.4 日历视图（`viewType: "4"`）
+### 2.4 层级视图（`viewType: "2"`）
+
+- 关键参数：
+  - `viewId: ""`
+  - `viewType: "2"`
+  - `name: "层级"`
+  - `childType: 0`（层级配置，0=本表关联）
+- 创建后需二次保存（同接口）：
+  - `viewId: "<刚创建的viewId>"`
+  - `editAttrs: ["childType", "layersControlId"]`
+  - `childType: 0`
+  - `layersControlId: "本表关联字段ID"`（必须为 Relation 类型，且 dataSource 等于本工作表ID）
+- 说明：层级视图依赖自关联字段（如"上级部门"），创建时必须指定 `childType` 和 `layersControlId`，否则视图将卡在配置页面。
+
+### 2.5 日历视图（`viewType: "4"`）
 
 - HAR：`日历视图.har`
 - 创建请求关键参数：
@@ -156,6 +172,20 @@
   - `editAttrs: ["advancedSetting"]`
   - `advancedSetting.calendarcids`: `[{begin,end}]` 的字符串化 JSON
   - `editAdKeys: ["calendarcids"]`
+
+### 2.6 甘特图视图（`viewType: "5"`）
+
+- 关键参数：
+  - `viewId: ""`
+  - `viewType: "5"`
+  - `name: "甘特图"`
+- 创建后需二次保存（同接口）：
+  - `viewId: "<刚创建的viewId>"`
+  - `editAttrs: ["advancedSetting"]`
+  - `editAdKeys: ["begindate", "enddate"]`
+  - `advancedSetting.begindate: "开始日期字段ID"`
+  - `advancedSetting.enddate: "结束日期字段ID"`
+- 说明：甘特图需要指定开始和结束日期字段，否则视图将卡在配置页面。
 
 ## 3. 创建与更新的调用规律（重要）
 
