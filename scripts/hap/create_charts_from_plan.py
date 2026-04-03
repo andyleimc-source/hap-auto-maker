@@ -27,7 +27,12 @@ AUTH_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "auth_config.py"
 SAVE_REPORT_URL = "https://api.mingdao.com/report/reportConfig/saveReportConfig"
 SAVE_PAGE_URL = "https://api.mingdao.com/report/custom/savePage"
 
-REPORT_TYPE_NAMES = {1: "柱状图", 2: "折线图", 3: "饼图", 4: "环形图"}
+REPORT_TYPE_NAMES = {
+    1: "柱状图", 2: "折线图", 3: "饼图", 4: "环形图",
+    5: "漏斗图", 6: "雷达图", 7: "条形图", 8: "双轴图",
+    9: "散点图", 10: "数值图", 11: "区域图", 12: "进度图",
+    13: "透视表", 14: "词云图", 15: "排行图", 16: "地图", 17: "关系图",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -70,9 +75,9 @@ def resolve_plan_path(value: str) -> Path:
 # ---------------------------------------------------------------------------
 
 def build_default_display_setup(report_type: int, xaxes: dict) -> dict:
-    """生成通用的 displaySetup 配置。"""
+    """生成通用的 displaySetup 配置，根据图表类型自动调整。"""
     x_control_name = str(xaxes.get("controlName", "")).strip()
-    return {
+    setup = {
         "isPerPile": False,
         "isPile": False,
         "isAccumulate": False,
@@ -88,7 +93,7 @@ def build_default_display_setup(report_type: int, xaxes: dict) -> dict:
         "legendType": 1,
         "showDimension": True,
         "showNumber": True,
-        "showPercent": report_type in {3, 4},
+        "showPercent": report_type in {3, 4, 5},  # 饼图/环形图/漏斗图显示百分比
         "showXAxisCount": 0,
         "showChartType": 1,
         "showPileTotal": True,
@@ -127,6 +132,15 @@ def build_default_display_setup(report_type: int, xaxes: dict) -> dict:
             "showNumber": None,
         },
     }
+    # 数值图（数字卡片）：不显示图例和维度
+    if report_type == 10:
+        setup["showLegend"] = False
+        setup["showDimension"] = False
+    # 透视表：启用合并单元格
+    if report_type == 13:
+        setup["mergeCell"] = True
+        setup["showRowList"] = True
+    return setup
 
 
 def build_xaxes_payload(xaxes: dict) -> dict:
@@ -222,6 +236,19 @@ def build_report_body(chart: dict, app_id: str) -> dict:
     yaxis_payload = [build_yaxis_payload(y) for y in yaxis_list_raw]
     display_setup = build_default_display_setup(report_type, xaxes_raw)
 
+    # 数值图（reportType=10）不需要 xaxes 维度字段
+    if report_type == 10:
+        xaxes_payload["controlId"] = None
+        xaxes_payload["cid"] = "null-1"
+        xaxes_payload["c_Id"] = "null-1"
+        xaxes_payload["controlName"] = ""
+        xaxes_payload["cname"] = ""
+
+    # 双轴图（reportType=8）需要设置第二轴类型
+    yreport_type = chart.get("yreportType")
+    if report_type == 8 and yreport_type is None:
+        yreport_type = 2  # 默认第二轴为折线图
+
     return {
         "splitId": "",
         "split": {},
@@ -251,7 +278,7 @@ def build_report_body(chart: dict, app_id: str) -> dict:
         "formulas": [],
         "views": views,
         "auth": 1,
-        "yreportType": None,
+        "yreportType": yreport_type,
         "yaxisList": yaxis_payload,
         "xaxes": xaxes_payload,
         "sourceType": 1,
@@ -265,8 +292,8 @@ def build_report_body(chart: dict, app_id: str) -> dict:
 # API 调用
 # ---------------------------------------------------------------------------
 
-def save_report_config(body: dict, auth_config_path: Path) -> dict:
-    resp = auth_retry.hap_web_post(SAVE_REPORT_URL, auth_config_path, json=body, timeout=30)
+def save_report_config(body: dict, auth_config_path: Path, referer: str = "") -> dict:
+    resp = auth_retry.hap_web_post(SAVE_REPORT_URL, auth_config_path, referer=referer, json=body, timeout=30)
     resp.raise_for_status()
     return resp.json()
 
@@ -327,7 +354,7 @@ def build_page_components(results: List[dict], app_id: str, existing_components:
     return existing_components + new_components
 
 
-def save_page(page_id: str, components: List[dict], version: int, auth_config_path: Path) -> dict:
+def save_page(page_id: str, components: List[dict], version: int, auth_config_path: Path, referer: str = "") -> dict:
     body = {
         "appId": page_id,
         "version": version,
@@ -354,7 +381,7 @@ def save_page(page_id: str, components: List[dict], version: int, auth_config_pa
             "orightWebCols": 48,
         },
     }
-    resp = auth_retry.hap_web_post(SAVE_PAGE_URL, auth_config_path, json=body, timeout=30)
+    resp = auth_retry.hap_web_post(SAVE_PAGE_URL, auth_config_path, referer=referer, json=body, timeout=30)
     resp.raise_for_status()
     return resp.json()
 
@@ -385,6 +412,10 @@ def main() -> None:
         raise ValueError("规划文件缺少 appId")
 
     auth_config_path = Path(args.auth_config).expanduser().resolve()
+    page_id = args.page_id.strip()
+    chart_referer = ""
+    if page_id:
+        chart_referer = f"https://www.mingdao.com/app/{app_id}/{page_id}"
 
     print(f"应用: {app_name} ({app_id})")
     print(f"规划文件: {plan_path}")
@@ -403,7 +434,7 @@ def main() -> None:
             return i, {"chartName": chart_name, "status": "dry-run", "body": body}
 
         try:
-            resp_data = save_report_config(body, auth_config_path)
+            resp_data = save_report_config(body, auth_config_path, referer=chart_referer)
             report_id = ""
             if isinstance(resp_data, dict):
                 data_field = resp_data.get("data", {})
@@ -465,7 +496,7 @@ def main() -> None:
     print(f"结果文件: {output_path}")
 
     # Step: savePage（把图表布局到 page）
-    page_id = args.page_id.strip()
+    # page_id 已在上方解析
     if page_id and not args.dry_run and success > 0:
         print(f"\n[savePage] 将 {success} 个图表布局到 page: {page_id}")
         try:
@@ -479,7 +510,7 @@ def main() -> None:
             all_components = build_page_components(results, app_id, existing_components)
 
             # 3. savePage
-            page_resp = save_page(page_id, all_components, current_version, auth_config_path)
+            page_resp = save_page(page_id, all_components, current_version, auth_config_path, referer=chart_referer)
             page_ok = (
                 page_resp.get("success") is True
                 or page_resp.get("status") == 1
