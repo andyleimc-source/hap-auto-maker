@@ -1,0 +1,218 @@
+"""
+图表规划器 — 利用 charts/ 注册中心 + 字段分类，生成高质量图表 plan。
+
+功能:
+  1. 分析工作表字段，推荐适合的图表类型
+  2. 生成包含类型约束的 AI prompt
+  3. 校验 AI 输出（字段存在性 + 类型兼容性）
+  4. 输出 plan JSON 供 create_charts_from_plan.py 执行
+
+与现有 plan_charts_gemini.py 的区别:
+  - 利用 CHART_REGISTRY 元数据指导 AI 选型
+  - 字段分类后给 AI 更精准的推荐
+  - 校验增加字段类型兼容性检查
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+from typing import Optional
+
+_BASE = Path(__file__).resolve().parents[1]
+if str(_BASE) not in sys.path:
+    sys.path.insert(0, str(_BASE))
+
+from planning.constraints import (
+    build_chart_type_prompt_section,
+    classify_fields,
+    suggest_chart_types,
+    SYSTEM_FIELDS,
+    get_chart_constraints,
+)
+
+
+def build_enhanced_prompt(
+    app_name: str,
+    worksheets_info: list[dict],
+    target_count: int = 10,
+) -> str:
+    """生成增强版图表规划 prompt，包含类型约束和字段推荐。
+
+    Args:
+        app_name: 应用名称
+        worksheets_info: [{worksheetId, worksheetName, fields: [{controlId, controlName, type, options}]}]
+        target_count: 目标图表数量 (8-12)
+    """
+    # 1. 图表类型说明
+    chart_type_section = build_chart_type_prompt_section()
+
+    # 2. 工作表 + 字段 + 推荐
+    ws_sections = []
+    for ws in worksheets_info:
+        ws_id = ws.get("worksheetId", "")
+        ws_name = ws.get("worksheetName", "")
+        fields = ws.get("fields", [])
+        classified = classify_fields(fields)
+        suggestions = suggest_chart_types(classified)
+
+        lines = [f"\n### 工作表「{ws_name}」(ID: {ws_id})"]
+        lines.append("字段：")
+
+        for cat_name, cat_label in [
+            ("select", "单选/下拉"), ("number", "数值"), ("date", "日期"),
+            ("text", "文本"), ("user", "成员"), ("relation", "关联"),
+        ]:
+            cat_fields = classified.get(cat_name, [])
+            if cat_fields:
+                field_strs = []
+                for f in cat_fields:
+                    s = f"  {f['id']}  {f['name']}(type={f['type']})"
+                    if f.get("options"):
+                        opts = ", ".join(f"{o['key'][:12]}={o['value']}" for o in f["options"][:4])
+                        s += f"  选项: {opts}"
+                    field_strs.append(s)
+                lines.append(f"  [{cat_label}]")
+                lines.extend(field_strs)
+
+        if suggestions:
+            lines.append("  推荐图表：")
+            for sg in suggestions[:3]:
+                lines.append(f"    - reportType={sg['reportType']} {sg['reason']}")
+
+        ws_sections.append("\n".join(lines))
+
+    ws_detail = "\n".join(ws_sections)
+
+    return f"""你是一名数据可视化专家，正在为「{app_name}」规划统计图表。
+
+{chart_type_section}
+
+## 应用工作表与字段
+{ws_detail}
+
+## 任务
+
+请规划 {target_count} 个统计图表，覆盖多种图表类型，展示不同的业务分析视角。
+
+规划原则：
+1. 每个图表必须有明确的业务分析目的
+2. 图表类型要多样化（至少使用 4 种不同 reportType）
+3. 覆盖尽可能多的工作表（不要集中在一个表上）
+4. xaxes.controlId 和 yaxisList[].controlId 必须来自上方字段列表或系统字段（ctime/utime/record_count）
+5. 数值图(10)的 xaxes.controlId 必须设为 null
+6. 饼图(3)/环形图(4) xaxes 应使用单选/下拉字段
+7. 折线图(2)/区域图(11) xaxes 应使用日期字段，设 particleSizeType=1(月)或4(日)
+8. 图表名称 ≤10 个字，简洁有业务含义
+9. yaxisList 至少 1 项，可用 record_count（记录数量）或数值字段
+
+## 输出格式（严格 JSON）
+
+{{
+  "charts": [
+    {{
+      "name": "图表名称",
+      "desc": "一句话描述分析目的",
+      "reportType": 1,
+      "worksheetId": "来自上方的工作表 ID",
+      "xaxes": {{
+        "controlId": "字段ID 或 null(仅数值图)",
+        "controlType": 字段type数字,
+        "particleSizeType": 0,
+        "sortType": 0,
+        "emptyType": 0
+      }},
+      "yaxisList": [
+        {{
+          "controlId": "字段ID 或 record_count",
+          "controlType": 字段type数字或0,
+          "rename": "显示名称"
+        }}
+      ],
+      "filter": {{
+        "filterRangeId": "ctime",
+        "filterRangeName": "创建时间",
+        "rangeType": 0,
+        "rangeValue": 0,
+        "today": false
+      }}
+    }}
+  ]
+}}"""
+
+
+def validate_enhanced_plan(
+    raw: dict,
+    worksheets_by_id: dict[str, dict],
+) -> list[dict]:
+    """增强版校验：字段存在性 + 类型兼容性。
+
+    Args:
+        raw: AI 输出的原始 JSON
+        worksheets_by_id: {worksheetId: {fields: [...]}}
+
+    Returns:
+        校验通过的 charts 列表
+
+    Raises:
+        ValueError: 校验失败（触发 AI 重试）
+    """
+    constraints = get_chart_constraints()
+    charts = raw.get("charts", [])
+    if not isinstance(charts, list) or len(charts) == 0:
+        raise ValueError("未返回 charts 数组")
+    if len(charts) < 5:
+        raise ValueError(f"期望 8-12 个图表，只返回 {len(charts)} 个")
+
+    validated = []
+    for i, chart in enumerate(charts):
+        if not isinstance(chart, dict):
+            raise ValueError(f"图表 {i+1} 格式错误")
+        name = str(chart.get("name", "")).strip()
+        if not name:
+            raise ValueError(f"图表 {i+1} 缺少 name")
+
+        report_type = int(chart.get("reportType", 0) or 0)
+        if report_type not in constraints["types"]:
+            raise ValueError(f"图表 {i+1} reportType={report_type} 不在支持列表中")
+
+        worksheet_id = str(chart.get("worksheetId", "")).strip()
+        if worksheet_id and worksheet_id not in worksheets_by_id:
+            print(f"[警告] 图表 {i+1} worksheetId 不存在，跳过: {worksheet_id}")
+            continue
+
+        # 字段存在性校验
+        if worksheet_id and worksheet_id in worksheets_by_id:
+            ws_info = worksheets_by_id[worksheet_id]
+            ws_fields = ws_info.get("fields", [])
+            valid_fids = {
+                str(f.get("id", "") or f.get("controlId", "")).strip()
+                for f in ws_fields
+                if str(f.get("id", "") or f.get("controlId", "")).strip()
+            }
+            valid_fids.update(SYSTEM_FIELDS)
+
+            xaxes = chart.get("xaxes", {})
+            x_cid = str(xaxes.get("controlId") or "").strip()
+            if report_type not in constraints["xaxes_null_types"] and x_cid and x_cid not in valid_fids:
+                raise ValueError(f"图表 {i+1}「{name}」xaxes.controlId「{x_cid}」不在工作表字段中")
+
+            yaxis_list = chart.get("yaxisList", [])
+            for j, y in enumerate(yaxis_list):
+                y_cid = str(y.get("controlId", "")).strip()
+                if y_cid and y_cid not in valid_fids:
+                    raise ValueError(f"图表 {i+1}「{name}」yaxisList[{j}].controlId「{y_cid}」不在工作表字段中")
+
+        # 类型兼容性校验
+        xaxes = chart.get("xaxes", {})
+        if report_type in constraints["xaxes_null_types"]:
+            if xaxes.get("controlId") not in (None, "", "null"):
+                chart["xaxes"]["controlId"] = None  # 自动修正
+
+        yaxis_list = chart.get("yaxisList", [])
+        if not isinstance(yaxis_list, list) or len(yaxis_list) == 0:
+            raise ValueError(f"图表 {i+1} yaxisList 为空")
+
+        validated.append(chart)
+
+    return validated
