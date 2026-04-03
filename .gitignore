@@ -51,6 +51,16 @@ RULES.md
 DEBUG.md
 TEST_CASES.md
 
+# Ruff lint 缓存
+.ruff_cache/
+
+# Gemini RPD 运行时状态
+config/gemini_rpd_usage.json
+config/gemini_rpd_usage.json.lock
+
+# 临时计划文件
+plans/
+
 # 系统文件
 .DS_Store
 Thumbs.db
