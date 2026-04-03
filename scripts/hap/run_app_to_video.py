@@ -28,7 +28,7 @@ OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 APP_RUNS_DIR = OUTPUT_ROOT / "app_runs"
 REQUIREMENT_SPEC_LATEST = OUTPUT_ROOT / "requirement_specs" / "requirement_spec_latest.json"
 EXECUTION_RUN_LATEST = OUTPUT_ROOT / "execution_runs" / "execution_run_latest.json"
-AGENT_COLLECT_SCRIPT = resolve_script("agent_collect_requirements.py")
+MAKE_APP_SCRIPT = (BASE_DIR / "make_app.py").resolve()
 
 
 def now_ts() -> str:
@@ -211,7 +211,7 @@ def build_summary_md(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="一键从需求沟通到应用全流程执行")
-    parser.add_argument("--requirements-text", default="", help="可选，非交互模式下直接提供需求文本")
+    parser.add_argument("--requirements-text", default="", help="可选，直接提供需求文本（透传给 make_app.py）")
     parser.add_argument("--resume-latest", action="store_true", help="跳过需求采集，直接从最新成功的 execution report 继续")
     parser.add_argument("--skip-recording", action="store_true", default=False, help="跳过 Playwright 录屏（由 run_app_pipeline.py 默认传入）")
     args = parser.parse_args()
@@ -251,18 +251,16 @@ def main() -> None:
             execution_path = EXECUTION_RUN_LATEST.resolve()
         else:
             step1_started = time.time()
-            cmd1 = [sys.executable, str(AGENT_COLLECT_SCRIPT.resolve())]
-            stdin_text = ""
-            if str(args.requirements_text).strip():
-                stdin_text = args.requirements_text.strip() + "\n开始运行\n"
-            result1 = run_command(cmd1, cwd=BASE_DIR, interactive=True, stdin_text=stdin_text)
-            result1["name"] = "agent_collect_requirements"
+            requirements_text = str(args.requirements_text).strip()
+            if not requirements_text:
+                print("错误：请通过 --requirements-text 提供需求描述，或使用 --resume-latest。", file=sys.stderr)
+                sys.exit(1)
+            cmd1 = [sys.executable, str(MAKE_APP_SCRIPT), "--requirements", requirements_text]
+            result1 = run_command(cmd1, cwd=BASE_DIR, interactive=False)
+            result1["name"] = "make_app"
             tech_log["commands"].append(result1)
-            if result1["returncode"] == 130:
-                print("\n[信息] 用户取消了需求对话，正在退出。")
-                return
             if result1["returncode"] != 0:
-                raise RuntimeError("步骤1失败：需求采集或自动执行未成功完成。")
+                raise RuntimeError("步骤1失败：应用创建未成功完成。")
 
             spec_path = assert_recent(REQUIREMENT_SPEC_LATEST, step1_started, "requirement_spec_latest.json")
             execution_path = assert_recent(EXECUTION_RUN_LATEST, step1_started, "execution_run_latest.json")

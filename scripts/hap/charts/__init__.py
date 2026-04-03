@@ -3,6 +3,7 @@
 
 用法:
     from scripts.hap.charts import CHART_REGISTRY, build_report_body, REPORT_TYPE_NAMES
+    from scripts.hap.charts import CHART_SCHEMA, get_ai_prompt_section, list_chart_types
 
     # 查看所有图表类型
     for rt, spec in CHART_REGISTRY.items():
@@ -10,11 +11,29 @@
 
     # 构建 saveReportConfig body
     body = build_report_body(chart_dict, app_id)
+
+    # 获取 AI prompt 用的图表说明
+    prompt_section = get_ai_prompt_section()
 """
 
 from __future__ import annotations
 
 from . import basic, pie, funnel, radar, dual_axis, scatter, number, table, special
+from .chart_config_schema import (
+    CHART_SCHEMA,
+    CHART_CATEGORIES,
+    XAXES_NULL_TYPES,
+    SHOW_PERCENT_TYPES,
+    DUAL_AXIS_TYPE,
+    VERIFIED_TYPES,
+    NORM_TYPE_NAMES,
+    PARTICLE_SIZE_NAMES,
+    CONTROL_TYPE_NAMES,
+    AI_PLANNING_GUIDE,
+    get_schema,
+    get_ai_prompt_section,
+    list_chart_types,
+)
 
 _MODULES = [
     (basic,     basic.CHARTS,     basic.build),

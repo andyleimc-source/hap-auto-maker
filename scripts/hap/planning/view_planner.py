@@ -84,6 +84,257 @@ def suggest_views(classified_fields: dict[str, list[dict]], worksheet_id: str = 
     return suggestions
 
 
+# ─── Phase 1: 结构规划（只决定视图类型+名称，不涉及配置细节）─────────────────
+
+
+def build_structure_prompt(
+    app_name: str,
+    worksheets_data: list[dict],
+) -> str:
+    """Phase 1 — 只规划每个工作表的视图类型、名称和理由。
+
+    不要求 AI 输出 advancedSetting、postCreateUpdates 等配置。
+    """
+    view_type_section = build_view_type_prompt_section()
+
+    ws_sections = []
+    for ws in worksheets_data:
+        ws_id = ws.get("worksheetId", "")
+        ws_name = ws.get("worksheetName", "")
+        fields = ws.get("fields", [])
+        classified = classify_fields(fields)
+        suggestions = suggest_views(classified, ws_id)
+
+        lines = [f"\n### 工作表「{ws_name}」(ID: {ws_id})"]
+        for cat, label in [("select", "单选/下拉"), ("date", "日期"),
+                           ("text", "文本"), ("number", "数值"), ("relation", "关联")]:
+            cat_fields = classified.get(cat, [])
+            if cat_fields:
+                fids = ", ".join(f"{f['id']}({f['name']})" for f in cat_fields[:5])
+                lines.append(f"  [{label}] {fids}")
+
+        if suggestions:
+            lines.append("  推荐视图：")
+            for sg in suggestions:
+                lines.append(f"    - viewType={sg['viewType']} {sg['name']} ({sg['reason']})")
+
+        ws_sections.append("\n".join(lines))
+
+    count = len(worksheets_data)
+
+    return f"""你是一名应用配置专家，正在为「{app_name}」的所有工作表规划视图。
+
+{view_type_section}
+
+## 工作表与字段
+{"".join(ws_sections)}
+
+## 任务
+
+为每个工作表规划 1-5 个视图，只需决定视图类型、名称和理由。不需要配置细节。
+
+规则：
+1) viewType 允许 0(表格), 1(看板), 2(层级), 3(画廊), 4(日历), 5(甘特图)
+2) 每个工作表 1-5 个视图，实用不凑数
+3) 看板(1) 需要单选字段(type=11)，无合适字段则不创建
+4) 甘特图(5) 需要两个日期字段
+5) 层级(2) 需要自关联字段(type=29, dataSource=本表)
+6) 日历(4) 需要日期字段
+
+## 输出格式（严格 JSON）
+
+{{
+  "worksheets": [
+    {{
+      "worksheetId": "来自上方",
+      "worksheetName": "名称",
+      "views": [
+        {{
+          "name": "视图名",
+          "viewType": "0",
+          "reason": "业务理由",
+          "viewControl": "看板时填单选字段ID，其他留空"
+        }}
+      ]
+    }}
+  ]
+}}
+
+worksheets 数组长度必须等于 {count}，不能遗漏。"""
+
+
+def validate_structure_plan(
+    raw: dict,
+    worksheets_by_id: dict[str, dict],
+) -> dict:
+    """Phase 1 校验 — 只检查视图类型和基本约束。"""
+    worksheets = raw.get("worksheets", [])
+    if not isinstance(worksheets, list) or not worksheets:
+        raise ValueError("缺少 worksheets 数组")
+
+    for i, ws in enumerate(worksheets):
+        ws_id = str(ws.get("worksheetId", "")).strip()
+        views = ws.get("views", [])
+        if not isinstance(views, list):
+            raise ValueError(f"worksheets[{i}] views 不是数组")
+
+        for j, view in enumerate(views):
+            vt = str(view.get("viewType", "")).strip()
+            if vt not in {str(k) for k in VIEW_REGISTRY}:
+                raise ValueError(f"worksheets[{i}].views[{j}] viewType={vt} 非法")
+
+    return raw
+
+
+# ─── Phase 2: 视图配置规划（给定结构 + 真实 viewId，输出配置细节）───────────────
+
+
+def build_config_prompt(
+    app_name: str,
+    structure_plan: dict,
+    worksheets_data: list[dict],
+) -> str:
+    """Phase 2 — 给定 Phase 1 的视图结构 + 真实字段 ID，
+    为每个视图生成 displayControls、advancedSetting、postCreateUpdates。
+
+    Args:
+        app_name: 应用名称
+        structure_plan: Phase 1 输出（含视图类型、名称）
+        worksheets_data: [{worksheetId, worksheetName, fields: [...]}]
+    """
+    # 构建字段参考
+    ws_field_sections = []
+    for ws in worksheets_data:
+        ws_id = ws.get("worksheetId", "")
+        ws_name = ws.get("worksheetName", "")
+        fields = ws.get("fields", [])
+        classified = classify_fields(fields)
+
+        lines = [f"\n### 工作表「{ws_name}」(ID: {ws_id})"]
+        for cat, label in [("select", "单选/下拉"), ("date", "日期"),
+                           ("text", "文本"), ("number", "数值"),
+                           ("user", "成员"), ("relation", "关联"),
+                           ("attachment", "附件")]:
+            cat_fields = classified.get(cat, [])
+            if cat_fields:
+                for f in cat_fields:
+                    lines.append(f"  {f['id']}  type={f['type']}  {f['name']}")
+        ws_field_sections.append("\n".join(lines))
+
+    field_detail = "\n".join(ws_field_sections)
+
+    # 序列化已规划的视图结构
+    plan_lines = []
+    for ws in structure_plan.get("worksheets", []):
+        ws_id = ws.get("worksheetId", "")
+        ws_name = ws.get("worksheetName", "")
+        plan_lines.append(f"\n## 工作表「{ws_name}」(ID: {ws_id})")
+        for view in ws.get("views", []):
+            vc = view.get("viewControl", "")
+            vc_str = f" viewControl={vc}" if vc else ""
+            plan_lines.append(
+                f"  - viewType={view.get('viewType', '')} \"{view.get('name', '')}\"{vc_str}"
+            )
+
+    plan_summary = "\n".join(plan_lines)
+
+    return f"""你是一名视图配置专家，正在为「{app_name}」的视图填写具体配置。
+
+## 已规划的视图结构
+{plan_summary}
+
+## 完整字段参考
+{field_detail}
+
+## 任务
+
+为每个视图补充完整配置。根据视图类型填写：
+
+- **所有视图**：displayControls（显示字段 ID 列表，选最重要的 5-8 个字段）
+- **表格(0) 含"分组"/"分类"关键词的**：advancedSetting.groupView（需 viewId 占位，用 "{{viewId}}" 表示）
+- **日历(4)**：postCreateUpdates 中设 calendarcids（开始/结束日期字段 ID）
+- **甘特图(5)**：postCreateUpdates 中设 begindate 和 enddate
+- **层级(2)**：postCreateUpdates 中设 layersControlId
+
+## 配置格式说明
+
+groupView 格式（JSON 紧凑字符串）：
+  '{{"viewId":"{{viewId}}","groupFilters":[{{"controlId":"<单选字段ID>","values":[],"dataType":<字段type>,"spliceType":1,"filterType":2,"dateRange":0,"minValue":"","maxValue":"","isGroup":true}}],"navShow":true}}'
+
+calendarcids 格式（JSON 紧凑字符串）：
+  '[{{"begin":"<日期字段ID>","end":"<结束日期字段ID或空>"}}]'
+
+## 输出 JSON 格式
+
+{{
+  "worksheets": [
+    {{
+      "worksheetId": "...",
+      "worksheetName": "...",
+      "views": [
+        {{
+          "name": "视图名",
+          "viewType": "0",
+          "displayControls": ["字段ID1", "字段ID2"],
+          "coverCid": "",
+          "viewControl": "",
+          "advancedSetting": {{}},
+          "postCreateUpdates": [
+            {{
+              "editAttrs": ["advancedSetting"],
+              "editAdKeys": ["calendarcids"],
+              "advancedSetting": {{"calendarcids": "[...]"}}
+            }}
+          ]
+        }}
+      ]
+    }}
+  ]
+}}"""
+
+
+def validate_config_plan(
+    raw: dict,
+    worksheets_by_id: dict[str, dict],
+) -> dict:
+    """Phase 2 校验 — 检查 displayControls、advancedSetting 的字段引用。"""
+    worksheets = raw.get("worksheets", [])
+    if not isinstance(worksheets, list) or not worksheets:
+        raise ValueError("缺少 worksheets 数组")
+
+    for i, ws in enumerate(worksheets):
+        ws_id = str(ws.get("worksheetId", "")).strip()
+        views = ws.get("views", [])
+        if not isinstance(views, list):
+            raise ValueError(f"worksheets[{i}] views 不是数组")
+
+        ws_info = worksheets_by_id.get(ws_id)
+        if not ws_info:
+            continue
+
+        field_ids = {
+            str(f.get("id", "") or f.get("controlId", "")).strip()
+            for f in ws_info.get("fields", [])
+            if str(f.get("id", "") or f.get("controlId", "")).strip()
+        }
+
+        for j, view in enumerate(views):
+            # 校验 displayControls
+            dc = view.get("displayControls", [])
+            if isinstance(dc, list):
+                view["displayControls"] = [x for x in dc if str(x).strip() in field_ids]
+
+            # 校验 viewControl
+            vc = str(view.get("viewControl", "")).strip()
+            if vc and vc not in field_ids:
+                view["viewControl"] = ""
+
+    return raw
+
+
+# ─── 原有一体化接口（向后兼容）───────────────────────────────────────────────────
+
+
 def build_enhanced_prompt(
     app_name: str,
     worksheets_data: list[dict],
