@@ -61,198 +61,29 @@ from workflow_io import Session, persist
 
 
 # ---------------------------------------------------------------------------
-# Node type definitions
+# Node type definitions — 代理到 workflow/nodes/ 模块化注册中心
 # ---------------------------------------------------------------------------
 
-NODE_CONFIGS = {
-    "delete_record":    {"typeId": 6, "actionId": "3", "appType": 1, "name": "删除记录", "needs_worksheet": True},
-    "get_record":       {"typeId": 6, "actionId": "4", "appType": 1, "name": "获取单条数据", "needs_worksheet": True},
-    "get_records":      {"typeId": 13, "actionId": "400", "name": "查询工作表", "needs_worksheet": False},
-    "calibrate_record": {"typeId": 6, "actionId": "6", "appType": 1, "name": "校准单条数据", "needs_worksheet": True},
-    "branch":           {"typeId": 1, "name": "分支"},
-    "subprocess":       {"typeId": 16, "name": "子流程"},
-    "loop":             {"typeId": 29, "actionId": "210", "appType": 45, "name": "满足条件时循环", "needs_relation": True},
-    "abort":            {"typeId": 30, "actionId": "2", "name": "中止流程"},
-    "approval":         {"typeId": 26, "appType": 10, "name": "未命名审批流程"},
-    "fill":             {"typeId": 3, "name": "填写"},
-    "copy":             {"typeId": 5, "name": "抄送"},
-    "notify":           {"typeId": 27, "name": "发送站内通知"},
-    "sms":              {"typeId": 10, "name": "发送短信"},
-    "email":            {"typeId": 11, "actionId": "202", "appType": 3, "name": "发送邮件"},
-    "push":             {"typeId": 17, "name": "界面推送"},
-    "delay_duration":   {"typeId": 12, "actionId": "301", "name": "延时一段时间"},
-    "delay_until":      {"typeId": 12, "actionId": "302", "name": "延时到指定日期"},
-    "calc":             {"typeId": 9, "actionId": "100", "name": "数值运算"},
-    "aggregate":        {"typeId": 9, "actionId": "107", "appType": 1, "name": "从工作表汇总", "needs_worksheet": True},
-    "json_parse":       {"typeId": 21, "actionId": "510", "appType": 18, "name": "JSON 解析"},
-    "code_block":       {"typeId": 14, "actionId": "102", "name": "代码块"},
-    "api_request":      {"typeId": 8, "appType": 7, "name": "发送自定义请求"},
-    "ai_text":          {"typeId": 31, "actionId": "531", "appType": 46, "name": "AI 生成文本"},
-    "ai_object":        {"typeId": 31, "actionId": "532", "appType": 46, "name": "AI 生成数据对象"},
-    "ai_agent":         {"typeId": 33, "actionId": "533", "appType": 48, "name": "AI Agent"},
-}
+import sys as _sys
+from pathlib import Path as _Path
+_nodes_dir = _Path(__file__).resolve().parents[1] / "nodes"
+if str(_nodes_dir.parent) not in _sys.path:
+    _sys.path.insert(0, str(_nodes_dir.parent))
+
+from nodes import NODE_CONFIGS, build_save_body as _build_save_body
 
 
 def build_save_node_body(node_type: str, cfg: dict, process_id: str, node_id: str,
                           worksheet_id: str, name: str, extra: dict):
     """Build the saveNode request body for a given node type.
     Returns None if saveNode should be skipped (node is fully configured by add alone).
+
+    兼容层：代理到 workflow/nodes/ 模块，保持旧接口不变。
     """
-    type_id = cfg["typeId"]
-    action = cfg.get("actionId", "")
-
-    # typeId=6 (记录操作) 由 add_action_nodes 自行处理 saveNode，此处跳过
-    # typeId=8 (API请求) / typeId=14 (代码块) / typeId=16 (子流程) 初始状态不需要 saveNode
-    if type_id in (6, 8, 14, 16):
-        return None
-
-    base = {
-        "processId": process_id,
-        "flowNodeType": type_id,
-        "name": name,
-        "selectNodeId": "",
-        "selectNodeName": "",
-        "isException": True,
-        "nodeId": node_id,
-    }
-
-    # typeId=12 (timer) must NOT have actionId at top level — it belongs inside timerNode only
-    if "actionId" in cfg and type_id != 12:
-        base["actionId"] = cfg["actionId"]
-    if "appType" in cfg:
-        base["appType"] = cfg["appType"]
-
-    # typeId-specific fields
-    if type_id == 6:
-        # 记录操作节点
-        if worksheet_id:
-            base["appId"] = worksheet_id
-        if action == "1":
-            base["fields"] = []
-        elif action == "2":
-            base["fields"] = []
-            base["filters"] = []
-        elif action == "3":
-            base["filters"] = []
-        elif action in ("4", "5"):
-            base["filters"] = []
-            base["sorts"] = []
-            if action == "5":
-                base["number"] = 50
-        elif action == "6":
-            base["fields"] = []
-            base["errorFields"] = []
-
-    elif type_id == 1:
-        # 分支网关
-        base["gatewayType"] = extra.get("gatewayType", 1)
-        base["flowIds"] = []
-        base.pop("isException", None)
-
-    elif type_id == 2:
-        # 分支条件
-        base["operateCondition"] = []
-        base["flowIds"] = []
-
-    elif type_id in (3, 5):
-        # 填写 / 抄送
-        base["accounts"] = []
-        base["flowIds"] = []
-        if type_id == 3:
-            base["formProperties"] = []
-
-    elif type_id == 9:
-        # 运算节点
-        action = cfg.get("actionId", "")
-        if action == "100":
-            base["formulaMap"] = {}
-            base["formulaValue"] = ""
-            base["fieldValue"] = ""
-        elif action == "107":
-            if worksheet_id:
-                base["appId"] = worksheet_id
-            base["formulaValue"] = ""
-            base["fieldValue"] = ""
-        # others: minimal body
-
-    elif type_id == 10:
-        # 短信
-        base["accounts"] = []
-        base["content"] = ""
-
-    elif type_id == 11:
-        # 邮件
-        base["accounts"] = []
-        base["title"] = ""
-        base["content"] = ""
-
-    elif type_id == 12:
-        # 延时节点 — 时间值放在 saveNode body 根级别（不是嵌套在 timerNode 下）
-        action = cfg.get("actionId", "301")
-        base["actionId"] = action
-        empty_fv = {"fieldValue": "", "fieldNodeId": "", "fieldControlId": ""}
-        if action == "301":
-            base["numberFieldValue"] = dict(empty_fv)
-            base["hourFieldValue"] = dict(empty_fv)
-            base["minuteFieldValue"] = dict(empty_fv)
-            base["secondFieldValue"] = dict(empty_fv)
-        else:
-            base["executeTimeType"] = 0
-            base["number"] = 0
-            base["unit"] = 1
-            base["time"] = "08:00"
-
-    elif type_id == 16:
-        # 子流程
-        base.pop("isException", None)
-
-    elif type_id == 17:
-        # 界面推送 — HAP 用 sendContent 而非 content
-        base["accounts"] = []
-        base["sendContent"] = ""
-
-    elif type_id == 21:
-        # JSON 解析
-        base["jsonContent"] = ""
-        base["controls"] = []
-
-    elif type_id == 26:
-        # 发起审批
-        base["accounts"] = []
-        base["formProperties"] = []
-        base["flowIds"] = []
-
-    elif type_id == 27:
-        # 站内通知 — HAP 用 sendContent 而非 content
-        base["accounts"] = []
-        base["sendContent"] = ""
-
-    elif type_id == 29:
-        # 循环
-        base["flowIds"] = []
-        base["subProcessId"] = ""
-        base["subProcessName"] = "循环"
-
-    elif type_id == 30:
-        # 中止流程
-        base.pop("isException", None)
-
-    elif type_id == 31:
-        # AI 生成文本 / AI 生成数据对象
-        # ai_text (531): needs appId=""
-        # ai_object (532): minimal body — only actionId is accepted by server
-        base.pop("isException", None)
-        if action == "531":
-            base["appId"] = ""
-
-    elif type_id == 33:
-        # AI Agent
-        base.pop("isException", None)
-        base["appId"] = ""
-        base["tools"] = []
-
-    base.update(extra.get("extra_fields", {}))
-    return base
+    body = _build_save_body(node_type, process_id, node_id, worksheet_id, name, extra)
+    if body is not None:
+        body.update(extra.get("extra_fields", {}))
+    return body
 
 
 # ---------------------------------------------------------------------------
