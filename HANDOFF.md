@@ -1,214 +1,219 @@
-# HANDOFF — 从 hap-ultra-maker 移植能力增强包
+# HANDOFF — 应用生成质量问题修复
 
-## 背景
-
-`feat/v2.0` 分支已完成分组模块（Step 2c/2d）移植。现在要把 `hap-utral-maker`（注意拼写）中剩余的新能力全部移植到本项目。
-
-**源项目路径：** `/Users/andy/Documents/coding/hap-utral-maker`
-**目标项目路径：** `/Users/andy/Documents/coding/hap-auto-maker`（当前在 `feat/v2.0` 分支）
+> 生成时间: 2026-04-03
+> 测试应用: CRM客户管理系统 (app_id: f11f2128-c4de-46cb-a2be-fe1c62ed1481)
+> 应用链接: https://www.mingdao.com/app/f11f2128-c4de-46cb-a2be-fe1c62ed1481
+> 分支: feat/v2.0
 
 ---
 
-## 一、待移植能力清单
+## 共性根因（两个系统性缺陷）
 
-### 1. 甘特图视图（viewType=5）
+所有问题归结为同一类模式的不同表现：
 
-**现状：** 本项目视图规划只允许 `viewType=0,1,3,4`（表格/看板/画廊/日历），**硬编码排除了甘特图（5）和层级视图（2）**。
+### 缺陷 A：创建了但没配完
 
-**需要做的：**
-- 修改 `scripts/hap/plan_worksheet_views_gemini.py`：
-  - `ALLOWED_VIEW_TYPES` 加入 `"5"`（甘特图）和 `"2"`（层级视图）
-  - AI Prompt 中更新说明：`viewType=5` 是甘特图，需含开始/结束日期字段
-  - 约 2 处硬编码 `"0|1|3|4"` 需改为 `"0|1|2|3|4|5"`
-- 修改 `scripts/hap/create_views_from_plan.py`：
-  - `normalize_advanced_setting()` 增加 viewType=5 的处理（与 4 类似，无特殊设置）
-- **参考 API spec：** `/Users/andy/Documents/coding/hap-utral-maker/api-specs/block1-private/worksheet/save-worksheet-view.md`（甘特图视图示例在 `viewType=5` 段落）
+很多实体（视图、工作流节点）只调了**创建接口**（`flowNode/add`、`SaveWorksheetView`），没有调**二次保存接口**（`flowNode/saveNode`、带 `editAttrs` 的 `SaveWorksheetView`）下发完整配置。HAP 的设计是"创建"和"配置"分两步，我们只做了第一步。
 
-**影响 Wave：** Wave 4（Step 6 视图规划），不改 execute_requirements.py
+**受影响:** 甘特图视图、层级视图、工作流分支节点、通知节点、所有工作流 publish 失败
 
----
+### 缺陷 B：规划了但没校验
 
-### 2. 日期字段触发工作流（create_workflow_date_trigger.py）
+AI 规划的 JSON 中引用的字段 ID、工作表 ID 没有在执行前做存在性校验，直接传给 API。字段不存在时 API 不报错但前端渲染失败。
 
-**现状：** 本项目只有 3 种触发器：
-- `create_workflow_worksheet_trigger.py` — 工作表事件触发
-- `create_workflow_time_trigger.py` — 定时触发
-- `create_workflow_custom_action_trigger.py` — 自定义动作触发
-
-**缺少：** 日期字段触发（按工作表中某个日期字段到期时触发工作流）
-
-**需要做的：**
-- 从 ultra 复制 `workflow/scripts/create_workflow_date_trigger.py` 到本项目
-- API endpoint: `POST https://api2.mingdao.com/workflow/flowNode/saveNode`，startEventAppType=6
-- **参考 API spec：** `/Users/andy/Documents/coding/hap-utral-maker/api-specs/block1-private/workflow/create-workflow-date-trigger.md`
-- 修改 `workflow/scripts/execute_workflow_plan.py`：在触发器分发逻辑中增加 `date_trigger` 类型处理
-- 修改 `workflow/scripts/generate_workflow_plan.py`（AI Prompt）：告诉 Gemini 可以生成 `date_trigger` 类型
-
-**影响 Wave：** Wave 4（Step 11 工作流规划）+ Wave 5（Step 12 工作流执行）
+**受影响:** 统计图"无法形成图表"、工作流创建失败（2/71）
 
 ---
 
-### 3. 更多工作流节点类型
+## 问题清单（8 个）
 
-**现状：** 本项目只支持 2 种 action_nodes：`add_record`（新增记录）和 `update_record`（更新记录）
+### 问题 1: "未命名分组"仍然出现
 
-**Ultra 新增节点（已验证 ✅）：**
+**表现:** 导航栏出现"未命名分组"，里面放着 2 个统计页面和 2 个对话机器人。应该叫"仪表盘"或"数据分析"之类有业务含义的名称。
 
-| 节点 | typeId | actionId | appType | 用途 |
-|------|--------|----------|---------|------|
-| 分支网关 | 1 | — | — | 按条件分流 |
-| 抄送通知 | 5 | — | — | 发站内通知 |
-| 删除记录 | 6 | "3" | 1 | 删除数据 |
-| 获取单条数据 | 6 | "4" | 1 | 查询数据 |
-| 获取多条数据 | 6 | "5" | 1 | 批量查询 |
-| 数值运算 | 9 | "100" | — | 计算字段 |
-| 从工作表汇总 | 9 | "107" | 1 | 聚合统计 |
-| 延时 | 12 | "301" | — | 等待一段时间 |
-| 发起审批 | 26 | — | 10 | 审批流 |
-| AI 生成文本 | 31 | "531" | 46 | AIGC |
+**根因:** `plan_app_sections_gemini.py` 的分组规划只考虑了工作表（worksheets），没有考虑统计页面（自定义页面）和对话机器人。这些非工作表项创建后被放到了系统默认的未命名分组。
 
-**需要做的：**
-- 从 ultra 复制 `workflow/scripts/add_workflow_node.py` — 通用节点添加脚本
-- 修改 `workflow/scripts/execute_workflow_plan.py`：
-  - `_sanitize_action_nodes()` 扩展 `node_type` 白名单
-  - `add_action_nodes()` 中根据 typeId/actionId 分发不同创建逻辑
-- 修改 `workflow/scripts/generate_workflow_plan.py`（AI Prompt）：告诉 Gemini 可用的节点类型
-- **参考 API spec：** `/Users/andy/Documents/coding/hap-utral-maker/api-specs/block1-private/workflow/workflow-node-types.md` 和 `workflow-node-configs.md`
+**定位:**
+- `scripts/hap/plan_app_sections_gemini.py:49-58` — `build_prompt()` 只遍历 worksheets 数组
+- 统计页面在 Wave 6（Step 14）创建，机器人在 Wave 4（Step 10）创建，但分组规划在 Wave 2.5（Step 2c）就完成了，时间上不可能包含这些后创建的项
 
-**影响 Wave：** Wave 4（Step 11）+ Wave 5（Step 12）
+**修复方向:** 在分组规划时，prompt 中额外要求 AI 预留一个"仪表盘"/"数据分析"分组，供后续统计页面和机器人使用。或者在 Step 14/10 创建完成后，自动将它们移入已有的合适分组。
 
 ---
 
-### 4. 工作流生命周期管理（启用/禁用/列出）
+### 问题 2: 统计图显示"无法形成图表"
 
-**现状：** 本项目创建工作流后不会自动启用，也无法列出/管理
+**表现:** 统计页面中部分图表显示"无法形成图表——构成要素不存在或已删除"。
 
-**Ultra 新增：**
-- `workflow/scripts/workflow_lifecycle.py` — 启用/禁用/列出/获取详情
-- API endpoints:
-  - 列出: `GET https://api.mingdao.com/workflow/v1/process/listAll?relationId={appId}`
-  - 启用: `POST https://api2.mingdao.com/workflow/process/publish`
-  - 禁用: `POST https://api2.mingdao.com/workflow/process/close`
-  - 详情: `GET https://api2.mingdao.com/workflow/process/getProcessPublish?processId={id}`
+**根因（缺陷 B）:** AI 规划的图表中 `xaxes.controlId` 引用了工作表中不存在的字段。`validate_plan()` 只校验了 worksheetId 存在性，**没有校验字段 ID 是否在该工作表中真实存在**。
 
-**需要做的：**
-- 复制 `workflow/scripts/workflow_lifecycle.py` 到本项目
-- 在 `workflow/scripts/execute_workflow_plan.py` 末尾增加：创建完所有工作流后，批量 publish 启用
-- **参考 API spec：** `/Users/andy/Documents/coding/hap-utral-maker/api-specs/block1-private/workflow/workflow-lifecycle.md`
+**定位:**
+- `scripts/hap/plan_charts_gemini.py:346-378` — `validate_plan()` 无字段级校验
+- `scripts/hap/create_charts_from_plan.py` — 直接把未校验的 body 发给 API，无创建后验证
+- 工作表的字段信息在 `worksheets_by_id[wsId]["fields"]` 中已有，只是没被用来校验
 
-**影响 Wave：** Wave 5（Step 12 末尾追加启用）
+**修复方向:** 在 `validate_plan()` 中增加：对每个 chart，遍历 `xaxes.controlId` 和 `yaxisList[].controlId`，检查是否存在于对应工作表的字段列表中。`ctime`、`utime`、`record_count` 等系统字段需加白名单。不存在的字段直接 raise 让 AI 重新生成。
 
 ---
 
-### 5. 页面组件底层脚本（page_create / page_get / page_save / page_delete）
+### 问题 3: 甘特图视图未配置完成
 
-**现状：** 本项目有 `pipeline_pages.py`（高级编排）和 `create_pages_from_plan.py`（创建页面），但缺少底层原子操作脚本
+**表现:** 甘特图视图停在配置页面，要求选择"开始"和"结束"日期字段。
 
-**Ultra 新增：**
-- `scripts/hap/page_create.py` — 创建空白页面（POST /api/AppManagement/AddWorkSheet, type=1）
-- `scripts/hap/page_get.py` — 获取页面内容（POST https://api.mingdao.com/report/custom/getPage）
-- `scripts/hap/page_save.py` — 保存页面布局和组件（POST https://api.mingdao.com/report/custom/savePage）
-- `scripts/hap/page_delete.py` — 删除页面（POST /api/AppManagement/RemoveWorkSheetForApp）
+**根因（缺陷 A）:** 甘特图（viewType=5）创建后**必须二次保存** `begindate` 和 `enddate`。当前代码只在 plan 中存在 `postCreateUpdates` 时才执行二次保存，但 AI 经常不输出这个字段。
 
-**需要做的：**
-- 直接复制这 4 个文件到本项目 `scripts/hap/`
-- 这些是工具脚本，不需要改 execute_requirements.py
-- 后续 pipeline_pages.py 可以调用这些底层脚本实现更精细的页面管理
+**定位:**
+- `scripts/hap/create_views_from_plan.py:330-348` — postCreateUpdates 执行逻辑：只在 plan 中有时才跑
+- `data/api_docs/private_view_api.md:173-188` — 甘特图二次保存规范：
+  ```
+  editAttrs: ["advancedSetting"]
+  editAdKeys: ["begindate", "enddate"]
+  advancedSetting.begindate: "开始日期字段ID"
+  advancedSetting.enddate: "结束日期字段ID"
+  ```
+- `scripts/hap/plan_worksheet_views_gemini.py` — prompt 提到甘特图但没有**强制**要求输出 postCreateUpdates
 
-**影响 Wave：** 无（工具脚本，不改流水线）
-
----
-
-### 6. 工作表/字段底层操作脚本
-
-**Ultra 新增：**
-- `scripts/hap/get_row.py` — 获取单条记录
-- `scripts/hap/update_row.py` — 更新单条记录
-- `scripts/hap/get_worksheet_detail.py` — 获取工作表详情
-- `scripts/hap/delete_worksheet.py` — 删除工作表
-- `scripts/hap/delete_worksheet_field.py` — 删除单个字段
-- `scripts/hap/update_worksheet_field.py` — 更新字段属性
-
-**需要做的：**
-- 直接复制到本项目 `scripts/hap/`
-- 工具脚本，不改流水线
+**修复方向:** 在 `normalize_views()` 中（`plan_worksheet_views_gemini.py`），当 viewType=5 时，如果缺少 begindate/enddate 的 postCreateUpdates，自动从字段列表中找 type=15 或 type=16 的日期字段补全。参考已实现的分组视图自动补全模式。
 
 ---
 
-## 二、HTML 流程图更新
+### 问题 4: 层级视图（组织架构图）未配置完成
 
-`docs/pipeline-visual.html` 需要更新：
-- Step 6（视图规划）的描述：加入甘特图、层级视图
-- Step 11（工作流规划）的描述：加入日期触发器、新节点类型
-- Step 12（工作流执行）的描述：加入自动启用
-- badge 不变（阶段数和步骤数没增加，只是增强已有步骤）
+**表现:** 层级视图显示空白配置页面，未选择关联字段。
 
----
+**根因（缺陷 A）:** 与问题 3 同理。层级视图（viewType=2）创建后**必须二次保存** `childType` 和 `layersControlId`。
 
-## 三、测试方案
+**定位:**
+- `data/api_docs/private_view_api.md:148-160` — 层级视图二次保存规范：
+  ```
+  editAttrs: ["childType", "layersControlId"]
+  childType: 0
+  layersControlId: "本表关联字段ID"（Relation 类型，dataSource = 本工作表 ID）
+  ```
+- 同样在 `plan_worksheet_views_gemini.py` 的 `normalize_views()` 中没有自动补全逻辑
 
-### 测试 1：甘特图视图
-
-用和之前一样的模拟测试方式，传入「汽车生产管理应用」的 worksheet_plan，调用 `plan_worksheet_views_gemini.py` 的 AI 规划函数，验证输出中有 viewType=5（甘特图）分配给含日期字段的工作表。
-
-### 测试 2：工作流规划增强
-
-同样用模拟方式，调用 `generate_workflow_plan.py` 的 AI 规划函数，验证输出中有：
-- `date_trigger` 类型的工作流
-- 超过 `add_record/update_record` 的节点类型（如 delete_record、分支、通知）
-
-### 测试 3：脚本语法检查
-
-对所有新增/修改的 .py 文件跑 `ast.parse()` 确认无语法错误。
-
-### 测试报告
-
-输出每个能力的移植结果（成功/失败），附带 AI 规划的关键输出片段。
+**修复方向:** 在 `normalize_views()` 中，当 viewType=2 时，自动从字段中找 Relation 类型且 dataSource 等于本工作表 ID 的自关联字段，生成 postCreateUpdates。
 
 ---
 
-## 四、实施顺序
+### 问题 5: 工作表排序不对（订单明细不在订单旁边）
 
-1. 复制底层工具脚本（page_*.py、get_row.py 等 6 个文件）— 纯复制，零风险
-2. 甘特图视图 — 改 2 个文件（plan_views + create_views）
-3. 日期触发器 — 复制 1 个 + 改 2 个文件（execute_workflow_plan + generate_workflow_plan）
-4. 更多工作流节点 — 复制 1 个 + 改 2 个文件
-5. 工作流生命周期 — 复制 1 个 + 改 1 个文件
-6. 更新 HTML — 改 1 个文件
-7. 跑测试 + 出报告
+**表现:** "交易管理"分组下，左侧导航中订单和订单明细没有相邻排列。期望：主表（订单）在上，子表（订单明细）紧跟其后。
+
+**根因:** `create_sections_from_plan.py` 模式二（移动工作表到分组）只关心"移到哪个分组"，不关心分组内的顺序。虽然 `sections_plan.json` 中 worksheets 数组有顺序，但移动时这个顺序丢失了。
+
+**定位:**
+- `scripts/hap/create_sections_from_plan.py:252-292` — 模式二移动逻辑，按 dict 迭代顺序而非 plan 中的顺序
+- `sections_plan.json` 中的 `worksheets` 数组本身就有 AI 规划的顺序（通常是合理的），但代码没有保持
+
+**修复方向:**
+1. `plan_app_sections_gemini.py` prompt 中要求 AI 按业务逻辑排序（主表在前、明细/子表在后）
+2. `create_sections_from_plan.py` 模式二移动时，按 `sections_plan` 中 worksheets 数组的顺序逐个移动
+3. 如有排序 API（`UpdateSectionChildSort` 之类），移动后额外调一次
 
 ---
 
-## 五、关键文件路径速查
+### 问题 6: 几乎所有工作流都是关闭状态（72/72 publish 失败）
 
-### Ultra（源）
+**表现:** 82 个工作流全部显示"关闭"。日志: `[publish-verify] 补发布完成：成功 0，失败 72`。
 
-| 文件 | 路径 |
-|------|------|
-| 甘特图 API spec | `/Users/andy/Documents/coding/hap-utral-maker/api-specs/block1-private/worksheet/save-worksheet-view.md` |
-| 日期触发器 | `/Users/andy/Documents/coding/hap-utral-maker/hap-auto-maker/workflow/scripts/create_workflow_date_trigger.py` |
-| 日期触发器 API spec | `/Users/andy/Documents/coding/hap-utral-maker/api-specs/block1-private/workflow/create-workflow-date-trigger.md` |
-| 通用节点添加 | `/Users/andy/Documents/coding/hap-utral-maker/hap-auto-maker/workflow/scripts/add_workflow_node.py` |
-| 节点类型枚举 | `/Users/andy/Documents/coding/hap-utral-maker/api-specs/block1-private/workflow/workflow-node-types.md` |
-| 节点配置结构 | `/Users/andy/Documents/coding/hap-utral-maker/api-specs/block1-private/workflow/workflow-node-configs.md` |
-| 工作流生命周期 | `/Users/andy/Documents/coding/hap-utral-maker/hap-auto-maker/workflow/scripts/workflow_lifecycle.py` |
-| page_create.py | `/Users/andy/Documents/coding/hap-utral-maker/hap-auto-maker/scripts/hap/page_create.py` |
-| page_get.py | `/Users/andy/Documents/coding/hap-utral-maker/hap-auto-maker/scripts/hap/page_get.py` |
-| page_save.py | `/Users/andy/Documents/coding/hap-utral-maker/hap-auto-maker/scripts/hap/page_save.py` |
-| page_delete.py | `/Users/andy/Documents/coding/hap-utral-maker/hap-auto-maker/scripts/hap/page_delete.py` |
-| get_row.py | `/Users/andy/Documents/coding/hap-utral-maker/hap-auto-maker/scripts/hap/get_row.py` |
-| update_row.py | `/Users/andy/Documents/coding/hap-utral-maker/hap-auto-maker/scripts/hap/update_row.py` |
-| get_worksheet_detail.py | `/Users/andy/Documents/coding/hap-utral-maker/hap-auto-maker/scripts/hap/get_worksheet_detail.py` |
-| delete_worksheet.py | `/Users/andy/Documents/coding/hap-utral-maker/hap-auto-maker/scripts/hap/delete_worksheet.py` |
-| delete_worksheet_field.py | `/Users/andy/Documents/coding/hap-utral-maker/hap-auto-maker/scripts/hap/delete_worksheet_field.py` |
-| update_worksheet_field.py | `/Users/andy/Documents/coding/hap-utral-maker/hap-auto-maker/scripts/hap/update_worksheet_field.py` |
+**根因（缺陷 A 的连锁反应）:** `publish_process()` 调用 `process/publish` API 时返回 `errorNodeIds` 非空，HAP 拒绝发布含有配置错误节点的工作流。这与问题 7 是同一个根因——**节点配置不完整导致 publish 必然失败**。
 
-### Auto（目标，需修改）
+**定位:**
+- `workflow/scripts/execute_workflow_plan.py:116-142` — `publish_process()` 收到 errorNodeIds
+- 日志: `errorNodes=['69ce899a9e34966050847bb8', '69ce899a599498a551bf3887']`
+- 这些 ID 对应的是分支节点（空 operateCondition）和记录操作节点（空 fields）
 
-| 文件 | 改动 |
-|------|------|
-| `scripts/hap/plan_worksheet_views_gemini.py` | 加入 viewType 2/5 |
-| `scripts/hap/create_views_from_plan.py` | 加入 viewType 2/5 处理 |
-| `workflow/scripts/execute_workflow_plan.py` | 加入 date_trigger + 更多 node types + auto publish |
-| `workflow/scripts/generate_workflow_plan.py` | AI Prompt 加入日期触发器 + 新节点类型 |
-| `docs/pipeline-visual.html` | 更新 Step 6/11/12 描述 |
+**修复方向:** 这个问题的根本解决依赖于问题 7——只有节点配置完整了，publish 才能成功。当前的 retry/verify 补发布逻辑是治标不治本。
+
+---
+
+### 问题 7: 工作流节点太少且无配置参数
+
+**表现:**
+- 节点数量只有 2-3 个（prompt 要求 3-5 个）
+- 分支节点显示"所有数据可进入该分支"— `operateCondition` 为空
+- 记录操作节点没有可见的字段映射
+- 通知节点没有内容
+
+**根因（缺陷 A，多个子问题）:**
+
+**(A) 分支节点条件为空:**
+- `workflow/scripts/add_workflow_node.py:146-150` — 分支网关(typeId=1) saveNode 时 `flowIds: []`
+- 分支条件(typeId=2) `operateCondition: []`（空数组）
+- HAP 要求分支条件至少有一个有效 condition 对象，否则视为"配置不完整"
+
+**(B) 非记录节点配置为空壳:**
+- `add_workflow_node.py:237-240` — 通知节点: `content: ""`、`accounts: []`
+- 虽然 `execute_workflow_plan.py` 中加了自动注入 accounts（触发者）和 content 的逻辑，但 content 来自 `node_plan.get("content")`，而 AI 规划中通常不输出 content 字段
+
+**(C) 部分节点类型被跳过:**
+- `execute_workflow_plan.py:388-391` — 如果 `NODE_CONFIGS` 中没有该类型，直接跳过不创建
+
+**(D) AI 规划的节点缺少具体配置:**
+- `pipeline_workflows.py` prompt 要求了 3-5 个节点，但没有要求 AI 为 branch 节点输出分支条件、为 notify 节点输出通知内容
+
+**定位:**
+- `workflow/scripts/add_workflow_node.py:96-250` — `build_save_node_body()` 各节点类型配置
+- `workflow/scripts/execute_workflow_plan.py:283-440` — `add_action_nodes()` 节点创建流程
+- `workflow/scripts/pipeline_workflows.py:480-540` — AI prompt 中的节点规则
+
+**修复方向:**
+1. **prompt 改造:** 要求 AI 为 branch 节点输出分支条件（哪个字段、什么值走哪个分支）；notify 节点输出 content
+2. **saveNode 改造:** 分支条件不能为空——如果 AI 没给条件，应该不创建分支节点，或基于触发表字段生成默认条件
+3. **空壳检测:** 创建节点后检查关键配置是否为空，空则 warn 或 fallback
+
+---
+
+### 问题 8: 工作流执行失败（2/71）
+
+**表现:** 日志 "工作流成功：69 / 71，失败数：2"。
+
+**根因（缺陷 B）:** 个别工作流的 AI 规划中引用了不存在的字段 ID 或工作表 ID，API 调用失败。
+
+**修复方向:** 执行前增加字段/工作表 ID 存在性校验，过滤无效引用。
+
+---
+
+## 修复优先级
+
+| 优先级 | 问题 | 原因 | 难度 |
+|--------|------|------|------|
+| **P0** | 6+7（工作流节点配置 → publish 失败） | 所有工作流不可用，影响面最大 | 高 |
+| **P1** | 3+4（甘特图/层级视图二次保存） | 视图不可用 | 中（参考分组视图自动补全模式） |
+| **P1** | 2（统计图字段校验） | 图表不可用 | 中 |
+| **P2** | 1（未命名分组） | 体验问题 | 低 |
+| **P2** | 5（工作表排序） | 体验问题 | 低 |
+
+---
+
+## 关键文件索引
+
+| 文件 | 职责 | 涉及问题 |
+|------|------|----------|
+| `scripts/hap/plan_app_sections_gemini.py` | AI 规划应用分组 | 1, 5 |
+| `scripts/hap/create_sections_from_plan.py` | 创建分组 + 移动工作表 | 1, 5 |
+| `scripts/hap/plan_worksheet_views_gemini.py` | AI 规划视图 + normalize_views() | 3, 4 |
+| `scripts/hap/create_views_from_plan.py` | 创建视图 + postCreateUpdates | 3, 4 |
+| `scripts/hap/plan_charts_gemini.py` | AI 规划统计图 + validate_plan() | 2 |
+| `scripts/hap/create_charts_from_plan.py` | 创建统计图 | 2 |
+| `workflow/scripts/pipeline_workflows.py` | AI 规划工作流（prompt 定义） | 7 |
+| `workflow/scripts/execute_workflow_plan.py` | 创建工作流 + 节点 + publish | 6, 7, 8 |
+| `workflow/scripts/add_workflow_node.py` | 节点类型定义 + build_save_node_body() | 6, 7 |
+| `data/api_docs/private_view_api.md` | 视图 API 文档（甘特图/层级视图二次保存规范） | 3, 4 |
+| `data/api_docs/workflow/workflow-node-configs.md` | 工作流节点完整配置 schema（含 saveNode 请求体） | 6, 7 |
+| `data/api_docs/chart_types.md` | 统计图 17 种类型定义 | 2 |
+
+---
+
+## 已有的相关修复（本轮之前已提交但未完全生效）
+
+以下改动已在代码中但测试验证未通过，新会话修复时需注意这些代码已存在：
+
+1. `create_sections_from_plan.py` — 创建时已改为传真实名称 + 改名重试 3 次（但问题 1 的根因不在这里）
+2. `execute_workflow_plan.py` — 已加 publish-verify 验证步骤（但因问题 7 导致全部失败）
+3. `plan_worksheet_views_gemini.py` — 已加看板视图 viewControl 自动补全 + 分组视图 groupView 自动补全（但甘特图/层级视图的补全还没加）
+4. `plan_charts_gemini.py` — 已改为 8-12 个图表 + 17 种类型（但缺少字段校验）
+5. `create_charts_from_plan.py` — 已扩展 REPORT_TYPE_NAMES 到 17 种 + 数值图/双轴图特殊处理
+6. `pipeline_workflows.py` — prompt 已改为 3-5 个节点 + 通知节点要求 content（但 AI 不一定遵守）
+7. `add_workflow_node.py` — typeId=17（界面推送）不再跳过 saveNode
