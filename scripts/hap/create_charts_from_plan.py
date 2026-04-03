@@ -27,12 +27,7 @@ AUTH_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "auth_config.py"
 SAVE_REPORT_URL = "https://api.mingdao.com/report/reportConfig/saveReportConfig"
 SAVE_PAGE_URL = "https://api.mingdao.com/report/custom/savePage"
 
-REPORT_TYPE_NAMES = {
-    1: "柱状图", 2: "折线图", 3: "饼图", 4: "环形图",
-    5: "漏斗图", 6: "雷达图", 7: "条形图", 8: "双轴图",
-    9: "散点图", 10: "数值图", 11: "区域图", 12: "进度图",
-    13: "透视表", 14: "词云图", 15: "排行图", 16: "地图", 17: "关系图",
-}
+from charts import CHART_REGISTRY, REPORT_TYPE_NAMES, build_report_body as _charts_build_report_body
 
 
 # ---------------------------------------------------------------------------
@@ -206,7 +201,12 @@ def build_yaxis_payload(y: dict) -> dict:
 
 
 def build_report_body(chart: dict, app_id: str) -> dict:
-    """将 Gemini 规划的图表转换为 saveReportConfig 请求体。"""
+    """将 Gemini 规划的图表转换为 saveReportConfig 请求体。代理到 charts/ 模块。"""
+    return _charts_build_report_body(chart, app_id)
+
+
+def _build_report_body_legacy(chart: dict, app_id: str) -> dict:
+    """旧实现，保留备用。"""
     report_type = int(chart.get("reportType", 1))
     name = str(chart.get("name", "")).strip()
     desc = str(chart.get("desc", "") or "").strip()
