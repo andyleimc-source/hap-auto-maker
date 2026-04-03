@@ -1,31 +1,20 @@
 # CLAUDE.md — HAP Auto Maker
 
-## 项目概述
-
-通过 AI（Gemini/DeepSeek）驱动，全自动将自然语言需求转化为完整明道云 HAP 应用，包含工作表、字段、视图、图表、角色权限、工作流、机器人、Mock 数据。
-
 ## 运行
 
 ```bash
-cd hap-auto-maker
-python3 run_app_pipeline.py
+python3 make_app.py --requirements "完整需求描述"          # 完整执行
+python3 make_app.py --requirements "..." --no-execute      # 只生成 spec
+python3 make_app.py --spec-json requirement_spec_latest.json  # 跳过 AI 生成
 ```
 
-## 架构
-
-```
-用户需求 (自然语言)
-    ↓
-agent_collect_requirements.py  ← 多轮对话，产出 requirement_spec.json
-    ↓
-execute_requirements.py        ← 多 Wave 并行编排引擎（Wave 1-7）
-```
+入口：`make_app.py` → `execute_requirements.py`（Wave 1-7 并行引擎）
 
 ## AI 调用规范
 
-- 统一使用 `ai_utils.py`：`load_ai_config`, `get_ai_client`, `parse_ai_json`
-- 默认用 `fast` tier（gemini-2.5-flash / deepseek-chat），**不要擅自切换到 reasoning**
-- 所有 AI 输出必须经过 `repair_plan()` + `validate_*()` 校验后才能使用
+- 统一用 `ai_utils.py`：`load_ai_config`, `get_ai_client`, `parse_ai_json`
+- 默认 `fast` tier（gemini-2.5-flash / deepseek-chat），**不要切换到 reasoning**
+- 所有 AI 输出须经 `repair_plan()` + `validate_*()` 校验
 
 ## API 响应成功标志
 

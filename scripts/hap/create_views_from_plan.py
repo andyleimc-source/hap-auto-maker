@@ -81,7 +81,21 @@ def normalize_advanced_setting(view_type: str, value: Any) -> dict:
             raw["coverstyle"] = '{"position":"1","style":3}'
     out = {}
     for k, v in raw.items():
-        if isinstance(v, (dict, list)):
+        if k == "groupView":
+            # groupView 必须是紧凑 JSON 字符串（无空格）。
+            # 若 AI 传来的是 dict，直接序列化为紧凑格式；
+            # 若已是字符串，先 parse 再用紧凑格式重新序列化，避免带空格的旧格式。
+            if isinstance(v, dict):
+                out["groupView"] = json.dumps(v, ensure_ascii=False, separators=(",", ":"))
+            elif isinstance(v, str) and v.strip():
+                try:
+                    gv_obj = json.loads(v)
+                    out["groupView"] = json.dumps(gv_obj, ensure_ascii=False, separators=(",", ":"))
+                except Exception:
+                    out["groupView"] = v  # 保持原始值（解析失败时）
+            else:
+                out["groupView"] = str(v) if v else ""
+        elif isinstance(v, (dict, list)):
             out[str(k)] = json.dumps(v, ensure_ascii=False, separators=(",", ":"))
         elif isinstance(v, bool):
             out[str(k)] = "1" if v else "0"
@@ -194,6 +208,17 @@ def build_update_payload(app_id: str, worksheet_id: str, view_id: str, update: d
                     adv["calendarcids"] = fixed
                 else:
                     adv.pop("calendarcids", None)
+            # 分组视图：groupView.viewId 必须填实际视图 ID，且必须使用紧凑格式（无空格）
+            if "groupView" in adv and view_id:
+                try:
+                    gv_obj = json.loads(adv["groupView"])
+                    if isinstance(gv_obj, dict):
+                        if not gv_obj.get("viewId"):
+                            gv_obj["viewId"] = view_id
+                        # 始终使用紧凑格式（separators 无空格），否则明道云前端无法识别
+                        adv["groupView"] = json.dumps(gv_obj, ensure_ascii=False, separators=(",", ":"))
+                except Exception:
+                    pass
             payload[k] = adv
         else:
             payload[k] = v

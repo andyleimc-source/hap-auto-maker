@@ -3,14 +3,18 @@
 
 功能:
   1. 分析工作表字段，推荐适合的图表类型
-  2. 生成包含类型约束的 AI prompt
+  2. 生成包含类型约束的 AI prompt（使用 chart_config_schema 完整 schema）
   3. 校验 AI 输出（字段存在性 + 类型兼容性）
   4. 输出 plan JSON 供 create_charts_from_plan.py 执行
 
-与现有 plan_charts_gemini.py 的区别:
-  - 利用 CHART_REGISTRY 元数据指导 AI 选型
+Schema 来源:
+  - scripts/hap/charts/chart_config_schema.py — 17 种图表的完整参数定义
+  - scripts/hap/charts/__init__.py — 注册中心导出
+
+与 plan_charts_gemini.py 的区别:
+  - 利用 CHART_SCHEMA 元数据指导 AI 选型（更详细的类型说明）
   - 字段分类后给 AI 更精准的推荐
-  - 校验增加字段类型兼容性检查
+  - 校验增加字段类型兼容性检查（基于 XAXES_NULL_TYPES 等常量）
 """
 
 from __future__ import annotations
@@ -31,6 +35,22 @@ from planning.constraints import (
     get_chart_constraints,
 )
 
+# 导入完整 schema（优先使用）
+try:
+    from charts.chart_config_schema import (
+        CHART_SCHEMA,
+        XAXES_NULL_TYPES,
+        SHOW_PERCENT_TYPES,
+        DUAL_AXIS_TYPE,
+        VERIFIED_TYPES,
+        get_ai_prompt_section,
+        list_chart_types,
+        AI_PLANNING_GUIDE,
+    )
+    _HAS_SCHEMA = True
+except ImportError:
+    _HAS_SCHEMA = False
+
 
 def build_enhanced_prompt(
     app_name: str,
@@ -44,8 +64,11 @@ def build_enhanced_prompt(
         worksheets_info: [{worksheetId, worksheetName, fields: [{controlId, controlName, type, options}]}]
         target_count: 目标图表数量 (8-12)
     """
-    # 1. 图表类型说明
-    chart_type_section = build_chart_type_prompt_section()
+    # 1. 图表类型说明（优先使用完整 schema）
+    if _HAS_SCHEMA:
+        chart_type_section = get_ai_prompt_section()
+    else:
+        chart_type_section = build_chart_type_prompt_section()
 
     # 2. 工作表 + 字段 + 推荐
     ws_sections = []
@@ -147,6 +170,10 @@ def validate_enhanced_plan(
 ) -> list[dict]:
     """增强版校验：字段存在性 + 类型兼容性。
 
+    使用 chart_config_schema 中定义的约束常量（若可用）：
+      XAXES_NULL_TYPES  — 不需要 xaxes 的图表类型
+      CHART_SCHEMA.keys() — 全部支持的 reportType
+
     Args:
         raw: AI 输出的原始 JSON
         worksheets_by_id: {worksheetId: {fields: [...]}}
@@ -158,6 +185,15 @@ def validate_enhanced_plan(
         ValueError: 校验失败（触发 AI 重试）
     """
     constraints = get_chart_constraints()
+
+    # 优先使用 schema 常量，兜底用 constraints 字典
+    if _HAS_SCHEMA:
+        valid_types = set(CHART_SCHEMA.keys())
+        xaxes_null_types = set(XAXES_NULL_TYPES)
+    else:
+        valid_types = set(constraints["types"].keys())
+        xaxes_null_types = set(constraints.get("xaxes_null_types", [10, 12]))
+
     charts = raw.get("charts", [])
     if not isinstance(charts, list) or len(charts) == 0:
         raise ValueError("未返回 charts 数组")
@@ -173,8 +209,8 @@ def validate_enhanced_plan(
             raise ValueError(f"图表 {i+1} 缺少 name")
 
         report_type = int(chart.get("reportType", 0) or 0)
-        if report_type not in constraints["types"]:
-            raise ValueError(f"图表 {i+1} reportType={report_type} 不在支持列表中")
+        if report_type not in valid_types:
+            raise ValueError(f"图表 {i+1} reportType={report_type} 不在支持列表 {sorted(valid_types)} 中")
 
         worksheet_id = str(chart.get("worksheetId", "")).strip()
         if worksheet_id and worksheet_id not in worksheets_by_id:
@@ -194,7 +230,7 @@ def validate_enhanced_plan(
 
             xaxes = chart.get("xaxes", {})
             x_cid = str(xaxes.get("controlId") or "").strip()
-            if report_type not in constraints["xaxes_null_types"] and x_cid and x_cid not in valid_fids:
+            if report_type not in xaxes_null_types and x_cid and x_cid not in valid_fids:
                 raise ValueError(f"图表 {i+1}「{name}」xaxes.controlId「{x_cid}」不在工作表字段中")
 
             yaxis_list = chart.get("yaxisList", [])
@@ -203,11 +239,19 @@ def validate_enhanced_plan(
                 if y_cid and y_cid not in valid_fids:
                     raise ValueError(f"图表 {i+1}「{name}」yaxisList[{j}].controlId「{y_cid}」不在工作表字段中")
 
-        # 类型兼容性校验
+        # 类型兼容性校验 + 自动修正
         xaxes = chart.get("xaxes", {})
-        if report_type in constraints["xaxes_null_types"]:
+        if report_type in xaxes_null_types:
+            # 数值图/进度图 xaxes.controlId 必须为 null
             if xaxes.get("controlId") not in (None, "", "null"):
                 chart["xaxes"]["controlId"] = None  # 自动修正
+                print(f"  [自动修正] 图表 {i+1}「{name}」reportType={report_type}，xaxes.controlId 已修正为 null")
+
+        # 双轴图：确保有 yreportType
+        if _HAS_SCHEMA and report_type == DUAL_AXIS_TYPE:
+            if chart.get("yreportType") is None:
+                chart["yreportType"] = 2  # 默认右轴为折线图
+                print(f"  [自动补全] 图表 {i+1}「{name}」双轴图自动设置 yreportType=2")
 
         yaxis_list = chart.get("yaxisList", [])
         if not isinstance(yaxis_list, list) or len(yaxis_list) == 0:

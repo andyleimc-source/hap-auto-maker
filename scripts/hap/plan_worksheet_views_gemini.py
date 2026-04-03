@@ -26,6 +26,17 @@ import requests
 import auth_retry
 from ai_utils import AI_CONFIG_PATH, create_generation_config, get_ai_client, load_ai_config
 
+import sys as _sys
+_PLANNING_DIR = Path(__file__).resolve().parent / "planning"
+if str(_PLANNING_DIR.parent) not in _sys.path:
+    _sys.path.insert(0, str(_PLANNING_DIR.parent))
+try:
+    from planning.view_planner import build_view_type_prompt_section, suggest_views
+    from planning.constraints import classify_fields
+    _HAS_VIEW_PLANNER = True
+except ImportError:
+    _HAS_VIEW_PLANNER = False
+
 BASE_DIR = Path(__file__).resolve().parents[2]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 APP_AUTH_DIR = OUTPUT_ROOT / "app_authorizations"
@@ -309,12 +320,13 @@ def build_prompt(app_name: str, worksheet_name: str, worksheet_id: str, fields: 
 3) displayControls / coverCid / viewControl 必须来自提供的字段ID；无法确定时填空或省略。
 4) 日历视图必须在 postCreateUpdates.advancedSetting 中提供 calendarcids（字符串化 JSON），格式必须为：'[{{"begin":"日期字段ID","end":"结束日期字段ID或空字符串"}}]'。begin 为开始日期字段ID（必填），end 为结束日期字段ID（无则填空字符串）。
 5) 【强制】看板视图(viewType=1)必须设置 viewControl 为一个单选字段(type=11)的ID。如果没有合适的单选字段，不要创建看板视图。
-6) 【强制】表格视图(viewType=0)如果视图名包含"按...分组"、"按...分类"、"分组"等含义，必须在 advancedSetting 中提供 groupView（JSON字符串），格式：'{{"viewId":"","groupFilters":[{{"controlId":"分组字段ID","values":[],"dataType":11,"spliceType":1,"filterType":2,"dateRange":0,"minValue":"","maxValue":"","isGroup":true}}],"navShow":true}}'。controlId 必须为单选字段(type=11)或多选字段(type=10)的ID。
+6) 【强制】表格视图(viewType=0)如果视图名包含"按...分组"、"按...分类"、"分组"等含义，必须在 advancedSetting 中提供 groupView（JSON字符串，必须紧凑无空格），格式：'{{"viewId":"","groupFilters":[{{"controlId":"分组字段ID","values":[],"dataType":11,"spliceType":1,"filterType":2,"dateRange":0,"minValue":"","maxValue":"","isGroup":true}}],"navShow":true}}'。controlId 必须为单选字段(type=11)或多选字段(type=10)的ID。viewId 填空字符串（系统自动补全）。
 7) 甘特图视图（viewType=5）需要工作表含有开始日期和结束日期字段，适合项目管理、任务排期类场景。
 8) 层级视图（viewType=2）适合有上下级/父子关系的数据（如部门树、分类层级）。
 9) 若字段不支持某视图，请不要输出该视图类型。
 10) 输出必须是可解析 JSON。
 11) 【重要】每个视图必须有实际业务含义——不仅有名称，还要有对应的配置（viewControl/advancedSetting/postCreateUpdates），空配置的视图没有价值。
+12) 【格式要求】所有 advancedSetting 中的 JSON 字符串值必须是紧凑格式（无空格），例如 groupView 中键值之间不加空格。
 """.strip()
 
 
@@ -428,7 +440,8 @@ def normalize_views(raw_views: Any, fields: List[dict], worksheet_id: str = "") 
                         }],
                         "navShow": True,
                     }
-                    advanced_setting["groupView"] = json.dumps(group_view_obj, ensure_ascii=False)
+                    # 必须使用紧凑格式（无空格），否则明道云前端无法识别分组配置
+                    advanced_setting["groupView"] = json.dumps(group_view_obj, ensure_ascii=False, separators=(",", ":"))
                     print(f"    ⚠ 分组视图「{name}」缺少 groupView，自动补全为字段 {fallback_gc}")
             # 确保分组配置通过 postCreateUpdates 二次保存
             if advanced_setting.get("groupView"):
@@ -559,12 +572,13 @@ def build_batch_prompt(app_name: str, worksheets_data: List[dict]) -> str:
 3) displayControls / coverCid / viewControl 必须来自对应工作表提供的字段ID；无法确定时填空或省略。
 4) 日历视图必须在 postCreateUpdates.advancedSetting 中提供 calendarcids（字符串化 JSON），格式必须为：'[{{"begin":"日期字段ID","end":"结束日期字段ID或空字符串"}}]'。begin 为开始日期字段ID（必填），end 为结束日期字段ID（无则填空字符串）。
 5) 【强制】看板视图(viewType=1)必须设置 viewControl 为一个单选字段(type=11)的ID。如果没有合适的单选字段，不要创建看板视图。
-6) 【强制】表格视图(viewType=0)如果视图名包含"按...分组"、"按...分类"、"分组"等含义，必须在 advancedSetting 中提供 groupView（JSON字符串），格式：'{{"viewId":"","groupFilters":[{{"controlId":"分组字段ID","values":[],"dataType":11,"spliceType":1,"filterType":2,"dateRange":0,"minValue":"","maxValue":"","isGroup":true}}],"navShow":true}}'。controlId 必须为单选字段(type=11)或多选字段(type=10)的ID。
+6) 【强制】表格视图(viewType=0)如果视图名包含"按...分组"、"按...分类"、"分组"等含义，必须在 advancedSetting 中提供 groupView（JSON字符串，必须紧凑无空格），格式：'{{"viewId":"","groupFilters":[{{"controlId":"分组字段ID","values":[],"dataType":11,"spliceType":1,"filterType":2,"dateRange":0,"minValue":"","maxValue":"","isGroup":true}}],"navShow":true}}'。controlId 必须为单选字段(type=11)或多选字段(type=10)的ID。viewId 填空字符串（系统自动补全）。
 7) 甘特图视图（viewType=5）需要工作表含有开始日期和结束日期字段，适合项目管理、任务排期类场景。
 8) 层级视图（viewType=2）适合有上下级/父子关系的数据（如部门树、分类层级）。
 9) 若字段不支持某视图，请不要输出该视图类型。
 10) 输出必须是可解析 JSON，worksheets 数组长度必须等于 {count}。
-11) 【重要】每个视图必须有实际业务含义——不仅有名称，还要有对应的配置（viewControl/advancedSetting/postCreateUpdates），空配置的视图没有价值。""".strip()
+11) 【重要】每个视图必须有实际业务含义——不仅有名称，还要有对应的配置（viewControl/advancedSetting/postCreateUpdates），空配置的视图没有价值。
+12) 【格式要求】所有 advancedSetting 中的 JSON 字符串值必须是紧凑格式（无空格），例如 groupView 中键值之间不加空格。""".strip()
 
 
 def plan_views_batch(
