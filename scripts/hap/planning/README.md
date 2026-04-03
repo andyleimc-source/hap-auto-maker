@@ -5,80 +5,86 @@
 规划层是连接「注册中心」和「AI 规划」的桥梁：
 
 ```
-注册中心                 规划层                     AI
-charts/CHART_REGISTRY → constraints.py → prompt → Gemini → validate → plan.json
-nodes/NODE_REGISTRY   → constraints.py → prompt → Gemini → validate → plan.json
+注册中心                    规划层                        AI
+worksheets/FIELD_REGISTRY → worksheet_planner.py → prompt → Gemini → validate → plan.json
+views/VIEW_REGISTRY       → view_planner.py      → prompt → Gemini → validate → plan.json
+charts/CHART_REGISTRY     → chart_planner.py      → prompt → Gemini → validate → plan.json
+nodes/NODE_REGISTRY       → workflow_planner.py    → prompt → Gemini → validate → plan.json
 ```
 
 核心能力：
 1. **从注册中心读取元数据** — 自动生成 AI prompt 中的类型说明
-2. **字段分类** — 按类型(text/number/date/select)分组，推荐适合的图表/节点类型
+2. **字段分类** — 按类型(text/number/date/select)分组，推荐适合的图表/视图/节点类型
 3. **增强校验** — 不仅检查存在性，还检查类型兼容性
 
 ## 目录结构
 
 ```
 scripts/hap/planning/
-├── __init__.py            # 包入口
-├── constraints.py         # 共用约束生成器（图表+工作流+字段分类）
-├── chart_planner.py       # 图表规划器
-├── workflow_planner.py    # 工作流规划器
+├── __init__.py              # 包入口
+├── constraints.py           # 共用约束生成器（字段分类+类型推荐）
+├── worksheet_planner.py     # 工作表+字段规划器
+├── view_planner.py          # 视图规划+配置器
+├── chart_planner.py         # 图表规划器
+├── workflow_planner.py      # 工作流规划器
 └── README.md
 ```
 
-## 模块说明
+## 四个规划器
 
-### constraints.py — 约束生成器
+### 1. worksheet_planner.py — 工作表+字段规划
 
-从 `charts/` 和 `nodes/` 注册中心提取元数据，生成约束信息供 prompt 和校验使用。
-
-| 函数 | 用途 |
-|------|------|
-| `get_chart_constraints()` | 返回 17 种图表类型的约束 dict |
-| `get_node_constraints()` | 返回 27 种节点类型的约束 dict |
-| `build_chart_type_prompt_section()` | 生成 AI prompt 的图表类型说明段落 |
-| `build_node_type_prompt_section()` | 生成 AI prompt 的节点类型说明段落 |
-| `classify_fields(controls)` | 将字段按 text/number/date/select 等分类 |
-| `suggest_chart_types(classified)` | 根据字段分类推荐图表类型 |
-
-### chart_planner.py — 图表规划器
+规划表名、字段、关联关系、创建顺序。利用 `worksheets/FIELD_REGISTRY`（15 种字段类型）。
 
 | 函数 | 用途 |
 |------|------|
-| `build_enhanced_prompt(app_name, worksheets_info, target_count)` | 生成增强版图表规划 prompt |
-| `validate_enhanced_plan(raw, worksheets_by_id)` | 校验 plan（字段存在性+类型兼容性） |
+| `build_enhanced_prompt()` | 从注册中心生成字段类型枚举 |
+| `validate_worksheet_plan()` | 检查字段类型合法性、选项完整性、关联目标存在性 |
 
-### workflow_planner.py — 工作流规划器
+### 2. view_planner.py — 视图规划+配置
+
+规划每个表的视图类型和名称，同时生成二次保存配置。利用 `views/VIEW_REGISTRY`（6 种视图）。
 
 | 函数 | 用途 |
 |------|------|
-| `build_enhanced_prompt(app_name, worksheets_info, ca_per_ws, ev_per_ws, num_tt)` | 生成增强版工作流规划 prompt |
-| `validate_workflow_plan(raw, worksheets_by_id)` | 校验 plan（节点类型合法性+跨表检查） |
+| `build_enhanced_prompt()` | 从注册中心+字段分类推荐视图类型 |
+| `suggest_views()` | 根据字段自动推荐（有日期→甘特/日历，有单选→看板） |
+| `validate_view_plan()` | 检查字段引用和类型约束 |
+
+### 3. chart_planner.py — 图表规划
+
+利用 `charts/CHART_REGISTRY`（17 种图表）。
+
+| 函数 | 用途 |
+|------|------|
+| `build_enhanced_prompt()` | 包含类型约束+字段推荐 |
+| `validate_enhanced_plan()` | 字段存在性+类型兼容性 |
+
+### 4. workflow_planner.py — 工作流规划
+
+利用 `nodes/NODE_REGISTRY`（27 种节点）。
+
+| 函数 | 用途 |
+|------|------|
+| `build_enhanced_prompt()` | 从注册中心生成节点说明 |
+| `validate_workflow_plan()` | 节点类型+跨表+trigger 校验 |
+
+## constraints.py — 共用约束生成器
+
+| 函数 | 用途 |
+|------|------|
+| `get_chart_constraints()` | 17 种图表类型约束 |
+| `get_node_constraints()` | 27 种节点类型约束 |
+| `classify_fields(controls)` | 将字段按 text/number/date/select 分类 |
+| `suggest_chart_types(classified)` | 根据字段推荐图表 |
+| `build_chart_type_prompt_section()` | 生成 prompt 段落 |
+| `build_node_type_prompt_section()` | 生成 prompt 段落 |
 
 ## 与现有代码的关系
 
-| 现有文件 | 规划层对应 | 关系 |
+| 现有文件 | 规划层对应 | 状态 |
 |----------|-----------|------|
-| `plan_charts_gemini.py` | `chart_planner.py` | 现有代码可逐步迁移到使用增强 prompt/validate |
-| `pipeline_workflows.py` | `workflow_planner.py` | 同上 |
-| `plan_worksheet_views_gemini.py` | (待建) | 未来可添加 view_planner.py |
-| `plan_app_sections_gemini.py` | (待建) | 未来可添加 section_planner.py |
-
-## 用法示例
-
-```python
-from planning.chart_planner import build_enhanced_prompt, validate_enhanced_plan
-from planning.constraints import classify_fields
-
-# 1. 准备数据
-worksheets_info = [{"worksheetId": "...", "worksheetName": "客户", "fields": [...]}]
-
-# 2. 生成 prompt
-prompt = build_enhanced_prompt("CRM系统", worksheets_info, target_count=10)
-
-# 3. 调用 AI
-response = gemini.generate(prompt)
-
-# 4. 校验
-validated_charts = validate_enhanced_plan(response, worksheets_by_id)
-```
+| `scripts/gemini/plan_app_worksheets_gemini.py` | `worksheet_planner.py` | 可迁移 |
+| `scripts/hap/plan_worksheet_views_gemini.py` | `view_planner.py` | 可迁移 |
+| `scripts/hap/plan_charts_gemini.py` | `chart_planner.py` | 可迁移 |
+| `workflow/scripts/pipeline_workflows.py` | `workflow_planner.py` | 可迁移 |
