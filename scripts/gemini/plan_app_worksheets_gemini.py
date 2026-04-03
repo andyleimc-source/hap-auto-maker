@@ -25,6 +25,10 @@ from ai_utils import (
     load_ai_config,
     parse_ai_json,
 )
+from planning.worksheet_planner import (
+    build_enhanced_prompt,
+    validate_worksheet_plan,
+)
 
 CONFIG_PATH = AI_CONFIG_PATH
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
@@ -326,7 +330,15 @@ def main() -> None:
     model_name = ai_config["model"]
     min_worksheet_count = extract_min_worksheet_count(args.requirements)
 
-    prompt = build_prompt(args.app_name, args.business_context, args.requirements)
+    # 使用 worksheet_planner 生成增强版 prompt（含注册中心字段类型枚举）
+    prompt = build_enhanced_prompt(
+        app_name=args.app_name,
+        business_context=args.business_context,
+        extra_requirements=args.requirements,
+        min_worksheets=min_worksheet_count,
+    )
+    print(f"[prompt] 长度={len(prompt)}，前200字: {prompt[:200]!r}")
+
     plan = None
     validation_errors: list[str] = []
     for attempt in range(1, max(1, args.max_retries) + 1):
@@ -358,7 +370,13 @@ def main() -> None:
                     time.sleep(wait)
                 else:
                     raise
-        plan = extract_json(response.text or "")
+        raw_text = response.text or ""
+        # 保存 AI 原始输出
+        raw_path = WORKSHEET_PLAN_DIR / f"worksheet_plan_raw_{datetime.now().strftime('%Y%m%d_%H%M%S')}_attempt{attempt}.json"
+        raw_path.parent.mkdir(parents=True, exist_ok=True)
+        raw_path.write_text(raw_text, encoding="utf-8")
+
+        plan = extract_json(raw_text)
         repair_plan(plan)
         ensure_minimum_worksheets(
             plan,
@@ -366,7 +384,10 @@ def main() -> None:
             business_context=args.business_context,
             extra_requirements=args.requirements,
         )
-        validation_errors = validate_plan(plan, min_worksheet_count=min_worksheet_count)
+        # 使用 worksheet_planner 增强校验（含注册中心字段类型检查）
+        validation_errors = validate_worksheet_plan(plan, min_worksheets=min_worksheet_count)
+        if validation_errors:
+            print(f"[validate attempt={attempt}] 发现 {len(validation_errors)} 个错误: {validation_errors}")
         if not validation_errors:
             break
         if attempt == max(1, args.max_retries):

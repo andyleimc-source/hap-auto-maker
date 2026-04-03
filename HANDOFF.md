@@ -59,7 +59,7 @@
 
 ### 待办（仅代码修复，API 已验证）
 
-- [ ] **timer.py 修复**：`workflow/nodes/timer.py` 中 actionId=302/303 的 build() 改为 timerNode 嵌套结构
+- [x] **timer.py 修复**：`workflow/nodes/timer.py` 中 actionId=302/303 的 build() 已改为 timerNode 嵌套结构（2026-04-03）
 - [ ] **新增跨表记录节点**：新增记录(跨表)的 `$nodeId-fieldId$` 引用格式待研究
 
 ---
@@ -99,16 +99,14 @@
 
 ---
 
-## 五、四大规划师 — 核心待办（见 PLAN.md）
+## 五、四大规划师 — 集成进度（见 PLAN.md）
 
-四个规划师模块已实现，**尚未集成到 pipeline**：
-
-| 规划师 | 当前模块 | 待替换目标 |
-|--------|---------|-----------|
-| worksheet_planner.py | ✅ 已实现 | `plan_app_worksheets_gemini.py` |
-| view_planner.py | ✅ 已实现 | `plan_worksheet_views_gemini.py` |
-| chart_planner.py | ✅ 已实现 | `plan_charts_gemini.py` |
-| workflow_planner.py | ✅ 已实现 | `pipeline_workflows.py` build_prompt 部分 |
+| 规划师 | 集成状态 | 说明 |
+|--------|---------|------|
+| worksheet_planner.py | ✅ 已集成 | `plan_app_worksheets_gemini.py` 改用 `build_enhanced_prompt` + `validate_worksheet_plan`，含 log |
+| view_planner.py | 🔶 部分集成 | `plan_worksheet_views_gemini.py` `build_prompt` 内注入注册中心类型+字段推荐（兜底降级） |
+| chart_planner.py | ✅ 已集成 | `plan_charts_gemini.py` 非 system_fields_only 路径改用 `build_enhanced_prompt` |
+| workflow_planner.py | ❌ 待集成 | `pipeline_workflows.py` build_prompt 改造量大，暂未替换 |
 
 详细集成计划见 PLAN.md「四大规划师重构」章节。
 

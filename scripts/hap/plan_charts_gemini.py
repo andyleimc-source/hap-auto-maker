@@ -24,6 +24,7 @@ from typing import Any, Dict, List, Optional
 
 import auth_retry
 from ai_utils import create_generation_config, get_ai_client, load_ai_config
+from planning.chart_planner import build_enhanced_prompt as chart_planner_build_prompt
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
@@ -592,7 +593,9 @@ def main() -> None:
         prompt = build_prompt_system_only(app_id, app_name, preset_views)
         validate_fn = lambda raw, _: validate_plan_relaxed(raw)
     else:
-        prompt = build_prompt(app_id, app_name, worksheets_info)
+        # 使用 chart_planner 增强版 prompt（含注册中心类型约束+字段分类推荐）
+        prompt = chart_planner_build_prompt(app_name, worksheets_info)
+        print(f"[chart_planner] prompt 长度={len(prompt)}，前200字: {prompt[:200]!r}")
         validate_fn = validate_plan
 
     validated: Optional[List[dict]] = None

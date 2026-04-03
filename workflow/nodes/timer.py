@@ -1,8 +1,8 @@
 """延时节点 (typeId=12): 延时时长(301), 延时到日期(302), 延时到字段时间(303)。
 
 关键发现:
-  - 时间值放在 saveNode body 根级别（numberFieldValue 等），不是嵌套在 timerNode 下
-  - actionId 也要放在根级别
+  - actionId=301(时长): 时间值放在 saveNode body 根级别（numberFieldValue 等），actionId 也在根级别
+  - actionId=302/303(到日期/到字段): 必须嵌套在 timerNode 对象内，根级别不设 actionId
   - FieldValue 结构: {"fieldValue": "静态值", "fieldNodeId": "", "fieldControlId": ""}
 """
 
@@ -19,14 +19,14 @@ NODES = {
     "delay_until": {
         "typeId": 12, "actionId": "302",
         "name": "延时到指定日期",
-        "verified": False,
-        "doc": "需要 executeTimeType, number, unit, time 字段。",
+        "verified": True,
+        "doc": "timerNode 嵌套结构: {actionId, executeTimeType, number, unit, time}。",
     },
     "delay_field": {
         "typeId": 12, "actionId": "303",
         "name": "延时到字段时间",
-        "verified": False,
-        "doc": "引用工作表日期字段作为延时目标。",
+        "verified": True,
+        "doc": "timerNode 嵌套结构: {actionId, executeTimeType, number, unit, time}。",
     },
 }
 
@@ -47,9 +47,14 @@ def build(node_type: str, process_id: str, node_id: str,
         body["minuteFieldValue"] = extra.get("minuteFieldValue", dict(_EMPTY_FV))
         body["secondFieldValue"] = extra.get("secondFieldValue", dict(_EMPTY_FV))
     else:
-        body["executeTimeType"] = extra.get("executeTimeType", 0)
-        body["number"] = extra.get("number", 0)
-        body["unit"] = extra.get("unit", 1)
-        body["time"] = extra.get("time", "08:00")
+        # 302/303: 参数必须嵌套在 timerNode 对象内，根级别不设 actionId
+        del body["actionId"]
+        body["timerNode"] = {
+            "actionId": action,
+            "executeTimeType": extra.get("executeTimeType", 0),
+            "number": extra.get("number", 0),
+            "unit": extra.get("unit", 1),
+            "time": extra.get("time", "08:00"),
+        }
 
     return body
