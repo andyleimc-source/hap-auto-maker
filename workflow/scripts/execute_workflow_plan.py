@@ -3,7 +3,7 @@
 执行工作流规划 JSON，批量创建工作流（execute_workflow_plan.py）
 
 读取 output/pipeline_workflows_latest.json（由 pipeline_workflows.py 生成），
-批量创建工作流，每个工作流包含触发节点 + 2-3 个有字段映射的动作节点：
+批量创建工作流，每个工作流包含触发节点 + 3-5 个有字段映射的动作节点：
   - 自定义动作 × 3  （仅约一半工作表；触发：按钮；动作节点：来自规划）
   - 工作表事件触发 × 2（每个工作表；触发：数据变化；动作节点：来自规划）
   - 全局时间触发 × 2  （整个应用共 2 个；动作节点：来自规划）
@@ -353,17 +353,25 @@ def add_action_nodes(
             node_id = added[0]["id"]
 
             # Step B: 保存节点配置（含字段映射）
+            # selectNodeId: 记录操作节点应引用触发节点或上游数据节点
+            # - add_record(1): 引用触发节点，从触发记录获取字段值
+            # - update_record(2): 引用触发节点
+            # - delete_record(3): 不需要
+            # - get_record(4)/get_records(5): 不需要
+            select_node_id = start_node_id if action_id in ("1", "2") else ""
             save_body = {
                 "processId":    process_id,
                 "nodeId":       node_id,
                 "flowNodeType": 6,
                 "actionId":     action_id,
                 "name":         name,
-                "selectNodeId": start_node_id if action_id == "2" else "",
+                "selectNodeId": select_node_id,
+                "selectNodeName": "工作表事件触发" if select_node_id else "",
                 "appId":        target_ws,
                 "appType":      1,
                 "fields":       fields,
                 "filters":      [],
+                "isException":  True,
             }
             save_resp = session.post(
                 "https://api.mingdao.com/workflow/flowNode/saveNode", save_body,
@@ -422,10 +430,48 @@ def add_action_nodes(
 
             # Configure via saveNode if applicable
             if build_save_node_body:
+                extra = {"gatewayType": 1}
+                # 从 plan 中传递通知内容/审批人等配置
+                if node_plan.get("content"):
+                    extra["content"] = node_plan["content"]
+                if node_plan.get("accounts"):
+                    extra["accounts"] = node_plan["accounts"]
                 save_body = build_save_node_body(
                     node_type, cfg, process_id, node_id,
-                    worksheet_id, name, {"gatewayType": 1},
+                    worksheet_id, name, extra,
                 )
+                if save_body:
+                    # 注入来自 plan 的通知内容（覆盖 build_save_node_body 设的空串）
+                    if node_type in ("notify", "copy", "push", "sms", "email"):
+                        plan_content = node_plan.get("content", "") or extra.get("content", "")
+                        if plan_content:
+                            save_body["content"] = plan_content
+                        elif not save_body.get("content"):
+                            save_body["content"] = f"工作流「{name}」已触发，请及时查看。"
+                    # 注入来自 plan 的 accounts（通知对象），兜底为触发者
+                    if node_type in ("notify", "copy", "push", "sms", "email", "approval"):
+                        if not save_body.get("accounts"):
+                            save_body["accounts"] = [{
+                                "type": 6,
+                                "entityId": start_node_id,
+                                "entityName": "工作表事件触发",
+                                "roleId": "uaid",
+                                "roleTypeId": 0,
+                                "roleName": "触发者",
+                                "avatar": "",
+                                "count": 0,
+                                "controlType": 26,
+                                "flowNodeType": 0,
+                                "appType": 1,
+                            }]
+                    # 空壳检测：跳过必定导致 publish 失败的节点配置
+                    type_id = cfg.get("typeId")
+                    if type_id in (1, 2) and not save_body.get("operateCondition"):
+                        print(f"        ⚠ 分支节点 operateCondition 为空，跳过 saveNode", file=sys.stderr)
+                        save_body = None
+                    elif type_id == 27 and not save_body.get("content"):
+                        print(f"        ⚠ 通知节点 content 为空，跳过 saveNode", file=sys.stderr)
+                        save_body = None
                 if save_body:
                     save_resp = session.post("https://api.mingdao.com/workflow/flowNode/saveNode", save_body)
                     print(f"        flowNode/saveNode → status={save_resp.get('status')}", file=sys.stderr)
@@ -1087,6 +1133,38 @@ def main() -> int:
                     print(f"    publish {pid} 异常: {exc}", file=sys.stderr)
                     pub_fail += 1
             print(f"[publish] 完成：成功 {pub_ok}，失败 {pub_fail}", file=sys.stderr)
+
+        # 6b. 验证：拉取全量工作流列表，对未开启的强制再次 publish
+        print(f"\n[publish-verify] 验证所有工作流开启状态...", file=sys.stderr)
+        try:
+            resp_all = session.get(f"https://api.mingdao.com/workflow/v1/process/listAll?relationId={app_id}")
+            unpublished = []
+            total_wf = 0
+            for group in resp_all.get("data") or []:
+                for item in group.get("processList") or []:
+                    total_wf += 1
+                    pid = item.get("id", "")
+                    enabled = item.get("enabled", False)
+                    if pid and not enabled:
+                        unpublished.append((pid, item.get("name", "?")))
+            if unpublished:
+                print(f"[publish-verify] 发现 {len(unpublished)}/{total_wf} 个未开启，强制发布...", file=sys.stderr)
+                verify_ok = verify_fail = 0
+                for pid, name in unpublished:
+                    try:
+                        if publish_process(session, pid):
+                            verify_ok += 1
+                        else:
+                            verify_fail += 1
+                            print(f"    ⚠ 工作流「{name}」({pid}) 仍无法开启", file=sys.stderr)
+                    except Exception as exc:
+                        verify_fail += 1
+                        print(f"    ⚠ 工作流「{name}」({pid}) 异常: {exc}", file=sys.stderr)
+                print(f"[publish-verify] 补发布完成：成功 {verify_ok}，失败 {verify_fail}", file=sys.stderr)
+            else:
+                print(f"[publish-verify] ✓ 全部 {total_wf} 个工作流均已开启", file=sys.stderr)
+        except Exception as exc:
+            print(f"[publish-verify] ⚠ 验证失败: {exc}", file=sys.stderr)
 
     # 7. 汇总输出
     import datetime as _dt
