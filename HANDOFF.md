@@ -33,48 +33,101 @@
 
 ---
 
-## 一、工作流节点
+## 一、工作流节点 — 27 种注册，仅 8 种实测通过
 
 ### 测试链接
-- **全节点展示**: https://www.mingdao.com/workflowedit/69cf487e9b08efb4c5bb8bca
-- **订单发货流程**: https://www.mingdao.com/workflowedit/69cf46ba8f9e70c865431131
+- **全节点展示(6种)**: https://www.mingdao.com/workflowedit/69cf487e9b08efb4c5bb8bca
+- **订单发货流程(4种)**: https://www.mingdao.com/workflowedit/69cf46ba8f9e70c865431131
 
-### 实测通过的节点 (8 种)
+### 问题：注册了 27 种节点，但只实测通过 8 种
 
-| 节点 | typeId | 创建 | 配置完整 | Publish | 关键发现 |
-|------|--------|------|----------|---------|----------|
-| 更新记录 | 6/2 | ✓ | ✓ | ✓ | 单选字段需完整 UUID key |
-| 新增记录(同表) | 6/1 | ✓ | ✓ | ✓ | |
-| 获取单条数据 | 6/4 | ✓ | ✓ | ✓ | |
-| 数值运算 | 9/100 | ✓ | ✓ | ✓ | |
-| 延时 | 12/301 | ✓ | ✓ | ✓ | 值在根级别非 timerNode |
-| 站内通知 | 27 | ✓ | ✓ | ✓ | **用 sendContent 非 content** |
-| 抄送 | 5 | ✓ | ✓ | ✓ | **用 sendContent 非 content** |
-| 审批 | 26 | ✓ | ⚠ | ✗ | 创建成功但 publish 报 103 |
+当前工作流演示只有 6 种节点（更新记录、获取单条、数值运算、延时、通知、抄送），远未覆盖注册中心的 27 种。需要逐个实测剩余 19 种节点，创建一个真正包含所有可用节点的工作流。
 
-### 待验证的节点 (19 种)
+### 27 种节点完整清单
 
-| 节点 | 注册中心文件 | 状态 |
-|------|-------------|------|
-| 新增记录(跨表) | record_ops.py | 关联字段引用格式未解决 |
-| 删除记录 | record_ops.py | 需要 filters |
-| 查询工作表 | record_ops.py | typeId=13 |
-| 校准记录 | record_ops.py | 需要 errorFields |
-| 填写 | human.py | 需要 formProperties |
-| 短信/邮件/推送 | notify.py | |
-| 延时到日期/字段 | timer.py | actionId=302/303 |
-| 汇总 | compute.py | 需要 appId |
-| 分支 | flow_control.py | 需 operateCondition |
-| 循环/中止/子流程 | flow_control.py | |
-| JSON解析/代码块/API | developer.py | |
-| AI文本/对象/Agent | ai.py | |
+**`workflow/nodes/` 注册中心 — 9 个模块文件**
+
+| # | 节点 | node_type | typeId/actionId | 模块 | 录制 | 实测 | 待办 |
+|---|------|-----------|-----------------|------|------|------|------|
+| 1 | 更新记录 | update_record | 6/2 | (execute内) | ✅ | ✓ | — |
+| 2 | 新增记录(同表) | add_record | 6/1 | (execute内) | ⚠️ | ✓ | — |
+| 3 | 新增记录(跨表) | add_record | 6/1 | (execute内) | ⚠️ | ⚠ | 关联字段引用 `$nodeId-fieldId$` 格式不生效，需研究 sourceControlType |
+| 4 | 删除记录 | delete_record | 6/3 | record_ops | ⚠️ | ✗ | 需 filters 配置，写测试脚本验证 |
+| 5 | 获取单条 | get_record | 6/4 | record_ops | ⚠️ | ✓ | — |
+| 6 | 获取多条 | get_records | 13/400 | record_ops | ⚠️ | ✗ | typeId=13 非 6，需验证 add/saveNode 是否不同 |
+| 7 | 校准记录 | calibrate_record | 6/6 | record_ops | ✅ | ✗ | 有 fiber 录制，需写测试 |
+| 8 | 数值运算 | calc | 9/100 | compute | ✅ | ✓ | — |
+| 9 | 汇总 | aggregate | 9/107 | compute | ✅ | ✗ | 有 fiber 录制，需 appId 指向目标表 |
+| 10 | 站内通知 | notify | 27 | notify | ⚠️ | ✓ | — |
+| 11 | 抄送 | copy | 5 | human | ✅ | ✓ | — |
+| 12 | 填写 | fill | 3 | human | ✅ | ✗ | 有 fiber 录制，需 formProperties 配置 |
+| 13 | 审批 | approval | 26 | approval | ✅ | ⚠ | 创建成功但 publish 报 103，需研究 processNode 子流程 |
+| 14 | 延时(时长) | delay_duration | 12/301 | timer | ✅ | ✓ | — |
+| 15 | 延时(日期) | delay_until | 12/302 | timer | ⚠️ | ✗ | 需验证 executeTimeType 等参数 |
+| 16 | 延时(字段) | delay_field | 12/303 | timer | ⚠️ | ✗ | 需验证 |
+| 17 | 发送短信 | sms | 10 | notify | ⚠️ | ✗ | 用 content 非 sendContent |
+| 18 | 发送邮件 | email | 11/202 | notify | ⚠️ | ✗ | 用 content + title |
+| 19 | 界面推送 | push | 17 | notify | ⚠️ | ✗ | 用 sendContent |
+| 20 | 分支 | branch | 1 | flow_control | ✅ | ✗ | 有 fiber 录制，需 operateCondition 配置 |
+| 21 | 分支条件 | branch_condition | 2 | flow_control | ✅ | ✗ | 有 fiber 录制 |
+| 22 | 循环 | loop | 29/210 | flow_control | ✅ | ✗ | 有 fiber 录制，自动创建子流程 |
+| 23 | 中止流程 | abort | 30/2 | flow_control | ⚠️ | ✗ | 最简节点，应该容易验证 |
+| 24 | 子流程 | subprocess | 16 | flow_control | ⚠️ | ✗ | saveNode 跳过 |
+| 25 | JSON 解析 | json_parse | 21/510 | developer | ⚠️ | ✗ | 需 jsonContent + controls |
+| 26 | 代码块 | code_block | 14/102 | developer | — | ✗ | saveNode 跳过 |
+| 27 | API 请求 | api_request | 8 | developer | — | ✗ | saveNode 跳过 |
+| 28 | AI 文本 | ai_text | 31/531 | ai | ✅ | ✗ | 有 fiber 录制，需 appId="" |
+| 29 | AI 对象 | ai_object | 31/532 | ai | ✅ | ✗ | 有 fiber 录制 |
+| 30 | AI Agent | ai_agent | 33/533 | ai | ✅ | ✗ | 有 fiber 录制，需 tools 数组 |
+
+> 录制状态：✅ = hap-utral-maker 有完整 fiber 实测 saveNode body；⚠️ = 只有 NODE_TYPES 定义
+> 实测状态：✓ = 本项目 CRM 应用中创建+配置+publish 成功；⚠ = 创建成功但配置/publish 有问题；✗ = 未测试
+
+### 待办任务（按优先级分组）
+
+**P0：有 fiber 录制但未实测（12 种）— 直接写测试脚本验证**
+
+这些节点在 `hap-utral-maker/api-specs/block1-private/workflow/workflow-node-configs.md` 中有完整的 saveNode body 结构，可以直接照着写测试：
+
+- [ ] 校准记录(6/6) — 有 fiber 录制，需 fields + errorFields
+- [ ] 汇总(9/107) — 有 fiber 录制，需 appId
+- [ ] 填写(3) — 有 fiber 录制，需 formProperties + accounts
+- [ ] 审批(26) — 有 fiber 录制的完整 processNode 结构，是 publish 失败的关键
+- [ ] 分支(1) + 条件(2) — 有 fiber 录制，需搞定 operateCondition 配置
+- [ ] 循环(29) — 有 fiber 录制，自动创建子流程
+- [ ] AI 文本(31/531) — 有 fiber 录制
+- [ ] AI 对象(31/532) — 有 fiber 录制
+- [ ] AI Agent(33/533) — 有 fiber 录制，需 tools 数组
+
+**P1：只有 NODE_TYPES 定义，需要实测（8 种）**
+
+- [ ] 删除记录(6/3) — 需 filters
+- [ ] 获取多条(13/400) — typeId=13
+- [ ] 延时到日期(12/302) — 需验证参数格式
+- [ ] 延时到字段(12/303) — 需验证参数格式
+- [ ] 短信(10) — 用 content
+- [ ] 邮件(11/202) — 用 content + title
+- [ ] 推送(17) — 用 sendContent
+- [ ] 中止(30/2) — 最简节点
+
+**P2：saveNode 跳过的节点（3 种）— 创建即可用**
+
+- [ ] 子流程(16) — 创建后在 UI 中配置
+- [ ] 代码块(14/102) — 创建后在 UI 中写代码
+- [ ] API 请求(8) — 创建后在 UI 中配置 URL/参数
+
+### 录制文档位置
+
+完整的 saveNode body 结构见：
+`hap-utral-maker/api-specs/block1-private/workflow/workflow-node-configs.md`
+（已同步到本项目 `data/api_docs/workflow/workflow-node-configs.md`）
 
 ### 关键修复记录
 
-1. **`sendContent` 非 `content`** — 通知(27)和推送(17)的内容字段是 `sendContent`，短信(10)和邮件(11)用 `content`
+1. **`sendContent` 非 `content`** — 通知(27)和推送(17)用 `sendContent`，短信(10)和邮件(11)用 `content`
 2. **延时值在根级别** — `numberFieldValue` 等直接放 saveNode body，不嵌套 `timerNode`
-3. **单选字段需完整 UUID** — 截断 key 被 HAP 静默丢弃，必须传完整 UUID
-4. **审批节点 publish 失败** — 需研究 processNode 子流程配置
+3. **单选字段需完整 UUID** — 截断 key 被 HAP 静默丢弃
+4. **审批 publish 失败** — 需配置 processNode 子流程，录制文档中有完整结构
 
 ### 关键文件
 
@@ -83,8 +136,8 @@
 | `workflow/nodes/` | 27 种节点注册中心（9 个模块） |
 | `workflow/scripts/add_workflow_node.py` | 兼容层，代理到 nodes/ |
 | `workflow/scripts/execute_workflow_plan.py` | 节点创建+publish |
-| `scripts/create_demo_workflow_v2.py` | 验证脚本（订单流程） |
-| `scripts/create_demo_workflow_full.py` | 验证脚本（全节点） |
+| `data/api_docs/workflow/workflow-node-configs.md` | 完整 saveNode body 录制文档 |
+| `scripts/create_demo_workflow_full.py` | 验证脚本（当前 6 种，需扩展） |
 
 ---
 
