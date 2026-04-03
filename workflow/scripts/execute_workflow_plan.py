@@ -441,13 +441,20 @@ def add_action_nodes(
                     worksheet_id, name, extra,
                 )
                 if save_body:
-                    # 注入来自 plan 的通知内容（覆盖 build_save_node_body 设的空串）
-                    if node_type in ("notify", "copy", "push", "sms", "email"):
+                    # 注入来自 plan 的通知内容
+                    # HAP 通知/推送节点用 sendContent，短信/邮件用 content
+                    if node_type in ("notify", "copy", "push"):
+                        content_key = "sendContent"
+                    elif node_type in ("sms", "email"):
+                        content_key = "content"
+                    else:
+                        content_key = None
+                    if content_key and node_type in ("notify", "copy", "push", "sms", "email"):
                         plan_content = node_plan.get("content", "") or extra.get("content", "")
                         if plan_content:
-                            save_body["content"] = plan_content
-                        elif not save_body.get("content"):
-                            save_body["content"] = f"工作流「{name}」已触发，请及时查看。"
+                            save_body[content_key] = plan_content
+                        elif not save_body.get(content_key):
+                            save_body[content_key] = f"工作流「{name}」已触发，请及时查看。"
                     # 注入来自 plan 的 accounts（通知对象），兜底为触发者
                     if node_type in ("notify", "copy", "push", "sms", "email", "approval"):
                         if not save_body.get("accounts"):
@@ -469,8 +476,8 @@ def add_action_nodes(
                     if type_id in (1, 2) and not save_body.get("operateCondition"):
                         print(f"        ⚠ 分支节点 operateCondition 为空，跳过 saveNode", file=sys.stderr)
                         save_body = None
-                    elif type_id == 27 and not save_body.get("content"):
-                        print(f"        ⚠ 通知节点 content 为空，跳过 saveNode", file=sys.stderr)
+                    elif type_id == 27 and not save_body.get("sendContent"):
+                        print(f"        ⚠ 通知节点 sendContent 为空，跳过 saveNode", file=sys.stderr)
                         save_body = None
                 if save_body:
                     save_resp = session.post("https://api.mingdao.com/workflow/flowNode/saveNode", save_body)

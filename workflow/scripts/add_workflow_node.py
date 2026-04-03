@@ -101,9 +101,9 @@ def build_save_node_body(node_type: str, cfg: dict, process_id: str, node_id: st
     type_id = cfg["typeId"]
     action = cfg.get("actionId", "")
 
-    # These node types do not accept saveNode in their initial unconfigured state;
-    # the add response already creates the node correctly.
-    if type_id in (6, 8, 14, 16, 17):
+    # typeId=6 (记录操作) 由 add_action_nodes 自行处理 saveNode，此处跳过
+    # typeId=8 (API请求) / typeId=14 (代码块) / typeId=16 (子流程) 初始状态不需要 saveNode
+    if type_id in (6, 8, 14, 16):
         return None
 
     base = {
@@ -187,41 +187,29 @@ def build_save_node_body(node_type: str, cfg: dict, process_id: str, node_id: st
         base["content"] = ""
 
     elif type_id == 12:
-        # 延时节点 — timerNode 结构
+        # 延时节点 — 时间值放在 saveNode body 根级别（不是嵌套在 timerNode 下）
         action = cfg.get("actionId", "301")
-        empty_field = {
-            "fieldValue": "", "fieldNodeId": "", "fieldNodeType": None,
-            "fieldNodeName": None, "fieldAppType": None, "fieldActionId": None,
-            "fieldControlId": "", "fieldControlName": None, "fieldControlType": None,
-            "sourceType": None,
-        }
+        base["actionId"] = action
+        empty_fv = {"fieldValue": "", "fieldNodeId": "", "fieldControlId": ""}
         if action == "301":
-            base["timerNode"] = {
-                "desc": "",
-                "actionId": "301",
-                "numberFieldValue": dict(empty_field),
-                "hourFieldValue": dict(empty_field),
-                "minuteFieldValue": dict(empty_field),
-                "secondFieldValue": dict(empty_field),
-            }
+            base["numberFieldValue"] = dict(empty_fv)
+            base["hourFieldValue"] = dict(empty_fv)
+            base["minuteFieldValue"] = dict(empty_fv)
+            base["secondFieldValue"] = dict(empty_fv)
         else:
-            base["timerNode"] = {
-                "desc": "",
-                "actionId": action,
-                "executeTimeType": 0,
-                "number": 0,
-                "unit": 1,
-                "time": "08:00",
-            }
+            base["executeTimeType"] = 0
+            base["number"] = 0
+            base["unit"] = 1
+            base["time"] = "08:00"
 
     elif type_id == 16:
         # 子流程
         base.pop("isException", None)
 
     elif type_id == 17:
-        # 界面推送
+        # 界面推送 — HAP 用 sendContent 而非 content
         base["accounts"] = []
-        base["content"] = ""
+        base["sendContent"] = ""
 
     elif type_id == 21:
         # JSON 解析
@@ -235,9 +223,9 @@ def build_save_node_body(node_type: str, cfg: dict, process_id: str, node_id: st
         base["flowIds"] = []
 
     elif type_id == 27:
-        # 站内通知
+        # 站内通知 — HAP 用 sendContent 而非 content
         base["accounts"] = []
-        base["content"] = ""
+        base["sendContent"] = ""
 
     elif type_id == 29:
         # 循环
