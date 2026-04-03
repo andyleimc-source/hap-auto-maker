@@ -281,8 +281,23 @@ def default_display_controls(fields: List[dict]) -> List[str]:
 
 
 def build_prompt(app_name: str, worksheet_name: str, worksheet_id: str, fields: List[dict]) -> str:
-    return f"""
-你是明道云视图规划助手。请基于工作表名称和字段，规划“建议创建的视图列表”。
+    # 视图类型说明（优先使用注册中心）
+    if _HAS_VIEW_PLANNER:
+        view_type_section = build_view_type_prompt_section()
+        classified = classify_fields(fields)
+        suggestions = suggest_views(classified, worksheet_id)
+        suggestion_lines = []
+        for sg in suggestions:
+            suggestion_lines.append(
+                f”  - viewType={sg['viewType']} 「{sg['name']}」（{sg.get('reason', '')}）”
+            )
+        suggestion_text = “推荐视图（根据字段分析）：\n” + “\n”.join(suggestion_lines) if suggestion_lines else “”
+    else:
+        view_type_section = “允许 viewType=0(表格),1(看板),2(层级视图),3(画廊),4(日历),5(甘特图)”
+        suggestion_text = “”
+
+    return f”””
+你是明道云视图规划助手。请基于工作表名称和字段，规划”建议创建的视图列表”。
 
 应用名：{app_name}
 工作表名：{worksheet_name}
@@ -290,24 +305,28 @@ def build_prompt(app_name: str, worksheet_name: str, worksheet_id: str, fields: 
 字段列表：
 {json.dumps(fields, ensure_ascii=False, indent=2)}
 
+{view_type_section}
+
+{suggestion_text}
+
 仅输出 JSON（不要 markdown）：
 {{
-  "worksheetId": "{worksheet_id}",
-  "worksheetName": "{worksheet_name}",
-  "views": [
+  “worksheetId”: “{worksheet_id}”,
+  “worksheetName”: “{worksheet_name}”,
+  “views”: [
     {{
-      "name": "视图名",
-      "viewType": "0|1|2|3|4|5",
-      "reason": "建议理由",
-      "displayControls": ["字段ID1", "字段ID2"],
-      "coverCid": "封面字段ID或空字符串",
-      "viewControl": "看板分组字段ID或空字符串",
-      "advancedSetting": {{}},
-      "postCreateUpdates": [
+      “name”: “视图名”,
+      “viewType”: “0|1|2|3|4|5”,
+      “reason”: “建议理由”,
+      “displayControls”: [“字段ID1”, “字段ID2”],
+      “coverCid”: “封面字段ID或空字符串”,
+      “viewControl”: “看板分组字段ID或空字符串”,
+      “advancedSetting”: {{}},
+      “postCreateUpdates”: [
         {{
-          "editAttrs": ["advancedSetting"],
-          "editAdKeys": ["calendarcids"],
-          "advancedSetting": {{}}
+          “editAttrs”: [“advancedSetting”],
+          “editAdKeys”: [“calendarcids”],
+          “advancedSetting”: {{}}
         }}
       ]
     }}
@@ -318,16 +337,16 @@ def build_prompt(app_name: str, worksheet_name: str, worksheet_id: str, fields: 
 1) 允许 viewType=0(表格),1(看板),2(层级视图),3(画廊),4(日历),5(甘特图)。
 2) 视图数量 1-5 个，必须实用，不要凑数。
 3) displayControls / coverCid / viewControl 必须来自提供的字段ID；无法确定时填空或省略。
-4) 日历视图必须在 postCreateUpdates.advancedSetting 中提供 calendarcids（字符串化 JSON），格式必须为：'[{{"begin":"日期字段ID","end":"结束日期字段ID或空字符串"}}]'。begin 为开始日期字段ID（必填），end 为结束日期字段ID（无则填空字符串）。
+4) 日历视图必须在 postCreateUpdates.advancedSetting 中提供 calendarcids（字符串化 JSON），格式必须为：'[{{“begin”:”日期字段ID”,”end”:”结束日期字段ID或空字符串”}}]'。begin 为开始日期字段ID（必填），end 为结束日期字段ID（无则填空字符串）。
 5) 【强制】看板视图(viewType=1)必须设置 viewControl 为一个单选字段(type=11)的ID。如果没有合适的单选字段，不要创建看板视图。
-6) 【强制】表格视图(viewType=0)如果视图名包含"按...分组"、"按...分类"、"分组"等含义，必须在 advancedSetting 中提供 groupView（JSON字符串，必须紧凑无空格），格式：'{{"viewId":"","groupFilters":[{{"controlId":"分组字段ID","values":[],"dataType":11,"spliceType":1,"filterType":2,"dateRange":0,"minValue":"","maxValue":"","isGroup":true}}],"navShow":true}}'。controlId 必须为单选字段(type=11)或多选字段(type=10)的ID。viewId 填空字符串（系统自动补全）。
+6) 【强制】表格视图(viewType=0)如果视图名包含”按...分组”、”按...分类”、”分组”等含义，必须在 advancedSetting 中提供 groupView（JSON字符串，必须紧凑无空格），格式：'{{“viewId”:””,”groupFilters”:[{{“controlId”:”分组字段ID”,”values”:[],”dataType”:11,”spliceType”:1,”filterType”:2,”dateRange”:0,”minValue”:””,”maxValue”:””,”isGroup”:true}}],”navShow”:true}}'。controlId 必须为单选字段(type=11)或多选字段(type=10)的ID。viewId 填空字符串（系统自动补全）。
 7) 甘特图视图（viewType=5）需要工作表含有开始日期和结束日期字段，适合项目管理、任务排期类场景。
 8) 层级视图（viewType=2）适合有上下级/父子关系的数据（如部门树、分类层级）。
 9) 若字段不支持某视图，请不要输出该视图类型。
 10) 输出必须是可解析 JSON。
 11) 【重要】每个视图必须有实际业务含义——不仅有名称，还要有对应的配置（viewControl/advancedSetting/postCreateUpdates），空配置的视图没有价值。
 12) 【格式要求】所有 advancedSetting 中的 JSON 字符串值必须是紧凑格式（无空格），例如 groupView 中键值之间不加空格。
-""".strip()
+“””.strip()
 
 
 def _find_single_select_field(fields: List[dict]) -> str:
