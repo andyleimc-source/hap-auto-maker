@@ -76,8 +76,8 @@ def hap_post(url: str, app_id: str, payload: dict, dry_run: bool) -> dict:
 # ---------------------------------------------------------------------------
 
 def create_section(app_id: str, name: str, dry_run: bool) -> str:
-    """两步创建分组：Add（得 ID）→ UpdateName（设置正确名称）。返回 appSectionId。"""
-    resp_add = hap_post(ADD_SECTION_URL, app_id, {"appId": app_id, "name": "未命名分组"}, dry_run)
+    """两步创建分组：Add（得 ID，直接传真实名称）→ UpdateName（确保名称正确）。返回 appSectionId。"""
+    resp_add = hap_post(ADD_SECTION_URL, app_id, {"appId": app_id, "name": name}, dry_run)
     if not dry_run:
         if resp_add.get("state") != 1:
             raise RuntimeError(f"AddAppSection 失败: {resp_add}")
@@ -87,11 +87,19 @@ def create_section(app_id: str, name: str, dry_run: bool) -> str:
     else:
         section_id = f"dry-run-{name}"
 
-    hap_post(RENAME_SECTION_URL, app_id, {
-        "appId": app_id,
-        "appSectionId": section_id,
-        "name": name,
-    }, dry_run)
+    # 二次确认改名，带重试和错误检查
+    max_retries = 3
+    for attempt in range(max_retries):
+        resp_rename = hap_post(RENAME_SECTION_URL, app_id, {
+            "appId": app_id,
+            "appSectionId": section_id,
+            "name": name,
+        }, dry_run)
+        if dry_run or resp_rename.get("state") == 1:
+            break
+        print(f"  ⚠ UpdateAppSectionName 第 {attempt + 1} 次失败: {resp_rename}")
+        if attempt == max_retries - 1:
+            raise RuntimeError(f"UpdateAppSectionName 重试 {max_retries} 次仍失败，分组「{name}」(id={section_id}) 可能未正确命名: {resp_rename}")
 
     print(f"  ✓ 创建分组「{name}」→ {section_id}")
     return section_id
@@ -241,14 +249,25 @@ def run_mode_two(args, sections_create_result: dict) -> List[dict]:
         print("  ⚠ 无法获取默认分组 ID，跳过移动")
         return []
 
-    # 按目标分组分组工作表
+    # 按 plan 顺序分组工作表（保持分组内排序与规划一致）
+    ws_by_name = {ws["workSheetName"]: ws for ws in worksheets}
     target_to_worksheets: Dict[str, List[dict]] = {}
-    for ws in worksheets:
-        target_id = ws_name_to_section_id.get(ws["workSheetName"], "")
+    for sec in sections_create_result.get("sections", []):
+        target_id = sec.get("appSectionId", "")
         if not target_id:
-            print(f"  ⚠ 工作表「{ws['workSheetName']}」无分组映射，跳过")
             continue
-        target_to_worksheets.setdefault(target_id, []).append(ws)
+        for ws_name in sec.get("worksheets", []):
+            ws_name = str(ws_name).strip()
+            ws = ws_by_name.get(ws_name)
+            if ws:
+                target_to_worksheets.setdefault(target_id, []).append(ws)
+    # 补充未被 plan 覆盖的工作表（通过旧映射兜底）
+    assigned_names = {ws["workSheetName"] for wsl in target_to_worksheets.values() for ws in wsl}
+    for ws in worksheets:
+        if ws["workSheetName"] not in assigned_names:
+            target_id = ws_name_to_section_id.get(ws["workSheetName"], "")
+            if target_id:
+                target_to_worksheets.setdefault(target_id, []).append(ws)
 
     move_results = []
     for target_section_id, ws_list in target_to_worksheets.items():

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-调用 Gemini 为指定应用规划 3 个有业务意义的统计图配置。
+调用 Gemini 为指定应用规划 8-12 个有业务意义的统计图配置。
 
 只依赖 auth_config.py（browser auth），不需要 HAP-Appkey/Sign。
 
@@ -9,7 +9,7 @@
 1. 通过 --worksheet-ids 接收工作表 ID 列表（逗号分隔）
    若未提供，尝试从已有的 schema snapshot 自动读取
 2. 拉取每张工作表的字段与视图（GetWorksheetControls，browser auth）
-3. 构建 Gemini prompt，生成 3 个图表规划
+3. 构建 Gemini prompt，生成 8-12 个图表规划
 4. 验证并输出 chart_plan JSON
 """
 
@@ -227,13 +227,18 @@ def extract_views_from_payload(payload: dict) -> List[dict]:
 # Gemini 调用
 # ---------------------------------------------------------------------------
 
-REPORT_TYPE_NAMES = {1: "柱状图", 2: "折线图", 3: "饼图", 4: "环形图"}
+REPORT_TYPE_NAMES = {
+    1: "柱状图", 2: "折线图", 3: "饼图", 4: "环形图",
+    5: "漏斗图", 6: "雷达图", 7: "条形图", 8: "双轴图",
+    9: "散点图", 10: "数值图", 11: "区域图", 12: "进度图",
+    13: "透视表", 14: "词云图", 15: "排行图", 16: "地图", 17: "关系图",
+}
 
 
 def build_prompt(app_id: str, app_name: str, worksheets_info: List[dict]) -> str:
     ws_json = json.dumps(worksheets_info, ensure_ascii=False, indent=2)
     return f"""
-你是企业数据分析助手。请根据下面的应用结构，为该应用设计 3 个有业务意义的统计图，输出严格 JSON，不要 markdown，不要任何解释。
+你是企业数据分析助手。请根据下面的应用结构，为该应用设计 8-12 个有业务意义的统计图，输出严格 JSON，不要 markdown，不要任何解释。
 
 应用信息：
 - appId: {app_id}
@@ -243,15 +248,19 @@ def build_prompt(app_id: str, app_name: str, worksheets_info: List[dict]) -> str
 {ws_json}
 
 设计要求：
-1. 共输出 3 个图表，每个图表针对不同的业务维度（如：时间趋势、分类分布、状态占比等）。
-2. 图表类型使用不同种类，从以下选择：1=柱状图、2=折线图、3=饼图。
-3. xaxes 优先选择 _isSelect=true（controlType=9）字段用于分类图，_isDate=true（controlType=15/16）字段用于趋势图。
+1. 共输出 8-12 个图表，覆盖尽可能多的工作表和业务维度（时间趋势、分类分布、状态占比、数量统计、排行对比等）。
+2. 图表类型必须多样化，至少使用 5 种不同的 reportType。可选类型如下：
+   1=柱状图, 2=折线图, 3=饼图, 4=环形图, 5=漏斗图, 6=雷达图, 7=条形图（横向柱状图）,
+   8=双轴图, 9=散点图, 10=数值图（数字卡片，不需要 xaxes 维度）, 11=区域图, 12=进度图, 15=排行图
+3. xaxes 优先选择 _isSelect=true（controlType=9/10/11）字段用于分类图，_isDate=true（controlType=15/16）字段用于趋势图。
    也可以使用系统字段 ctime（创建时间，controlType=16）作为 X 轴时间维度。
 4. yaxisList 使用 controlId="record_count"（记录数量统计，controlType=10000000）。
    若有 _isNumeric=true 的字段，也可以用于数值汇总。
 5. 每个图表名称简洁有业务含义（10 字以内）。
 6. views 数组填入该工作表的 views 列表（若为空则输出 []）。
-7. 3 个图表中：至少 1 个饼图/环形图（分类占比）、至少 1 个折线图/柱状图（趋势或分类对比）。
+7. 建议组合：2-3 个数值卡片(reportType=10) + 2-3 个柱状/条形/折线图 + 1-2 个饼图/环形图 + 1-2 个漏斗/雷达/排行/区域图。
+8. 数值图(reportType=10)：xaxes.controlId 设为 null，只需 yaxisList，适合展示关键指标总数。
+9. 双轴图(reportType=8)：需要额外添加 "yreportType": 2（第二轴为折线图），yaxisList 至少 2 个指标。
 
 输出 JSON 结构（严格按此格式）：
 {{
@@ -264,11 +273,12 @@ def build_prompt(app_id: str, app_name: str, worksheets_info: List[dict]) -> str
       "reportType": 1,
       "worksheetId": "工作表ID",
       "worksheetName": "工作表名称",
+      "yreportType": null,
       "views": [
         {{"viewId": "视图ID", "name": "视图名", "viewType": 0}}
       ],
       "xaxes": {{
-        "controlId": "字段ID或ctime",
+        "controlId": "字段ID或ctime或null",
         "controlName": "字段名称",
         "controlType": 16,
         "particleSizeType": 1,
@@ -302,6 +312,7 @@ def build_prompt(app_id: str, app_name: str, worksheets_info: List[dict]) -> str
 - controlId="record_count" 固定：controlType=10000000，controlName="记录数量"。
 - 只选择该工作表实际存在的字段 ID（或 ctime 系统字段）。
 - particleSizeType 仅对 _isDate 字段有效：1=按月，2=按季度，3=按年，4=按天；非日期字段设为 0。
+- 数值图(reportType=10)的 xaxes.controlId 必须为 null。
 """.strip()
 
 
@@ -329,12 +340,15 @@ def generate_with_retry(client, model: str, prompt: str, ai_config: dict, retrie
     raise last_exc
 
 
+VALID_REPORT_TYPES = set(range(1, 18))  # reportType 1-17
+
+
 def validate_plan(raw: dict, worksheets_by_id: Dict[str, dict]) -> List[dict]:
     charts = raw.get("charts", [])
     if not isinstance(charts, list) or len(charts) == 0:
         raise ValueError("Gemini 未返回 charts 数组")
-    if len(charts) != 3:
-        raise ValueError(f"期望 3 个图表，实际返回 {len(charts)} 个")
+    if len(charts) < 5:
+        raise ValueError(f"期望 8-12 个图表，实际只返回 {len(charts)} 个，太少了")
 
     validated = []
     for i, chart in enumerate(charts):
@@ -344,18 +358,37 @@ def validate_plan(raw: dict, worksheets_by_id: Dict[str, dict]) -> List[dict]:
         if not name:
             raise ValueError(f"图表 {i+1} 缺少 name")
         report_type = int(chart.get("reportType", 0) or 0)
-        if report_type not in {1, 2, 3, 4}:
+        if report_type not in VALID_REPORT_TYPES:
             raise ValueError(f"图表 {i+1} reportType 非法: {report_type}")
         worksheet_id = str(chart.get("worksheetId", "")).strip()
         if worksheet_id not in worksheets_by_id:
             print(f"[警告] 图表 {i+1} worksheetId 不存在，已跳过: {worksheet_id}")
             continue
+        # 构建该工作表的有效字段 ID 集合
+        ws_info = worksheets_by_id[worksheet_id]
+        ws_fields = ws_info.get("fields", [])
+        valid_fids = {str(f.get("id", "") or f.get("controlId", "")).strip()
+                      for f in ws_fields if str(f.get("id", "") or f.get("controlId", "")).strip()}
+        valid_fids.update({"ctime", "utime", "ownerid", "caid", "record_count"})
         xaxes = chart.get("xaxes", {})
-        if not isinstance(xaxes, dict) or not str(xaxes.get("controlId", "")).strip():
+        if not isinstance(xaxes, dict):
+            raise ValueError(f"图表 {i+1} xaxes 格式错误")
+        # 数值图 (reportType=10) xaxes.controlId 可以为 null
+        x_control_id = xaxes.get("controlId")
+        if report_type != 10 and not str(x_control_id or "").strip():
             raise ValueError(f"图表 {i+1} xaxes 缺少 controlId")
+        # 校验 xaxes.controlId 是否在工作表字段中
+        x_cid_str = str(x_control_id or "").strip()
+        if report_type != 10 and x_cid_str and x_cid_str not in valid_fids:
+            raise ValueError(f"图表 {i+1}「{name}」xaxes.controlId「{x_cid_str}」不在工作表字段中，请使用有效的字段ID")
         yaxis_list = chart.get("yaxisList", [])
         if not isinstance(yaxis_list, list) or len(yaxis_list) == 0:
             raise ValueError(f"图表 {i+1} yaxisList 为空")
+        # 校验 yaxisList 中的 controlId
+        for j, yaxis in enumerate(yaxis_list):
+            y_cid = str(yaxis.get("controlId", "")).strip()
+            if y_cid and y_cid not in valid_fids:
+                raise ValueError(f"图表 {i+1}「{name}」yaxisList[{j}].controlId「{y_cid}」不在工作表字段中，请使用有效的字段ID")
         validated.append(chart)
     return validated
 
@@ -372,7 +405,7 @@ def build_prompt_system_only(app_id: str, app_name: str, views_hint: List[dict])
     view_names = [v.get("name", "") for v in views_hint if v.get("name")]
     context = f"视图列表（可从视图名称推断业务场景）：{json.dumps(view_names, ensure_ascii=False)}" if view_names else "无视图信息"
     return f"""
-你是企业数据分析助手。请为以下应用设计 3 个业务统计图，输出严格 JSON，不要 markdown，不要任何解释。
+你是企业数据分析助手。请为以下应用设计 8 个业务统计图，输出严格 JSON，不要 markdown，不要任何解释。
 
 应用信息：
 - appId: {app_id}
@@ -385,8 +418,8 @@ def build_prompt_system_only(app_id: str, app_name: str, views_hint: List[dict])
 - record_count：记录数量统计，controlType=10000000
 
 设计要求：
-1. 共 3 个图表，各图表侧重不同时间维度（日/月/季）。
-2. 至少 1 个折线图（reportType=2），1 个柱状图（reportType=1），1 个柱状图或饼图（reportType=3）。
+1. 共 8 个图表，各图表侧重不同时间维度和统计视角。
+2. 图表类型多样化：2-3 个数值卡片(reportType=10) + 2 个柱状/折线图 + 1 个饼图 + 1-2 个其他类型(条形/区域/排行)。数值图的 xaxes.controlId 设为 null。
 3. 图表名称简洁有业务含义（10 字以内）。
 4. views 数组使用：{json.dumps(views_hint, ensure_ascii=False)}
 
@@ -432,7 +465,9 @@ def build_prompt_system_only(app_id: str, app_name: str, views_hint: List[dict])
   ]
 }}
 
-注意：particleSizeType：1=按月，2=按季度，3=按年，4=按天。3 个图表使用不同 particleSizeType。
+注意：
+- particleSizeType：1=按月，2=按季度，3=按年，4=按天。不同图表使用不同 particleSizeType。
+- 数值图(reportType=10)的 xaxes.controlId 必须为 null，不需要维度字段。
 """.strip()
 
 
@@ -441,18 +476,21 @@ def validate_plan_relaxed(raw: dict) -> List[dict]:
     charts = raw.get("charts", [])
     if not isinstance(charts, list) or len(charts) == 0:
         raise ValueError("Gemini 未返回 charts 数组")
-    if len(charts) != 3:
-        raise ValueError(f"期望 3 个图表，实际返回 {len(charts)} 个")
+    if len(charts) < 5:
+        raise ValueError(f"期望 8-12 个图表，实际只返回 {len(charts)} 个，太少了")
     validated = []
     for i, chart in enumerate(charts):
         if not isinstance(chart, dict):
             raise ValueError(f"图表 {i+1} 格式错误")
         if not str(chart.get("name", "")).strip():
             raise ValueError(f"图表 {i+1} 缺少 name")
-        if int(chart.get("reportType", 0) or 0) not in {1, 2, 3, 4}:
-            raise ValueError(f"图表 {i+1} reportType 非法")
+        report_type = int(chart.get("reportType", 0) or 0)
+        if report_type not in VALID_REPORT_TYPES:
+            raise ValueError(f"图表 {i+1} reportType 非法: {report_type}")
         xaxes = chart.get("xaxes", {})
-        if not isinstance(xaxes, dict) or not str(xaxes.get("controlId", "")).strip():
+        if not isinstance(xaxes, dict):
+            raise ValueError(f"图表 {i+1} xaxes 格式错误")
+        if report_type != 10 and not str(xaxes.get("controlId") or "").strip():
             raise ValueError(f"图表 {i+1} xaxes 缺少 controlId")
         if not isinstance(chart.get("yaxisList", []), list) or not chart.get("yaxisList"):
             raise ValueError(f"图表 {i+1} yaxisList 为空")
@@ -462,7 +500,7 @@ def validate_plan_relaxed(raw: dict) -> List[dict]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="调用 Gemini 为应用规划 3 个业务统计图（只需 auth_config.py）",
+        description="调用 Gemini 为应用规划 8-12 个业务统计图（只需 auth_config.py）",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 使用方式（任选一种）：
