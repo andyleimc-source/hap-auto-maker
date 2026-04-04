@@ -874,7 +874,12 @@ def _create_time_based(
     execute_end_time = trigger_plan.get("execute_end_time", "")
     repeat_type      = str(trigger_plan.get("repeat_type", "1"))
     interval         = int(trigger_plan.get("interval", 1))
-    frequency        = int(trigger_plan.get("frequency", 7))
+    _freq_map = {"hourly": 60, "daily": 1440, "weekly": 10080, "monthly": 43200}
+    _freq_raw = trigger_plan.get("frequency", 1440)
+    if isinstance(_freq_raw, str):
+        frequency = _freq_map.get(_freq_raw.lower().strip(), 1440)
+    else:
+        frequency = int(_freq_raw or 1440)
     week_days        = trigger_plan.get("week_days") or []
     action_nodes_plan, action_warnings = _sanitize_action_nodes(
         trigger_plan.get("action_nodes", []), worksheet_id
