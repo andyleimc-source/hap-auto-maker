@@ -54,9 +54,9 @@ except ImportError:
 def build_structure_prompt(
     app_name: str,
     worksheets_info: list[dict],
-    ca_per_ws: int = 3,
-    ev_per_ws: int = 2,
-    num_tt: int = 2,
+    ca_per_ws: int = 2,
+    ev_per_ws: int = 1,
+    num_tt: int = 1,
 ) -> str:
     """Phase 1 — 只规划工作流骨架：触发器、节点类型序列、名称。
 
@@ -430,9 +430,9 @@ def _validate_single_node_config(
 def build_enhanced_prompt(
     app_name: str,
     worksheets_info: list[dict],
-    ca_per_ws: int = 3,
-    ev_per_ws: int = 2,
-    num_tt: int = 2,
+    ca_per_ws: int = 2,
+    ev_per_ws: int = 1,
+    num_tt: int = 1,
 ) -> str:
     """生成增强版工作流规划 prompt。
 
