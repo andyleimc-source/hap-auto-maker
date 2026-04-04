@@ -257,8 +257,15 @@ def build_prompt(app_id: str, app_name: str, worksheets_detail: List[dict],
                  icon_candidates: List[str], color_pool: List[str]) -> str:
     ws_json = json.dumps(worksheets_detail, ensure_ascii=False, indent=2)
     colors_str = "、".join(color_pool[:6])
+    num_ws = len(worksheets_detail)
+    if num_ws <= 6:
+        target_pages = 2
+    elif num_ws <= 15:
+        target_pages = 3
+    else:
+        target_pages = 4
     return f"""
-你是企业数据分析架构师。请根据下面的应用结构，为该应用规划 3~5 个自定义数据分析页（Page）。
+你是企业数据分析架构师。请根据下面的应用结构，为该应用规划自定义数据分析页（Page）。
 每个 Page 聚焦一个独立的业务分析主题，供经营层快速查看数据。
 
 应用信息：
@@ -269,7 +276,7 @@ def build_prompt(app_id: str, app_name: str, worksheets_detail: List[dict],
 {ws_json}
 
 设计要求：
-1. 规划恰好 2 个 Page，每个 Page 聚焦不同业务主题（选取最有价值的 2 个业务维度）。
+1. 规划恰好 {target_pages} 个 Page，每个 Page 聚焦不同业务主题（选取最有价值的业务维度）。
 2. 每个 Page 的 worksheetIds 列出该 Page 需要统计分析的工作表 ID（从上面的工作表中选择）。
 3. icon 统一使用：dashboard
 4. iconColor 从以下选择（两个 Page 颜色不重复）：{colors_str}
@@ -323,8 +330,8 @@ def validate_page_plan(raw: dict, valid_ws_ids: set) -> List[dict]:
     pages = raw.get("pages", [])
     if not isinstance(pages, list) or len(pages) == 0:
         raise ValueError("Gemini 未返回 pages 数组")
-    if len(pages) != 2:
-        raise ValueError(f"期望恰好 2 个 Page，实际返回 {len(pages)} 个")
+    if not (2 <= len(pages) <= 5):
+        raise ValueError(f"期望 2-5 个 Page，实际返回 {len(pages)} 个")
 
     validated = []
     for i, page in enumerate(pages):

@@ -306,14 +306,12 @@ def merge_post_updates(ai_updates: list, auto_updates: list, view_type: int) -> 
 
 
 def build_create_payload(app_id: str, worksheet_id: str, view: dict) -> dict:
-    # viewType 统一转整数字符串；0 是系统"全部"视图，自动修正为 1(表格)
-    _vt_raw = view.get("viewType", 1)
+    # viewType 统一转整数字符串；0 是合法的表格/列表视图
+    _vt_raw = view.get("viewType", 0)
     try:
         _vt_int = int(str(_vt_raw).strip())
     except (ValueError, TypeError):
-        _vt_int = 1
-    if _vt_int == 0:
-        _vt_int = 1  # 0 不合法，fallback 到表格
+        _vt_int = 0
     view_type = str(_vt_int)
     display_controls = view.get("displayControls")
     if not isinstance(display_controls, list):
