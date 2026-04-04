@@ -29,6 +29,10 @@ python3 make_app.py --spec-json requirement_spec_latest.json  # 跳过 AI 生成
 - 创建/保存规则 → 对应的 build 函数注释和逻辑（如 `_base.py`、`execute_workflow_plan.py`）
 - 字段约束 → 对应的 planner prompt 和 validate 函数
 
+## Git 提交原则
+
+当完成重要成果时（如修复一批 Bug、完成模块校正、新功能可用），**主动 commit**，不需要等用户要求。commit message 用中文，概括改了什么、为什么改。
+
 ## 排障入口
 
 1. 终端 `✗ Step N` → 定位失败步骤
