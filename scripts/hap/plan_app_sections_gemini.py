@@ -106,14 +106,15 @@ def validate_sections_plan(plan: dict, worksheet_names: Set[str]) -> None:
         ws_list = sec.get("worksheets")
         if not isinstance(ws_list, list):
             raise ValueError(f"sections[{i}].worksheets 必须是列表")
-        if len(ws_list) < 2:
-            raise ValueError(f"分组「{name}」只有 {len(ws_list)} 张工作表，每个分组最少需要 2 张")
+        # 允许空分组（如"数据分析"分组，用于后续放统计页面）
         if len(ws_list) > 8:
             raise ValueError(f"分组「{name}」有 {len(ws_list)} 张工作表，每个分组最多允许 8 张")
         for ws_name in ws_list:
             ws_name = str(ws_name).strip()
             if ws_name not in worksheet_names:
-                raise ValueError(f"分组「{name}」中的工作表「{ws_name}」不存在于 worksheet_plan 中")
+                # 工作表名不存在时跳过（AI 可能返回轻微不一致的名称），记录警告
+                print(f"[warn] 分组「{name}」中的工作表「{ws_name}」不在 worksheet_plan 中，已跳过", file=sys.stderr)
+                continue
             assigned.add(ws_name)
 
     missing = worksheet_names - assigned

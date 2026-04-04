@@ -31,11 +31,20 @@ _PLANNING_DIR = Path(__file__).resolve().parent / "planning"
 if str(_PLANNING_DIR.parent) not in _sys.path:
     _sys.path.insert(0, str(_PLANNING_DIR.parent))
 try:
-    from planning.view_planner import build_view_type_prompt_section, suggest_views
+    from planning.view_planner import (
+        build_view_type_prompt_section,
+        suggest_views,
+        build_structure_prompt as _vp_build_structure_prompt,
+        validate_structure_plan as _vp_validate_structure_plan,
+        build_config_prompt as _vp_build_config_prompt,
+        validate_config_plan as _vp_validate_config_plan,
+    )
     from planning.constraints import classify_fields
+    from ai_utils import parse_ai_json as _parse_ai_json
     _HAS_VIEW_PLANNER = True
-except ImportError:
+except ImportError as _vp_import_err:
     _HAS_VIEW_PLANNER = False
+    print(f"[warning] view_planner 不可用，回退到单阶段模式: {_vp_import_err}", file=_sys.stderr)
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
@@ -289,15 +298,15 @@ def build_prompt(app_name: str, worksheet_name: str, worksheet_id: str, fields: 
         suggestion_lines = []
         for sg in suggestions:
             suggestion_lines.append(
-                f”  - viewType={sg['viewType']} 「{sg['name']}」（{sg.get('reason', '')}）”
+                f"  - viewType={sg['viewType']} [{sg['name']}]({sg.get('reason', '')})"
             )
-        suggestion_text = “推荐视图（根据字段分析）：\n” + “\n”.join(suggestion_lines) if suggestion_lines else “”
+        suggestion_text = "推荐视图（根据字段分析）：\n" + "\n".join(suggestion_lines) if suggestion_lines else ""
     else:
-        view_type_section = “允许 viewType=0(表格),1(看板),2(层级视图),3(画廊),4(日历),5(甘特图)”
-        suggestion_text = “”
+        view_type_section = "允许 viewType=0(表格),1(看板),2(层级视图),3(画廊),4(日历),5(甘特图)"
+        suggestion_text = ""
 
-    return f”””
-你是明道云视图规划助手。请基于工作表名称和字段，规划”建议创建的视图列表”。
+    return f"""
+你是明道云视图规划助手。请基于工作表名称和字段，规划"建议创建的视图列表"。
 
 应用名：{app_name}
 工作表名：{worksheet_name}
@@ -311,22 +320,22 @@ def build_prompt(app_name: str, worksheet_name: str, worksheet_id: str, fields: 
 
 仅输出 JSON（不要 markdown）：
 {{
-  “worksheetId”: “{worksheet_id}”,
-  “worksheetName”: “{worksheet_name}”,
-  “views”: [
+  "worksheetId": "{worksheet_id}",
+  "worksheetName": "{worksheet_name}",
+  "views": [
     {{
-      “name”: “视图名”,
-      “viewType”: “0|1|2|3|4|5”,
-      “reason”: “建议理由”,
-      “displayControls”: [“字段ID1”, “字段ID2”],
-      “coverCid”: “封面字段ID或空字符串”,
-      “viewControl”: “看板分组字段ID或空字符串”,
-      “advancedSetting”: {{}},
-      “postCreateUpdates”: [
+      "name": "视图名",
+      "viewType": "0|1|2|3|4|5",
+      "reason": "建议理由",
+      "displayControls": ["字段ID1", "字段ID2"],
+      "coverCid": "封面字段ID或空字符串",
+      "viewControl": "看板分组字段ID或空字符串",
+      "advancedSetting": {{}},
+      "postCreateUpdates": [
         {{
-          “editAttrs”: [“advancedSetting”],
-          “editAdKeys”: [“calendarcids”],
-          “advancedSetting”: {{}}
+          "editAttrs": ["advancedSetting"],
+          "editAdKeys": ["calendarcids"],
+          "advancedSetting": {{}}
         }}
       ]
     }}
@@ -337,16 +346,16 @@ def build_prompt(app_name: str, worksheet_name: str, worksheet_id: str, fields: 
 1) 允许 viewType=0(表格),1(看板),2(层级视图),3(画廊),4(日历),5(甘特图)。
 2) 视图数量 1-5 个，必须实用，不要凑数。
 3) displayControls / coverCid / viewControl 必须来自提供的字段ID；无法确定时填空或省略。
-4) 日历视图必须在 postCreateUpdates.advancedSetting 中提供 calendarcids（字符串化 JSON），格式必须为：'[{{“begin”:”日期字段ID”,”end”:”结束日期字段ID或空字符串”}}]'。begin 为开始日期字段ID（必填），end 为结束日期字段ID（无则填空字符串）。
+4) 日历视图必须在 postCreateUpdates.advancedSetting 中提供 calendarcids（字符串化 JSON），格式必须为：'[{{"begin":"日期字段ID","end":"结束日期字段ID或空字符串"}}]'。begin 为开始日期字段ID（必填），end 为结束日期字段ID（无则填空字符串）。
 5) 【强制】看板视图(viewType=1)必须设置 viewControl 为一个单选字段(type=11)的ID。如果没有合适的单选字段，不要创建看板视图。
-6) 【强制】表格视图(viewType=0)如果视图名包含”按...分组”、”按...分类”、”分组”等含义，必须在 advancedSetting 中提供 groupView（JSON字符串，必须紧凑无空格），格式：'{{“viewId”:””,”groupFilters”:[{{“controlId”:”分组字段ID”,”values”:[],”dataType”:11,”spliceType”:1,”filterType”:2,”dateRange”:0,”minValue”:””,”maxValue”:””,”isGroup”:true}}],”navShow”:true}}'。controlId 必须为单选字段(type=11)或多选字段(type=10)的ID。viewId 填空字符串（系统自动补全）。
+6) 【强制】表格视图(viewType=0)如果视图名包含"按...分组"、"按...分类"、"分组"等含义，必须在 advancedSetting 中提供 groupView（JSON字符串，必须紧凑无空格），格式：'{{"viewId":"","groupFilters":[{{"controlId":"分组字段ID","values":[],"dataType":11,"spliceType":1,"filterType":2,"dateRange":0,"minValue":"","maxValue":"","isGroup":true}}],"navShow":true}}'。controlId 必须为单选字段(type=11)或多选字段(type=10)的ID。viewId 填空字符串（系统自动补全）。
 7) 甘特图视图（viewType=5）需要工作表含有开始日期和结束日期字段，适合项目管理、任务排期类场景。
 8) 层级视图（viewType=2）适合有上下级/父子关系的数据（如部门树、分类层级）。
 9) 若字段不支持某视图，请不要输出该视图类型。
 10) 输出必须是可解析 JSON。
 11) 【重要】每个视图必须有实际业务含义——不仅有名称，还要有对应的配置（viewControl/advancedSetting/postCreateUpdates），空配置的视图没有价值。
 12) 【格式要求】所有 advancedSetting 中的 JSON 字符串值必须是紧凑格式（无空格），例如 groupView 中键值之间不加空格。
-“””.strip()
+""".strip()
 
 
 def _find_single_select_field(fields: List[dict]) -> str:
@@ -600,13 +609,165 @@ def build_batch_prompt(app_name: str, worksheets_data: List[dict]) -> str:
 12) 【格式要求】所有 advancedSetting 中的 JSON 字符串值必须是紧凑格式（无空格），例如 groupView 中键值之间不加空格。""".strip()
 
 
+def _call_ai_with_retry(
+    client,
+    model: str,
+    prompt: str,
+    max_retries: int = 3,
+    label: str = "",
+) -> str:
+    """调用 AI 并在失败时重试，返回响应文本。"""
+    last_exc: Optional[Exception] = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            resp = client.models.generate_content(
+                model=model,
+                contents=prompt,
+                config=create_generation_config(
+                    CURRENT_AI_CONFIG,
+                    response_mime_type="application/json",
+                    temperature=0.2,
+                ),
+            )
+            return resp.text or ""
+        except Exception as exc:
+            last_exc = exc
+            if attempt < max_retries:
+                wait_seconds = attempt * 2
+                print(
+                    f"[{label}] AI 请求失败 attempt={attempt}/{max_retries}，"
+                    f"{wait_seconds}s 后重试: {exc}",
+                    file=_sys.stderr,
+                )
+                time.sleep(wait_seconds)
+    raise last_exc or RuntimeError(f"[{label}] AI 请求失败")
+
+
+def plan_views_two_phase(
+    client,
+    model: str,
+    app_name: str,
+    ws_with_fields: List[tuple],
+) -> List[dict]:
+    """两阶段视图规划：Phase 1 规划结构，Phase 2 补全配置细节。
+
+    Phase 1: build_structure_prompt → AI → validate_structure_plan
+    Phase 2: build_config_prompt → AI → validate_config_plan
+    返回 [{worksheetId, worksheetName, fields, views}]，兼容 create_views_from_plan.py。
+    """
+    ws_data = [
+        {
+            "worksheetId": ws["workSheetId"],
+            "worksheetName": ws["workSheetName"],
+            "fields": fields,
+        }
+        for ws, fields in ws_with_fields
+    ]
+    worksheets_by_id = {item["worksheetId"]: item for item in ws_data}
+
+    # ── Phase 1: 结构规划 ────────────────────────────────────────────────────────
+    print(f"\n[view two-phase] Phase 1: 结构规划（{app_name}）", file=_sys.stderr)
+    p1_prompt = _vp_build_structure_prompt(app_name, ws_data)
+    print(
+        f"[view] Phase1 prompt 长度: {len(p1_prompt)}, 前200字: {p1_prompt[:200]}",
+        file=_sys.stderr,
+    )
+
+    p1_raw: dict = {}
+    last_p1_error: Optional[str] = None
+    for val_attempt in range(1, 4):
+        try:
+            prompt_with_ctx = p1_prompt
+            if last_p1_error:
+                prompt_with_ctx = (
+                    p1_prompt
+                    + f"\n\n# 上次输出校验失败（第 {val_attempt - 1} 次）\n错误：{last_p1_error}\n请修正后重新输出。"
+                )
+            raw_text = _call_ai_with_retry(client, model, prompt_with_ctx, label="view:p1")
+            print(f"[view:p1] 响应长度 {len(raw_text)} 字符", file=_sys.stderr)
+            p1_raw = _parse_ai_json(raw_text)
+            _vp_validate_structure_plan(p1_raw, worksheets_by_id)
+            break
+        except Exception as exc:
+            last_p1_error = str(exc)
+            if val_attempt >= 3:
+                print(
+                    f"[view two-phase] Phase 1 校验失败（已重试 {val_attempt} 次），继续执行 Phase 2: {exc}",
+                    file=_sys.stderr,
+                )
+                break
+            print(f"[view:p1 retry {val_attempt}] {exc}", file=_sys.stderr)
+
+    # ── Phase 2: 配置补全 ────────────────────────────────────────────────────────
+    print(f"\n[view two-phase] Phase 2: 配置补全（{app_name}）", file=_sys.stderr)
+    p2_prompt = _vp_build_config_prompt(app_name, p1_raw, ws_data)
+    print(
+        f"[view] Phase2 prompt 长度: {len(p2_prompt)}, 前200字: {p2_prompt[:200]}",
+        file=_sys.stderr,
+    )
+
+    p2_raw: dict = {}
+    last_p2_error: Optional[str] = None
+    for val_attempt in range(1, 4):
+        try:
+            prompt_with_ctx = p2_prompt
+            if last_p2_error:
+                prompt_with_ctx = (
+                    p2_prompt
+                    + f"\n\n# 上次输出校验失败（第 {val_attempt - 1} 次）\n错误：{last_p2_error}\n请修正后重新输出。"
+                )
+            raw_text = _call_ai_with_retry(client, model, prompt_with_ctx, label="view:p2")
+            print(f"[view:p2] 响应长度 {len(raw_text)} 字符", file=_sys.stderr)
+            p2_raw = _parse_ai_json(raw_text)
+            _vp_validate_config_plan(p2_raw, worksheets_by_id)
+            break
+        except Exception as exc:
+            last_p2_error = str(exc)
+            if val_attempt >= 3:
+                print(
+                    f"[view two-phase] Phase 2 校验警告（已重试 {val_attempt} 次），使用当前输出: {exc}",
+                    file=_sys.stderr,
+                )
+                break
+            print(f"[view:p2 retry {val_attempt}] {exc}", file=_sys.stderr)
+
+    # 如果 Phase 2 输出无效，降级为 Phase 1 结构结果
+    ws_views_map: Dict[str, List] = {}
+    result_raw = p2_raw if p2_raw.get("worksheets") else p1_raw
+    for ws_item in result_raw.get("worksheets", []):
+        if not isinstance(ws_item, dict):
+            continue
+        ws_id = str(ws_item.get("worksheetId", "")).strip()
+        if ws_id:
+            ws_views_map[ws_id] = ws_item.get("views", [])
+
+    results = []
+    for ws, fields in ws_with_fields:
+        ws_id = ws["workSheetId"]
+        views_raw = ws_views_map.get(ws_id, [])
+        views = normalize_views(views_raw, fields, ws_id)
+        results.append({
+            "worksheetId": ws_id,
+            "worksheetName": ws["workSheetName"],
+            "fields": fields,
+            "views": views,
+        })
+    return results
+
+
 def plan_views_batch(
     client: genai.Client,
     model: str,
     app_name: str,
     ws_with_fields: List[tuple],
 ) -> List[dict]:
-    """一次 Gemini 调用规划所有工作表视图。返回 [{worksheetId, worksheetName, fields, views}]"""
+    """一次 Gemini 调用规划所有工作表视图。返回 [{worksheetId, worksheetName, fields, views}]
+
+    若 view_planner 可用，优先走两阶段规划；否则回退到单阶段批量规划。
+    """
+    if _HAS_VIEW_PLANNER:
+        return plan_views_two_phase(client, model, app_name, ws_with_fields)
+
     ws_data_for_prompt = [
         {"worksheetId": ws["workSheetId"], "worksheetName": ws["workSheetName"], "fields": fields}
         for ws, fields in ws_with_fields
@@ -680,6 +841,10 @@ def plan_views_batch(
 
 def plan_views_for_worksheet(client, model: str, app_name: str, worksheet: dict, fields: List[dict]) -> dict:
     base_prompt = build_prompt(app_name, worksheet["workSheetName"], worksheet["workSheetId"], fields)
+    print(
+        f"[view] prompt 长度: {len(base_prompt)}, 前200字: {base_prompt[:200]}",
+        file=_sys.stderr,
+    )
     validation_retries = 3
     views = None
     last_error: Optional[str] = None

@@ -44,11 +44,12 @@ def build(node_type: str, process_id: str, node_id: str,
     body["accounts"] = extra.get("accounts", [])
 
     if node_type in ("notify", "push"):
-        body["sendContent"] = extra.get("content", "")
+        # 优先用 sendContent，兼容旧的 content 字段名
+        body["sendContent"] = extra.get("sendContent") or extra.get("content", "")
     elif node_type == "email":
         body["title"] = extra.get("title", "")
-        body["content"] = extra.get("content", "")
+        body["content"] = extra.get("sendContent") or extra.get("content", "")
     else:  # sms
-        body["content"] = extra.get("content", "")
+        body["content"] = extra.get("sendContent") or extra.get("content", "")
 
     return body

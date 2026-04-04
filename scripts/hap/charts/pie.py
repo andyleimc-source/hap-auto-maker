@@ -1,5 +1,6 @@
-"""饼图(3), 环形图(4)。
+"""饼图/环形图(3)。
 
+饼图和环形图共用 reportType=3，通过 showChartType 区分。
 showPercent 建议设为 True。xaxes 为分类维度。
 """
 
@@ -7,8 +8,7 @@ from __future__ import annotations
 from ._base import base_body
 
 CHARTS = {
-    3: {"name": "饼图", "verified": True, "doc": "showPercent=True。xaxes 为分类维度。"},
-    4: {"name": "环形图", "verified": False, "doc": "同饼图，中心留空。showPercent=True。"},
+    3: {"name": "饼图/环形图", "verified": True, "doc": "饼图/环形图。showChartType 区分饼/环。showPercent=True。"},
 }
 
 

@@ -23,7 +23,7 @@ def base_display_setup(report_type: int, xaxes: dict) -> dict:
         "legendType": 1,
         "showDimension": True,
         "showNumber": True,
-        "showPercent": report_type in {3, 4, 5},
+        "showPercent": report_type in {3, 6},
         "showXAxisCount": 0,
         "showChartType": 1,
         "showPileTotal": True,
@@ -70,9 +70,9 @@ def build_xaxes(xaxes: dict) -> dict:
         "rename": str(xaxes.get("rename", "") or ""),
         "emptyType": int(xaxes.get("emptyType", 0) or 0),
         "fields": None, "subTotal": False, "subTotalName": None,
-        "showFormat": "0", "displayMode": "text",
+        "showFormat": "4", "displayMode": "text",
         "controlName": control_name, "controlType": control_type,
-        "dataSource": None, "options": [], "advancedSetting": None,
+        "dataSource": "", "options": [], "advancedSetting": {},
         "relationControl": None,
         "cid": cid, "cname": control_name,
         "xaxisEmptyType": int(xaxes.get("xaxisEmptyType", 0) or 0),
@@ -106,7 +106,7 @@ def base_body(chart: dict, app_id: str, report_type: int) -> dict:
 
     _DEFAULT_FILTER = {
         "filterRangeId": "ctime", "filterRangeName": "创建时间",
-        "rangeType": 0, "rangeValue": 0, "today": False,
+        "rangeType": 18, "rangeValue": 365, "today": True,
     }
     filter_cfg = chart.get("filter") or _DEFAULT_FILTER
     if not isinstance(filter_cfg, dict):
@@ -133,7 +133,7 @@ def base_body(chart: dict, app_id: str, report_type: int) -> dict:
         "summary": {
             "controlId": "", "type": 1, "name": "总计", "number": True,
             "percent": False, "sum": 0, "contrastSum": 0, "contrastMapSum": 0,
-            "rename": "", "all": False,
+            "rename": "",
         },
         "style": {},
         "formulas": [],
@@ -144,6 +144,6 @@ def base_body(chart: dict, app_id: str, report_type: int) -> dict:
         "xaxes": build_xaxes(xaxes_raw),
         "sourceType": 1,
         "isPublic": True,
-        "id": "",
+        "id": str(chart.get("id", "") or "").strip(),
         "version": "6.5",
     }

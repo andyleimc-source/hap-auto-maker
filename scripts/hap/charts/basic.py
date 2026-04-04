@@ -1,16 +1,15 @@
-"""基础图表: 柱状图(1), 折线图(2), 条形图(7), 区域图(11)。
+"""基础图表: 柱图(1), 折线图(2)。
 
-标准 xaxes + yaxisList 结构，无特殊配置。
+柱图 showChartType=1 竖向 / 2 横向。
+折线图 showChartType=1 折线 / 2 面积(区域)。
 """
 
 from __future__ import annotations
 from ._base import base_body
 
 CHARTS = {
-    1: {"name": "柱状图", "verified": True, "doc": "默认图表类型。xaxes 为分类维度。"},
-    2: {"name": "折线图", "verified": True, "doc": "适合趋势分析。xaxes 通常为日期字段(particleSizeType=1月/4日)。"},
-    7: {"name": "条形图", "verified": False, "doc": "横向柱状图。"},
-    11: {"name": "区域图", "verified": False, "doc": "带面积填充的折线图。"},
+    1: {"name": "柱图", "verified": True, "doc": "柱图。showChartType=1竖向/2横向(即条形图)。"},
+    2: {"name": "折线图", "verified": True, "doc": "折线图。showChartType=1折线/2面积(区域图)。"},
 }
 
 

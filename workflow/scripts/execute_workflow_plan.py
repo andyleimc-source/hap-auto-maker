@@ -37,6 +37,54 @@ from workflow_io import Session, persist
 _WORKSHEET_ID_RE = re.compile(r"^[0-9a-f]{24}$")
 
 
+# ── 获取工作表完整字段（用于触发节点 controls）─────────────────────────────────
+
+def _fetch_worksheet_controls(session: Session, worksheet_id: str) -> list[dict]:
+    """获取工作表全部字段，构建触发节点 saveNode 所需的 controls 数组。
+
+    HAP 工作流编辑器要求触发节点的 controls 包含工作表完整字段列表，
+    否则编辑器无法渲染（报"程序错误"）。
+    """
+    try:
+        resp = session.post(
+            "https://www.mingdao.com/api/Worksheet/GetWorksheetInfo",
+            {"worksheetId": worksheet_id, "getTemplate": True},
+        )
+        raw_controls = resp.get("data", {}).get("controls", [])
+    except Exception:
+        raw_controls = []
+
+    if not raw_controls:
+        return []
+
+    controls = []
+    for c in raw_controls:
+        ctrl = {
+            "controlId": c.get("controlId", ""),
+            "controlName": c.get("controlName", ""),
+            "type": c.get("type", 0),
+            "options": c.get("options", []),
+            "required": c.get("required", False),
+            "enumDefault": c.get("enumDefault", 0),
+            "enumDefault2": c.get("enumDefault2", 0),
+            "dot": c.get("dot", 0),
+            "hide": False,
+            "attribute": c.get("attribute", 0),
+            "sourceControlId": c.get("sourceControlId", ""),
+            "sourceControlType": c.get("sourceControlType", 0),
+            "unit": str(c.get("unit", "")),
+            "processVariableType": 0,
+            "originalType": c.get("type", 0),
+            "workflowRequired": False,
+        }
+        # 关联字段需要额外信息
+        if c.get("type") == 29:
+            ctrl["dataSource"] = c.get("dataSource", "")
+            ctrl["advancedSetting"] = c.get("advancedSetting", {})
+        controls.append(ctrl)
+    return controls
+
+
 # ── CLI ────────────────────────────────────────────────────────────────────────
 
 def parse_args() -> argparse.Namespace:
@@ -310,6 +358,10 @@ def add_action_nodes(
         NODE_CONFIGS = {}
         build_save_node_body = None
 
+    # 需要 selectNodeId 的节点 typeId（操作具体记录的节点）
+    # 不在此集合中的节点 selectNodeId 必须为空，否则报"指定的发送记录已删除"
+    _NEEDS_SELECT_NODE = {6, 3, 5, 26}
+
     for i, node_plan in enumerate(action_nodes, 1):
         node_type = node_plan.get("type", "update_record")
         name      = node_plan.get("name", f"动作节点{i}")
@@ -432,10 +484,22 @@ def add_action_nodes(
             if build_save_node_body:
                 extra = {"gatewayType": 1}
                 # 从 plan 中传递通知内容/审批人等配置
-                if node_plan.get("content"):
-                    extra["content"] = node_plan["content"]
+                # sendContent 优先（Phase 2 规划师输出），兼容旧的 content
+                plan_content = node_plan.get("sendContent") or node_plan.get("content", "")
+                if plan_content:
+                    extra["content"] = plan_content
                 if node_plan.get("accounts"):
                     extra["accounts"] = node_plan["accounts"]
+                # 延时节点参数
+                if node_plan.get("minuteFieldValue"):
+                    extra["minuteFieldValue"] = node_plan["minuteFieldValue"]
+                if node_plan.get("numberFieldValue"):
+                    extra["numberFieldValue"] = node_plan["numberFieldValue"]
+                # 计算节点参数
+                if node_plan.get("formulaValue"):
+                    extra["formulaValue"] = node_plan["formulaValue"]
+                if node_plan.get("fieldValue"):
+                    extra["fieldValue"] = node_plan["fieldValue"]
                 save_body = build_save_node_body(
                     node_type, cfg, process_id, node_id,
                     worksheet_id, name, extra,
@@ -471,8 +535,17 @@ def add_action_nodes(
                                 "flowNodeType": 0,
                                 "appType": 1,
                             }]
-                    # 空壳检测：跳过必定导致 publish 失败的节点配置
+                    # selectNodeId 规则：只有操作记录的节点才需要，其他节点必须为空
                     type_id = cfg.get("typeId")
+                    if type_id in _NEEDS_SELECT_NODE:
+                        if not save_body.get("selectNodeId"):
+                            save_body["selectNodeId"] = start_node_id
+                            save_body["selectNodeName"] = "工作表事件触发"
+                    else:
+                        save_body["selectNodeId"] = ""
+                        save_body["selectNodeName"] = ""
+
+                    # 空壳检测：跳过必定导致 publish 失败的节点配置
                     if type_id in (1, 2) and not save_body.get("operateCondition"):
                         print(f"        ⚠ 分支节点 operateCondition 为空，跳过 saveNode", file=sys.stderr)
                         save_body = None
@@ -545,7 +618,8 @@ def create_date_trigger(
     print(f"    getProcessPublish → startNodeId={start_node_id!r}", file=sys.stderr)
 
     if start_node_id:
-        # Step 4: 配置日期字段触发节点
+        # Step 4: 配置日期字段触发节点（含完整字段列表）
+        trigger_controls = _fetch_worksheet_controls(session, worksheet_id)
         session.post(
             "https://api.mingdao.com/workflow/flowNode/saveNode",
             {
@@ -560,7 +634,8 @@ def create_date_trigger(
                 "time": "", "endTime": end_time,
                 "executeEndTime": "",
                 "frequency": frequency,
-                "operateCondition": [], "controls": [], "returns": [],
+                "operateCondition": [],
+                "controls": trigger_controls, "returns": [],
             },
         )
 
@@ -753,14 +828,16 @@ def create_worksheet_event(
 
     action_results = []
     if start_node_id:
-        # Step 4: 配置触发节点（绑定工作表）
+        # Step 4: 配置触发节点（绑定工作表 + 完整字段列表）
+        trigger_controls = _fetch_worksheet_controls(session, worksheet_id)
         session.post(
             "https://api.mingdao.com/workflow/flowNode/saveNode",
             {
                 "appId": worksheet_id, "appType": 1, "assignFieldIds": [],
                 "processId": process_id, "nodeId": start_node_id,
                 "flowNodeType": 0, "operateCondition": [],
-                "triggerId": trigger_id, "name": "工作表事件触发", "controls": [],
+                "triggerId": trigger_id, "name": "工作表事件触发",
+                "controls": trigger_controls, "returns": [],
             },
         )
 

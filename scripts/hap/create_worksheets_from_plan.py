@@ -178,9 +178,23 @@ def build_field_payload(field: dict, is_first_text_title: bool) -> dict:
     if is_first_text_title and ftype == "Text":
         payload["isTitle"] = 1
 
-    if ftype == "Number":
-        payload["precision"] = 2
-    elif ftype in ("SingleSelect", "MultipleSelect"):
+    if ftype in ("Number", "Money"):
+        # dot: 小数位数（0=整数, 1=一位小数, 2=两位小数）
+        raw_dot = field.get("dot")
+        if raw_dot is not None and str(raw_dot).strip() != "":
+            try:
+                payload["dot"] = int(raw_dot)
+            except (ValueError, TypeError):
+                payload["dot"] = 2
+        else:
+            payload["dot"] = 2
+        # unit: 后缀/单位（如 % 元 天 小时），写入 advancedSetting
+        raw_unit = str(field.get("unit", "") or "").strip()
+        if raw_unit:
+            payload["advancedSetting"] = {"unit": raw_unit, "unitpos": "0"}
+        if ftype == "Number":
+            payload["precision"] = payload["dot"]
+    elif ftype in ("SingleSelect", "MultipleSelect", "Dropdown"):
         payload["options"] = parse_select_options_from_field(field)
     elif ftype == "Collaborator":
         payload["subType"] = 0  # 单选成员
@@ -190,15 +204,50 @@ def build_field_payload(field: dict, is_first_text_title: bool) -> dict:
     return payload
 
 
-def split_fields(fields: List[dict]) -> (List[dict], List[dict]):
+# 开放平台 CreateWorksheet 支持的基础类型白名单（其余全部 deferred）
+# 来源：API 实测，极保守白名单——逐步测试通过：Text/Number/SingleSelect/MultipleSelect/
+#        Dropdown/Attachment/Date/DateTime/Collaborator/Department/Rating/Checkbox
+# 已知不支持：Phone/Money/Area/Cascade/AutoNumber/RichText/Score/Time/Signature/
+#             QRCode/Embed/Section/Remark/Formula/FormulaDate/TextCombine/OtherTableField/
+#             SubTable/Rollup/MoneyCapital/OrgRole/Location/Link
+_CREATE_WS_SUPPORTED_TYPES = {
+    "Text",          # 2  - 单行文本
+    "Number",        # 6  - 数值
+    "SingleSelect",  # 9  - 单选
+    "MultipleSelect",# 10 - 多选
+    "Dropdown",      # 11 - 下拉
+    "Attachment",    # 14 - 附件
+    "Date",          # 15 - 日期
+    "DateTime",      # 16 - 日期时间
+    "Collaborator",  # 26 - 成员
+    "Department",    # 27 - 部门
+    "Rating",        # 28 - 等级（星级）
+    "Checkbox",      # 36 - 检查框
+}
+
+# 不在白名单的类型全部 deferred，创建后通过 addFields 补加
+def _is_deferred_type(ftype: str) -> bool:
+    return ftype not in _CREATE_WS_SUPPORTED_TYPES
+
+
+def split_fields(fields: List[dict]) -> (List[dict], List[dict], List[dict]):
+    """返回 (normal_fields, relation_fields, deferred_fields)。
+    deferred_fields 是开放平台不支持在创建时包含的字段（如 AutoNumber），
+    需在工作表创建成功后通过 EDIT_WS_ENDPOINT addFields 补加。
+    """
     normal = []
     relation = []
+    deferred = []
     title_set = False
 
     for fld in fields:
         ftype = str(fld.get("type", "Text")).strip()
         if ftype == "Relation":
             relation.append(fld)
+            continue
+        if _is_deferred_type(ftype):
+            payload = build_field_payload(fld, is_first_text_title=False)
+            deferred.append(payload)
             continue
         payload = build_field_payload(fld, is_first_text_title=not title_set)
         if payload.get("isTitle") == 1:
@@ -220,7 +269,7 @@ def split_fields(fields: List[dict]) -> (List[dict], List[dict]):
     if not title_set:
         normal.insert(0, {"name": "名称", "type": "Text", "required": True, "isTitle": 1})
 
-    return normal, relation
+    return normal, relation, deferred
 
 
 def build_relationship_rules(plan: dict) -> List[dict]:
@@ -674,11 +723,12 @@ def main() -> None:
     for ws in worksheets:
         name = str(ws.get("name", "")).strip() or "未命名工作表"
         fields = ws.get("fields", [])
-        normal_fields, relation_fields = split_fields(fields if isinstance(fields, list) else [])
+        normal_fields, relation_fields, deferred_fields = split_fields(fields if isinstance(fields, list) else [])
         preview.append(
             {
                 "name": name,
                 "normal_fields_count": len(normal_fields),
+                "deferred_fields_count": len(deferred_fields),
                 "relation_fields_in_plan_count": len(relation_fields),
                 "relation_fields_to_create_count": len(relation_plan_by_source.get(name, [])),
             }
@@ -704,24 +754,50 @@ def main() -> None:
     create_results = []
     relations_todo = []
 
-    # Phase 1: 并发创建基础工作表（不含 Relation 字段）
+    # Phase 1: 并发创建基础工作表（不含 Relation 和 deferred 字段）
     def _create_one_ws(ws):
         ws_name = str(ws.get("name", "")).strip() or "未命名工作表"
         fields = ws.get("fields", [])
-        normal_fields, relation_fields = split_fields(fields if isinstance(fields, list) else [])
+        normal_fields, relation_fields, deferred_fields = split_fields(fields if isinstance(fields, list) else [])
         result = create_worksheet(args.base_url, headers, ws_name, normal_fields)
         worksheet_id = result.get("data", {}).get("worksheetId")
         if not worksheet_id:
             raise RuntimeError(f"创建工作表后未返回 worksheetId: {ws_name} / {result}")
-        return ws_name, worksheet_id, result, relation_fields
+        return ws_name, worksheet_id, result, relation_fields, deferred_fields
 
     with ThreadPoolExecutor(max_workers=16) as executor:
         futures = {executor.submit(_create_one_ws, ws): ws for ws in worksheets}
         for future in as_completed(futures):
-            ws_name, worksheet_id, result, relation_fields = future.result()
+            ws_name, worksheet_id, result, relation_fields, deferred_fields = future.result()
             name_to_id[ws_name] = worksheet_id
             create_results.append({"name": ws_name, "worksheetId": worksheet_id, "result": result})
-            relations_todo.append({"name": ws_name, "worksheetId": worksheet_id, "relation_fields": relation_fields})
+            relations_todo.append({
+                "name": ws_name,
+                "worksheetId": worksheet_id,
+                "relation_fields": relation_fields,
+                "deferred_fields": deferred_fields,
+            })
+
+    # Phase 1.5: 并发回填 deferred 字段（AutoNumber 等开放平台不支持在创建时包含的字段）
+    def _add_deferred_one(item):
+        ws_name = item["name"]
+        ws_id = item["worksheetId"]
+        deferred = item.get("deferred_fields", [])
+        if not deferred:
+            return None
+        url = args.base_url.rstrip("/") + EDIT_WS_ENDPOINT.format(worksheet_id=ws_id)
+        payload = {"addFields": deferred}
+        resp = requests.post(url, headers=headers, json=payload, timeout=30)
+        data = resp.json()
+        if not data.get("success"):
+            print(f"[warn] 补加 deferred 字段失败 [{ws_name}]: {data}", file=__import__('sys').stderr)
+            return {"name": ws_name, "worksheetId": ws_id, "success": False, "error": data}
+        return {"name": ws_name, "worksheetId": ws_id, "deferred_count": len(deferred), "success": True}
+
+    with ThreadPoolExecutor(max_workers=16) as executor:
+        futures = [executor.submit(_add_deferred_one, item) for item in relations_todo]
+        for future in as_completed(futures):
+            future.result()  # 失败已在函数内打印警告，不中断主流程
 
     # Phase 2: 并发回填关联字段
     relation_results = []

@@ -80,7 +80,16 @@ def build_enhanced_prompt(
       "name": "工作表名",
       "purpose": "用途",
       "fields": [
-        {{"name": "字段名", "type": "{field_type_enum}", "required": true, "description": "说明", "relation_target": "当type=Relation时填目标工作表名", "option_values": ["选项值数组"]}}
+        {{
+          "name": "字段名",
+          "type": "{field_type_enum}",
+          "required": true,
+          "description": "说明",
+          "relation_target": "当type=Relation时填目标工作表名",
+          "option_values": ["选项值数组，SingleSelect/MultipleSelect/Dropdown必填"],
+          "unit": "数值/金额字段的单位或后缀，如 % 元 天 小时，无则留空",
+          "dot": "数值/金额字段的小数位数，整数填0，百分比填1，金额填2，无则留空"
+        }}
       ],
       "depends_on": ["依赖的工作表名"]
     }}
@@ -103,7 +112,8 @@ def build_enhanced_prompt(
 8) 1-N 关系：from=1端, to=N端；Relation 字段定义在 to 表
 9) Collaborator 字段 required 必须为 false
 10) 每个工作表至少 4 个字段（含标题字段）
-11) 输出合法 JSON{count_rule}"""
+11) 输出合法 JSON
+12) Number/Money 字段必须设 unit（如 % 元 天 小时）和 dot（小数位数），进度/百分比字段 unit="%"、dot=1{count_rule}"""
 
 
 def validate_worksheet_plan(plan: dict, min_worksheets: int = 0) -> list[str]:

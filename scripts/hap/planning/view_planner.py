@@ -42,7 +42,10 @@ def suggest_views(classified_fields: dict[str, list[dict]], worksheet_id: str = 
     ]
 
     # 有单选/下拉 → 看板 + 分组表格
-    selects = classified_fields.get("select", [])
+    # 注意：type=36（检查框/布尔）只有两个值，不适合看板；type=28（等级）也不适合
+    # 看板适合 type=9（单选平铺）、type=11（下拉单选）
+    KANBAN_SUITABLE_TYPES = {9, 11}
+    selects = [f for f in classified_fields.get("select", []) if f.get("type") in KANBAN_SUITABLE_TYPES]
     if selects:
         suggestions.append({
             "viewType": 1, "name": f"按{selects[0]['name']}看板",
@@ -80,6 +83,17 @@ def suggest_views(classified_fields: dict[str, list[dict]], worksheet_id: str = 
                 "layersControlId": r["id"],
             })
             break
+
+    # 地图视图(viewType=8) — 必须有定位字段(type=40)，仅地区字段(type=24)不够
+    # 2026-04-04 抓包确认：地图视图需要 type=40 定位字段作为 viewControl
+    locations = classified_fields.get("location", [])
+    location_40 = [f for f in locations if f.get("type") == 40]
+    if location_40:
+        suggestions.append({
+            "viewType": 8, "name": "地图视图",
+            "reason": f"有定位字段「{location_40[0]['name']}」",
+            "latlng": location_40[0]["id"],
+        })
 
     return suggestions
 
@@ -136,7 +150,7 @@ def build_structure_prompt(
 规则：
 1) viewType 允许 0(表格), 1(看板), 2(层级), 3(画廊), 4(日历), 5(甘特图)
 2) 每个工作表 1-5 个视图，实用不凑数
-3) 看板(1) 需要单选字段(type=11)，无合适字段则不创建
+3) 看板(1) 只适合多状态的单选字段(type=9 或 type=11)，检查框(type=36)和等级(type=28)只有2个值，绝对不能用于看板
 4) 甘特图(5) 需要两个日期字段
 5) 层级(2) 需要自关联字段(type=29, dataSource=本表)
 6) 日历(4) 需要日期字段
@@ -253,8 +267,10 @@ def build_config_prompt(
 - **所有视图**：displayControls（显示字段 ID 列表，选最重要的 5-8 个字段）
 - **表格(0) 含"分组"/"分类"关键词的**：advancedSetting.groupView（需 viewId 占位，用 "{{viewId}}" 表示）
 - **日历(4)**：postCreateUpdates 中设 calendarcids（开始/结束日期字段 ID）
-- **甘特图(5)**：postCreateUpdates 中设 begindate 和 enddate
-- **层级(2)**：postCreateUpdates 中设 layersControlId
+- **甘特图(5)**：视图顶层设 begindate（开始日期字段 ID）和 enddate（结束日期字段 ID），同时在 postCreateUpdates 中通过 editAdKeys 二次保存
+- **层级(2)**：视图顶层设 layersControlId（自关联字段 ID），postCreateUpdates 用 editAttrs=["viewControl","childType","viewType"]，viewControl 可设为 "create"（自动创建自关联字段）或具体字段 ID
+- **资源(7)**：视图顶层设 viewControl（分组字段 ID）+ advancedSetting.begindate/enddate，postCreateUpdates 二次保存
+- **地图(8)**：必须有定位字段(type=40)，视图顶层设 latlng（定位字段 ID），viewControl 指向定位字段
 
 ## 配置格式说明
 
@@ -389,7 +405,7 @@ def build_enhanced_prompt(
 1) viewType 允许 0(表格), 1(看板), 2(层级), 3(画廊), 4(日历), 5(甘特图)
 2) 每个工作表 1-5 个视图，实用不凑数
 3) displayControls 必须来自该工作表的字段 ID
-4) 看板(1) 必须设 viewControl 为单选字段(type=11)ID，无合适字段则不创建看板
+4) 看板(1) 必须设 viewControl 为多状态单选字段(type=9 或 type=11)ID，检查框(type=36)/等级(type=28)绝对不能用于看板，无合适字段则不创建看板
 5) 甘特图(5) 需要两个日期字段
 6) 层级(2) 需要自关联字段(type=29, dataSource=本表)
 7) 日历(4) 需要日期字段，在 postCreateUpdates 中设 calendarcids
