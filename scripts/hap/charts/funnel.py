@@ -1,10 +1,10 @@
-"""漏斗图(5)。showPercent=True。"""
+"""漏斗图(6)。showPercent=True。"""
 
 from __future__ import annotations
 from ._base import base_body
 
 CHARTS = {
-    5: {"name": "漏斗图", "verified": True, "doc": "showPercent=True。适合转化漏斗分析。"},
+    6: {"name": "漏斗图", "verified": True, "doc": "reportType=6。showPercent=True。适合转化漏斗分析。"},
 }
 
 

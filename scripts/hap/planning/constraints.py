@@ -39,9 +39,9 @@ def get_chart_constraints() -> dict:
         "total_types": len(types),
         "verified_types": [rt for rt, s in types.items() if s["verified"]],
         "types": types,
-        "xaxes_null_types": [10, 12],  # 数值图、进度图不需要 xaxes
-        "percent_types": [3, 4, 5],     # 饼图、环形图、漏斗图建议 showPercent
-        "dual_axis_type": 8,            # 需要 yreportType
+        "xaxes_null_types": [10, 14, 15],  # 数值图、仪表盘、进度图不需要 xaxes
+        "percent_types": [3, 6],         # 饼图、漏斗图建议 showPercent
+        "dual_axis_type": 7,             # 需要 yreportType
     }
 
 
@@ -55,13 +55,14 @@ def build_chart_type_prompt_section() -> str:
         lines.append(f"  {rt:2d}. {spec['name']} {v} — {doc}")
     lines.append("")
     lines.append("选型指南：")
-    lines.append("  - 趋势分析 → 折线图(2) 或 区域图(11)，xaxes 用日期字段")
-    lines.append("  - 占比分析 → 饼图(3) 或 环形图(4)")
-    lines.append("  - 对比分析 → 柱状图(1) 或 条形图(7)")
-    lines.append("  - 转化漏斗 → 漏斗图(5)")
-    lines.append("  - KPI 数字 → 数值图(10)，xaxes.controlId=null")
-    lines.append("  - 排名 → 排行图(15)")
-    lines.append("  - 多维对比 → 雷达图(6)")
+    lines.append("  - 趋势分析 → 折线图(2)，showChartType=2 为面积/区域图")
+    lines.append("  - 占比分析 → 饼图(3)，showChartType 区分饼/环")
+    lines.append("  - 对比分析 → 柱图(1)，showChartType=2 为横向条形图")
+    lines.append("  - 转化漏斗 → 漏斗图(6)")
+    lines.append("  - KPI 数字 → 数值图(10)")
+    lines.append("  - 排名 → 排行图(16)")
+    lines.append("  - 多维对比 → 透视表/雷达图(8)")
+    lines.append("  - 地理分布 → 行政区划图(9) 或 地图(17)")
     return "\n".join(lines)
 
 
@@ -108,8 +109,8 @@ def build_node_type_prompt_section() -> str:
         lines.append(f"  - {nt} — {spec.get('name', '')} {v}")
     lines.append("  ⚠ branch（分支）当前版本不支持自动配置，禁止使用")
     lines.append("")
-    lines.append("📌 通知节点（需要 content）：")
-    for nt in ["notify", "copy"]:
+    lines.append("📌 通知节点（需要 sendContent，不是 content）：")
+    for nt in ["notify", "copy", "email", "sms"]:
         spec = c["types"].get(nt, {})
         v = "✓" if spec.get("verified") else ""
         lines.append(f"  - {nt} — {spec.get('name', '')} {v}")

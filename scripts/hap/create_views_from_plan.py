@@ -19,6 +19,17 @@ if str(CURRENT_DIR) not in sys.path:
 
 import auth_retry
 
+# 导入视图注册中心（用于自动补全 postCreateUpdates）
+_HAP_DIR = Path(__file__).resolve().parent
+if str(_HAP_DIR) not in sys.path:
+    sys.path.insert(0, str(_HAP_DIR))
+try:
+    from views.view_types import VIEW_REGISTRY
+    _HAS_VIEW_REGISTRY = True
+except ImportError:
+    _HAS_VIEW_REGISTRY = False
+    VIEW_REGISTRY = {}
+
 BASE_DIR = Path(__file__).resolve().parents[2]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 VIEW_PLAN_DIR = OUTPUT_ROOT / "view_plans"
@@ -163,6 +174,137 @@ def normalize_calendarcids(value: Any) -> str:
     return json.dumps(normalized, ensure_ascii=False, separators=(",", ":"))
 
 
+def auto_complete_post_updates(view: dict) -> list[dict]:
+    """从注册中心自动生成 postCreateUpdates，补全 AI 未填写的关键配置。
+
+    针对甘特图(5)、层级视图(2)、资源视图(9)等需要二次保存的视图类型，
+    当 AI 规划时未输出 postCreateUpdates（或输出为空）时，自动从 view 字段中
+    提取必要参数并构建更新 payload。
+
+    Args:
+        view: AI 规划的单个视图 dict，含 viewType、begindate/enddate/
+              layersControlId/resourceId/calendarcids 等字段
+
+    Returns:
+        postCreateUpdates 列表，可直接传给执行逻辑
+    """
+    if not _HAS_VIEW_REGISTRY:
+        return []
+
+    view_type = int(str(view.get("viewType", "0")).strip() or "0")
+    spec = VIEW_REGISTRY.get(view_type, {})
+    post_create = spec.get("post_create")
+    if not post_create:
+        return []
+
+    edit_attrs = post_create.get("editAttrs", [])
+    edit_ad_keys = post_create.get("editAdKeys", [])
+
+    # ── 甘特图(5): begindate + enddate ──────────────────────────────────────
+    if view_type == 5:
+        begindate = str(view.get("begindate", "") or "").strip()
+        enddate = str(view.get("enddate", "") or "").strip()
+        # 也从 postCreateUpdates 旧格式中提取
+        for upd in view.get("postCreateUpdates") or []:
+            adv = upd.get("advancedSetting") or {}
+            begindate = begindate or str(adv.get("begindate", "")).strip()
+            enddate = enddate or str(adv.get("enddate", "")).strip()
+        if not begindate:
+            return []
+        return [{
+            "editAttrs": ["advancedSetting"],
+            "editAdKeys": ["begindate", "enddate"],
+            "advancedSetting": {"begindate": begindate, "enddate": enddate},
+        }]
+
+    # ── 层级视图(2): viewControl + childType ────────────────────────────────
+    # 抓包确认（2026-04-04）：保存时用 viewControl='create' 让 HAP 自动创建
+    # 自关联字段，或用具体字段 ID。childType=1 表示使用关联字段模式。
+    if view_type == 2:
+        layers_id = str(view.get("layersControlId", "") or "").strip()
+        for upd in view.get("postCreateUpdates") or []:
+            layers_id = layers_id or str(upd.get("layersControlId", "")).strip()
+        view_control = layers_id or "create"
+        return [{
+            "editAttrs": ["viewControl", "childType", "viewType"],
+            "viewControl": view_control,
+            "childType": 1,
+            "viewType": 2,
+        }]
+
+    # ── 日历视图(4): calendarcids ────────────────────────────────────────────
+    if view_type == 4:
+        calendarcids = str(view.get("calendarcids", "") or "").strip()
+        for upd in view.get("postCreateUpdates") or []:
+            adv = upd.get("advancedSetting") or {}
+            calendarcids = calendarcids or str(adv.get("calendarcids", "")).strip()
+        if not calendarcids:
+            return []
+        return [{
+            "editAttrs": ["advancedSetting"],
+            "editAdKeys": ["calendarcids"],
+            "advancedSetting": {"calendarcids": calendarcids},
+        }]
+
+    # ── 资源视图(9): resourceId + startdate + enddate ────────────────────────
+    if view_type == 9:
+        resource_id = str(view.get("resourceId", "") or "").strip()
+        startdate = str(view.get("startdate", "") or "").strip()
+        enddate = str(view.get("enddate", "") or "").strip()
+        for upd in view.get("postCreateUpdates") or []:
+            adv = upd.get("advancedSetting") or {}
+            resource_id = resource_id or str(adv.get("resourceId", "")).strip()
+            startdate = startdate or str(adv.get("startdate", "")).strip()
+            enddate = enddate or str(adv.get("enddate", "")).strip()
+        if not resource_id or not startdate:
+            return []
+        return [{
+            "editAttrs": ["advancedSetting"],
+            "editAdKeys": ["resourceId", "startdate", "enddate"],
+            "advancedSetting": {
+                "resourceId": resource_id,
+                "startdate": startdate,
+                "enddate": enddate,
+            },
+        }]
+
+    return []
+
+
+def merge_post_updates(ai_updates: list, auto_updates: list, view_type: int) -> list:
+    """合并 AI 提供的和自动补全的 postCreateUpdates，自动补全优先级更高。
+
+    对于同一视图类型，如果 AI 已经填了正确的配置，则使用 AI 的；
+    如果 AI 未填或填了空值，则使用自动补全的。
+    """
+    if not auto_updates:
+        return ai_updates if isinstance(ai_updates, list) else []
+    if not ai_updates:
+        return auto_updates
+
+    # 提取 AI 配置中的关键值（用于判断是否有效）
+    def _has_valid_keys(updates: list, keys: list[str]) -> bool:
+        for upd in updates:
+            adv = upd.get("advancedSetting") or {}
+            top = upd
+            for k in keys:
+                v = str(adv.get(k, "") or top.get(k, "") or "").strip()
+                if v and not v.startswith("<"):
+                    return True
+        return False
+
+    need_keys = {
+        5: ["begindate"],
+        2: ["layersControlId"],
+        4: ["calendarcids"],
+        9: ["resourceId", "startdate"],
+    }
+    keys = need_keys.get(view_type, [])
+    if keys and _has_valid_keys(ai_updates, keys):
+        return ai_updates  # AI 已填有效值，优先用 AI 的
+    return auto_updates  # AI 未填或填了占位符，使用自动补全
+
+
 def build_create_payload(app_id: str, worksheet_id: str, view: dict) -> dict:
     view_type = str(view.get("viewType", "0")).strip() or "0"
     display_controls = view.get("displayControls")
@@ -192,6 +334,13 @@ def build_create_payload(app_id: str, worksheet_id: str, view: dict) -> dict:
     view_control = str(view.get("viewControl", "")).strip()
     if view_control:
         payload["viewControl"] = view_control
+
+    # 地图视图(7)：latlng 写入 advancedSetting
+    if str(view_type) == "7":
+        latlng = str(view.get("latlng", "") or "").strip()
+        if latlng:
+            payload["advancedSetting"]["latlng"] = latlng
+
     return payload
 
 
@@ -352,9 +501,12 @@ def main() -> None:
                         final_success = bool(created_view_id)
                 view_result["createdViewId"] = created_view_id
 
-                post_updates = view.get("postCreateUpdates")
-                if not isinstance(post_updates, list):
-                    post_updates = []
+                view_type_int = int(str(view.get("viewType", "0")).strip() or "0")
+                ai_updates = view.get("postCreateUpdates")
+                if not isinstance(ai_updates, list):
+                    ai_updates = []
+                auto_updates = auto_complete_post_updates(view)
+                post_updates = merge_post_updates(ai_updates, auto_updates, view_type_int)
                 if created_view_id and final_success:
                     for upd in post_updates:
                         if not isinstance(upd, dict):

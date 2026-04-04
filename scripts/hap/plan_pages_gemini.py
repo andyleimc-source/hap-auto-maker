@@ -170,12 +170,21 @@ def fetch_app_info(app_id: str, auth_config_path: Path) -> dict:
     project_id = str(app_data.get("projectId", "")).strip()
     app_name = str(app_data.get("name", "")).strip() or app_id
 
-    # 取第一个 section 的 appSectionId
+    # 优先取名为"数据分析"的分组，其次取最后一个分组，最后兜底取第一个
+    # plan_app_sections_gemini.py 约定"数据分析"分组是空分组，专门用于放统计页面
     sections = app_data.get("sections", [])
     app_section_id = ""
     worksheets = []
     if sections:
-        app_section_id = str(sections[0].get("appSectionId", "")).strip()
+        _data_section = next(
+            (s for s in sections if "数据" in str(s.get("name", "")) or "分析" in str(s.get("name", ""))),
+            None
+        )
+        if _data_section:
+            app_section_id = str(_data_section.get("appSectionId", "")).strip()
+        else:
+            # 兜底取最后一个分组（通常"数据分析"排在最后）
+            app_section_id = str(sections[-1].get("appSectionId", "")).strip()
         for section in sections:
             for ws in section.get("workSheetInfo", []):
                 ws_type = int(ws.get("type", 0) or 0)

@@ -46,9 +46,16 @@ def build(node_type: str, process_id: str, node_id: str,
     type_id = spec["typeId"]
     action = spec.get("actionId", "")
 
-    # typeId=6 由 add_action_nodes 自行处理
+    # typeId=6: 记录操作节点
     if type_id == 6:
-        return None
+        body = base_body(spec, process_id, node_id, name)
+        if worksheet_id:
+            body["appId"] = worksheet_id
+        body["fields"] = extra.get("fields", [])
+        body["filters"] = extra.get("filters", [])
+        if action in ("4", "5", "6"):
+            body["sorts"] = extra.get("sorts", [])
+        return body
 
     # typeId=13 (查询工作表)
     body = base_body(spec, process_id, node_id, name)

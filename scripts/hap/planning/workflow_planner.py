@@ -497,7 +497,7 @@ def build_enhanced_prompt(
           "cancel_name": "取消",
           "action_nodes": [
             {{"name": "节点名", "type": "update_record", "target_worksheet_id": "...", "fields": [...]}},
-            {{"name": "通知", "type": "notify", "content": "通知内容"}}
+            {{"name": "通知", "type": "notify", "sendContent": "通知内容，可包含动态值"}}
           ]
         }}
       ],
@@ -533,13 +533,29 @@ def build_enhanced_prompt(
   ]
 }}
 
+## 业务场景示例（参考，不要照搬）
+
+示例1: 员工档案表
+  - worksheet_event(trigger_id="1"): "新员工入职自动创建考勤记录"
+    → add_record(考勤记录表, 员工=trigger.员工字段ID)
+    → notify(sendContent="新员工 XXX 已入职，请安排座位和设备")
+  - custom_action: "标记离职"
+    → update_record(在职状态=离职option_key)
+    → notify(sendContent="员工 XXX 已标记为离职")
+
+示例2: 合同管理表
+  - date_trigger(到期日期): "合同到期提醒"
+    → notify(sendContent="合同即将到期，请及时处理续签")
+  - worksheet_event(trigger_id="1"): "新合同创建同步客户信息"
+    → update_record(客户信息表, 最新合同=trigger.合同名称)
+
 ## 强制规则
 
 1. 所有 worksheet_id 和 field_id 必须来自上方，不能编造
 2. 单选字段(type=9/11) fieldValue 必须用完整 UUID key，不能截断
 3. 每个工作流 3~5 个 action_nodes，至少 1 个跨表
 4. add_record 的 fields 包含目标表全部可操作字段；update_record 只填 1~3 个
-5. 通知节点 content 必须有业务含义，不能为空
+5. 通知节点的内容字段名是 sendContent（不是 content），必须有业务含义
 6. 每工作表 custom_actions={ca_per_ws} 个，worksheet_events={ev_per_ws} 个
 7. 全应用 time_triggers 共 {num_tt} 个
 8. time_triggers 禁止 {{{{trigger.xxx}}}}
@@ -548,7 +564,12 @@ def build_enhanced_prompt(
 11. date_triggers 的 assign_field_id 必须是 type=15/16 的日期字段或 ctime/mtime
 12. 没有日期字段的工作表 date_triggers 为空数组
 13. 动态引用触发记录字段值用 {{{{trigger.FIELD_ID}}}}（执行时自动替换为 $startNodeId-fieldId$）
-14. notify/copy 节点的内容字段名是 sendContent（不是 content）"""
+14. fieldValue 填写规则：
+    - 文本字段: 直接填字符串值，或 {{{{trigger.字段ID}}}} 引用触发记录
+    - 单选字段: 必须用完整 UUID option key（从上方选项列表中选取）
+    - 数值字段: 填数字字符串如 "0" 或 {{{{trigger.字段ID}}}}
+    - 日期字段: 填 ISO 格式或 {{{{trigger.字段ID}}}}
+    - 成员字段: 填 "[]" 或 {{{{trigger.字段ID}}}}"""
 
 
 def validate_workflow_plan(

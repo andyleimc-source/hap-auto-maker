@@ -123,9 +123,11 @@ def build_enhanced_prompt(
 2. 图表类型要多样化（至少使用 4 种不同 reportType）
 3. 覆盖尽可能多的工作表（不要集中在一个表上）
 4. xaxes.controlId 和 yaxisList[].controlId 必须来自上方字段列表或系统字段（ctime/utime/record_count）
-5. 数值图(10)的 xaxes.controlId 必须设为 null
-6. 饼图(3)/环形图(4) xaxes 应使用单选/下拉字段
-7. 折线图(2)/区域图(11) xaxes 应使用日期字段，设 particleSizeType=1(月)或4(日)
+5. 数值图(10)/仪表盘(14)/进度图(15)的 xaxes.controlId 必须设为空字符串
+6. 饼图(3) xaxes 应使用单选/下拉字段（type=9/11），不能用布尔(36)或关联(29/30)字段
+7. 折线图(2) xaxes 必须使用日期字段（type=15/16），设 particleSizeType=1(月)或4(日)，不能用季度(0)
+8. 关联字段(controlType=29/30/34) 绝对不能作为 xaxes 维度，无法聚合。改用该表的单选/文本字段
+9. 词云图(13) xaxes 必须使用单选/下拉字段（type=9/11），不能用普通文本(type=2)
 8. 图表名称 ≤10 个字，简洁有业务含义
 9. yaxisList 至少 1 项，可用 record_count（记录数量）或数值字段
 
@@ -192,7 +194,7 @@ def validate_enhanced_plan(
         xaxes_null_types = set(XAXES_NULL_TYPES)
     else:
         valid_types = set(constraints["types"].keys())
-        xaxes_null_types = set(constraints.get("xaxes_null_types", [10, 12]))
+        xaxes_null_types = set(constraints.get("xaxes_null_types", [10, 14, 15]))
 
     charts = raw.get("charts", [])
     if not isinstance(charts, list) or len(charts) == 0:
@@ -241,6 +243,18 @@ def validate_enhanced_plan(
 
         # 类型兼容性校验 + 自动修正
         xaxes = chart.get("xaxes", {})
+
+        # xaxes 字段类型约束
+        # 关联字段(29/30/34)不能作为图表维度（xaxes），因为前端无法聚合关联记录
+        # 布尔/检查框(36)只有2个值，不适合用作图表维度（饼图/柱状图等）
+        XAXES_FORBIDDEN_TYPES = {29, 30, 34}  # 关联类字段，不能做维度
+        x_type = int(xaxes.get("controlType", 0) or 0)
+        if report_type not in xaxes_null_types and x_type in XAXES_FORBIDDEN_TYPES:
+            raise ValueError(
+                f"图表 {i+1}「{name}」xaxes.controlType={x_type} 是关联字段，不能作为图表维度。"
+                f"请改用单选/文本/日期字段。"
+            )
+
         if report_type in xaxes_null_types:
             # 数值图/进度图 xaxes.controlId 必须为 null
             if xaxes.get("controlId") not in (None, "", "null"):
