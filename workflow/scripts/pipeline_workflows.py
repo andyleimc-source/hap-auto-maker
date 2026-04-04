@@ -1100,6 +1100,41 @@ def main() -> int:
     if fix_count:
         print(f"[fix] 修正了 {fix_count} 个 trigger 引用（字段名→字段ID）", file=sys.stderr)
 
+    # 后处理：硬性截断——AI 经常无视 prompt 里的数量限制，这里强制执行上限
+    # date_triggers 不计入上限（它们是低风险的日期字段提醒）
+    _before_ca = sum(len(ws.get("custom_actions") or []) for ws in planned_ws)
+    _before_ev = sum(len(ws.get("worksheet_events") or []) for ws in planned_ws)
+    _before_tt = len(planned_tt)
+    _before_total = _before_ca + _before_ev + _before_tt
+    if _before_total > _MAX_TOTAL_WORKFLOWS:
+        print(f"[cap] AI 规划了 {_before_total} 个工作流（上限 {_MAX_TOTAL_WORKFLOWS}），开始截断...", file=sys.stderr)
+        # 先截掉 custom_actions（从后往前）
+        remaining = _MAX_TOTAL_WORKFLOWS - _before_ev - _before_tt
+        if remaining < 0:
+            remaining = 0
+        ca_budget = remaining
+        for ws in planned_ws:
+            ca = ws.get("custom_actions") or []
+            if len(ca) > 1 and ca_budget < sum(len(w.get("custom_actions") or []) for w in planned_ws):
+                ws["custom_actions"] = ca[:1]
+        # 再截 worksheet_events（每表最多 1 个）
+        ev_budget = _MAX_TOTAL_WORKFLOWS - sum(len(ws.get("custom_actions") or []) for ws in planned_ws) - _before_tt
+        if ev_budget < _before_ev:
+            ev_count = 0
+            for ws in planned_ws:
+                ev = ws.get("worksheet_events") or []
+                if ev_count + len(ev) > ev_budget:
+                    keep = max(0, ev_budget - ev_count)
+                    ws["worksheet_events"] = ev[:keep]
+                    ev_count += keep
+                else:
+                    ev_count += len(ev)
+        # 最后截 time_triggers
+        tt_budget = _MAX_TOTAL_WORKFLOWS - sum(len(ws.get("custom_actions") or []) for ws in planned_ws) - sum(len(ws.get("worksheet_events") or []) for ws in planned_ws)
+        if tt_budget < len(planned_tt):
+            planned_tt = planned_tt[:max(1, tt_budget)]
+            ai_result["time_triggers"] = planned_tt
+
     total_ca = sum(len(ws.get("custom_actions") or []) for ws in planned_ws)
     total_ev = sum(len(ws.get("worksheet_events") or []) for ws in planned_ws)
     total_dt = sum(len(ws.get("date_triggers") or []) for ws in planned_ws)

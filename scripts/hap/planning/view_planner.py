@@ -148,14 +148,15 @@ def build_structure_prompt(
 为每个工作表规划 1-5 个视图，只需决定视图类型、名称和理由。不需要配置细节。
 
 规则：
-1) viewType 允许 0(表格), 1(看板), 2(层级), 3(画廊), 4(日历), 5(甘特图)
+1) viewType 必须是整数：1(表格), 2(看板), 3(层级), 4(画廊), 5(日历), 6(甘特图)。⚠️ 禁止使用 0，0 是系统保留的"全部"视图，不能规划。
 2) 每个工作表 1-5 个视图，实用不凑数
-3) 看板(1) 只适合多状态的单选字段(type=9 或 type=11)，检查框(type=36)和等级(type=28)只有2个值，绝对不能用于看板
-4) 甘特图(5) 需要两个日期字段
-5) 层级(2) 需要自关联字段(type=29, dataSource=本表)
-6) 日历(4) 需要日期字段
+3) 看板(2) 只适合多状态的单选字段(type=9 或 type=11)，检查框(type=36)和等级(type=28)只有2个值，绝对不能用于看板
+4) 甘特图(6) 需要两个日期字段
+5) 层级(3) 需要自关联字段(type=29, dataSource=本表)
+6) 日历(5) 需要日期字段
+7) 类型多样化：整个应用中看板(2)、日历(5)、画廊(4) 每种至少出现 1 次（前提是有合适字段）
 
-## 输出格式（严格 JSON）
+## 输出格式（严格 JSON，viewType 必须是整数）
 
 {{
   "worksheets": [
@@ -165,7 +166,7 @@ def build_structure_prompt(
       "views": [
         {{
           "name": "视图名",
-          "viewType": "0",
+          "viewType": 1,
           "reason": "业务理由",
           "viewControl": "看板时填单选字段ID，其他留空"
         }}
@@ -193,9 +194,16 @@ def validate_structure_plan(
             raise ValueError(f"worksheets[{i}] views 不是数组")
 
         for j, view in enumerate(views):
-            vt = str(view.get("viewType", "")).strip()
-            if vt not in {str(k) for k in VIEW_REGISTRY}:
-                raise ValueError(f"worksheets[{i}].views[{j}] viewType={vt} 非法")
+            vt_raw = view.get("viewType", "")
+            try:
+                vt_int = int(str(vt_raw).strip())
+            except (ValueError, TypeError):
+                raise ValueError(f"worksheets[{i}].views[{j}] viewType={vt_raw!r} 非法（非整数）")
+            # 0 是系统"全部"视图，不允许规划；合法范围 1-8
+            if vt_int == 0 or vt_int not in VIEW_REGISTRY:
+                raise ValueError(f"worksheets[{i}].views[{j}] viewType={vt_int} 非法（0 为系统视图，禁止规划）")
+            # 统一写回整数
+            view["viewType"] = vt_int
 
     return raw
 
@@ -402,16 +410,17 @@ def build_enhanced_prompt(
 为每个工作表规划 1-5 个视图，类型多样化，且每个视图有实际业务用途。
 
 规则：
-1) viewType 允许 0(表格), 1(看板), 2(层级), 3(画廊), 4(日历), 5(甘特图)
+1) viewType 必须是整数：1(表格), 2(看板), 3(层级), 4(画廊), 5(日历), 6(甘特图)。⚠️ 禁止使用 0，0 是系统保留的"全部"视图，不能规划。
 2) 每个工作表 1-5 个视图，实用不凑数
 3) displayControls 必须来自该工作表的字段 ID
-4) 看板(1) 必须设 viewControl 为多状态单选字段(type=9 或 type=11)ID，检查框(type=36)/等级(type=28)绝对不能用于看板，无合适字段则不创建看板
-5) 甘特图(5) 需要两个日期字段
-6) 层级(2) 需要自关联字段(type=29, dataSource=本表)
-7) 日历(4) 需要日期字段，在 postCreateUpdates 中设 calendarcids
-8) 表格(0) 名称含"分组"/"分类"时，在 advancedSetting 中设 groupView
+4) 看板(2) 必须设 viewControl 为多状态单选字段(type=9 或 type=11)ID，检查框(type=36)/等级(type=28)绝对不能用于看板，无合适字段则不创建看板
+5) 甘特图(6) 需要两个日期字段
+6) 层级(3) 需要自关联字段(type=29, dataSource=本表)
+7) 日历(5) 需要日期字段，在 postCreateUpdates 中设 calendarcids
+8) 表格(1) 名称含"分组"/"分类"时，在 advancedSetting 中设 groupView
+9) 类型多样化：整个应用中看板(2)、日历(5)、画廊(4) 每种至少出现 1 次（前提是有合适字段）
 
-## 输出格式（严格 JSON）
+## 输出格式（严格 JSON，viewType 必须是整数）
 
 {{
   "worksheets": [
@@ -421,7 +430,7 @@ def build_enhanced_prompt(
       "views": [
         {{
           "name": "视图名",
-          "viewType": "0",
+          "viewType": 1,
           "reason": "业务理由",
           "displayControls": ["字段ID1", "字段ID2"],
           "coverCid": "",
