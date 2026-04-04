@@ -373,24 +373,37 @@ def validate_plan(raw: dict, worksheets_by_id: Dict[str, dict]) -> List[dict]:
         valid_fids.update({"ctime", "utime", "ownerid", "caid", "record_count"})
         xaxes = chart.get("xaxes", {})
         if not isinstance(xaxes, dict):
-            raise ValueError(f"图表 {i+1} xaxes 格式错误")
+            print(f"[跳过] 图表 {i+1}「{name}」xaxes 格式错误，已跳过")
+            continue
         # 数值图 (reportType=10) xaxes.controlId 可以为 null
         x_control_id = xaxes.get("controlId")
         if report_type != 10 and not str(x_control_id or "").strip():
-            raise ValueError(f"图表 {i+1} xaxes 缺少 controlId")
+            print(f"[跳过] 图表 {i+1}「{name}」xaxes 缺少 controlId，已跳过")
+            continue
         # 校验 xaxes.controlId 是否在工作表字段中
         x_cid_str = str(x_control_id or "").strip()
         if report_type != 10 and x_cid_str and x_cid_str not in valid_fids:
-            raise ValueError(f"图表 {i+1}「{name}」xaxes.controlId「{x_cid_str}」不在工作表字段中，请使用有效的字段ID")
+            print(f"[跳过] 图表 {i+1}「{name}」xaxes.controlId「{x_cid_str}」不在字段中，已跳过")
+            continue
         yaxis_list = chart.get("yaxisList", [])
         if not isinstance(yaxis_list, list) or len(yaxis_list) == 0:
-            raise ValueError(f"图表 {i+1} yaxisList 为空")
-        # 校验 yaxisList 中的 controlId
+            print(f"[跳过] 图表 {i+1}「{name}」yaxisList 为空，已跳过")
+            continue
+        # 校验 yaxisList 中的 controlId（跳过无效的 yaxis 条目而非整张图）
+        clean_yaxis = []
         for j, yaxis in enumerate(yaxis_list):
             y_cid = str(yaxis.get("controlId", "")).strip()
             if y_cid and y_cid not in valid_fids:
-                raise ValueError(f"图表 {i+1}「{name}」yaxisList[{j}].controlId「{y_cid}」不在工作表字段中，请使用有效的字段ID")
+                print(f"[跳过yaxis] 图表 {i+1}「{name}」yaxisList[{j}].controlId「{y_cid}」不在字段中，已移除该 yaxis")
+            else:
+                clean_yaxis.append(yaxis)
+        if not clean_yaxis:
+            print(f"[跳过] 图表 {i+1}「{name}」所有 yaxis 均无效，已跳过整张图")
+            continue
+        chart["yaxisList"] = clean_yaxis
         validated.append(chart)
+    if not validated:
+        raise ValueError("所有图表均未通过校验，请重新规划")
     return validated
 
 
