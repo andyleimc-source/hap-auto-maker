@@ -431,10 +431,14 @@ def _format_relationships(relationships: dict) -> str:
 
 # ── 工作流数量动态计算 ────────────────────────────────────────────────────────
 
+_MAX_TOTAL_WORKFLOWS = 25  # 总工作流上限（不含 date_triggers）
+
+
 def _calc_workflow_params(num_ws: int) -> dict:
-    """根据工作表数量动态计算工作流数量参数。
+    """根据工作表数量动态计算工作流数量参数，总数不超过 _MAX_TOTAL_WORKFLOWS。
 
     分档：小型(≤3表) / 中型(4-6表) / 大型(≥7表)
+    超出上限时按比例缩减 ca_per_ws 和 num_ca_ws。
 
     Returns:
         dict with keys: ca_per_ws, ev_per_ws, num_tt, num_ca_ws
@@ -453,6 +457,15 @@ def _calc_workflow_params(num_ws: int) -> dict:
         num_tt = 2
 
     num_ca_ws = num_ws if num_ws <= 3 else math.ceil(num_ws / 2)
+
+    # 封顶：如果超出上限，缩减自定义动作
+    total = num_ca_ws * ca_per_ws + ev_per_ws * num_ws + num_tt
+    while total > _MAX_TOTAL_WORKFLOWS and ca_per_ws > 1:
+        ca_per_ws -= 1
+        total = num_ca_ws * ca_per_ws + ev_per_ws * num_ws + num_tt
+    while total > _MAX_TOTAL_WORKFLOWS and num_ca_ws > 1:
+        num_ca_ws -= 1
+        total = num_ca_ws * ca_per_ws + ev_per_ws * num_ws + num_tt
 
     return {
         "ca_per_ws": ca_per_ws,
