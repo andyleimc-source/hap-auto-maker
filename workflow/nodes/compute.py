@@ -13,12 +13,14 @@ NODES = {
         "typeId": 9, "actionId": "100",
         "name": "数值运算",
         "verified": True,
+        "allowed": False,
         "doc": "需要 formulaMap + formulaValue + fieldValue。",
     },
     "aggregate": {
         "typeId": 9, "actionId": "107", "appType": 1,
         "name": "从工作表汇总", "needs_worksheet": True,
         "verified": False,
+        "allowed": False,
         "doc": "需要 appId 指向目标工作表。formulaValue + fieldValue。",
     },
 }

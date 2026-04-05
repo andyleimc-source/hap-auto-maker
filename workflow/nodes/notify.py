@@ -14,24 +14,28 @@ NODES = {
         "typeId": 27,
         "name": "发送站内通知",
         "verified": True,
+        "allowed": True,
         "doc": "用 sendContent（非 content）。accounts 必填。",
     },
     "sms": {
         "typeId": 10,
         "name": "发送短信",
         "verified": False,
+        "allowed": False,
         "doc": "用 content。需要短信签名配置。",
     },
     "email": {
         "typeId": 11, "actionId": "202", "appType": 3,
         "name": "发送邮件",
         "verified": False,
+        "allowed": False,
         "doc": "用 content + title。需要邮件服务配置。",
     },
     "push": {
         "typeId": 17,
         "name": "界面推送",
         "verified": False,
+        "allowed": False,
         "doc": "用 sendContent（非 content）。accounts 必填。",
     },
 }

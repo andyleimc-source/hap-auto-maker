@@ -14,18 +14,21 @@ NODES = {
         "typeId": 31, "actionId": "531", "appType": 46,
         "name": "AI 生成文本",
         "verified": False,
+        "allowed": True,
         "doc": "需要 appId=''。不需要 isException。",
     },
     "ai_object": {
         "typeId": 31, "actionId": "532", "appType": 46,
         "name": "AI 生成数据对象",
         "verified": False,
+        "allowed": False,
         "doc": "最小 body。不需要 isException。",
     },
     "ai_agent": {
         "typeId": 33, "actionId": "533", "appType": 48,
         "name": "AI Agent",
         "verified": False,
+        "allowed": False,
         "doc": "需要 appId='' + tools 数组。tools.type: 1=工作表查询, 2=写入, 3=知识库, 4=其他。",
     },
 }

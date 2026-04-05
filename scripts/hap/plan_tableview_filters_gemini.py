@@ -207,6 +207,40 @@ def fetch_controls(worksheet_id: str, auth_config_path: Path) -> dict:
     return {"fields": controls}
 
 
+WORKSHEET_INFO_URL = "https://api.mingdao.com/v3/app/worksheets/{worksheet_id}"
+
+
+def fetch_worksheet_views(worksheet_id: str, app_key: str, sign: str) -> list[dict]:
+    """获取工作表的所有视图列表（v3 API）。"""
+    url = WORKSHEET_INFO_URL.format(worksheet_id=worksheet_id)
+    headers = {"HAP-Appkey": app_key, "HAP-Sign": sign, "Accept": "application/json, text/plain, */*"}
+    resp = requests.get(url, headers=headers, timeout=30)
+    data = resp.json()
+    if not data.get("success"):
+        return []
+    views = data.get("data", {}).get("views") or []
+    return views if isinstance(views, list) else []
+
+
+def find_default_all_view(views: list[dict]) -> Optional[dict]:
+    """从视图列表中找到系统默认的"全部"视图（viewType=0 且 name="全部"的第一个）。"""
+    for v in views:
+        if not isinstance(v, dict):
+            continue
+        vtype = v.get("viewType")
+        if isinstance(vtype, str):
+            try:
+                vtype = int(vtype)
+            except ValueError:
+                continue
+        name = str(v.get("name", "")).strip()
+        if vtype == 0 and name == "全部":
+            view_id = str(v.get("viewId") or v.get("id") or "").strip()
+            if view_id:
+                return {"viewId": view_id, "viewName": name, "viewType": "0", "viewTypeName": "表格视图"}
+    return None
+
+
 def load_view_targets(path: Path, wanted_app_ids: Optional[set[str]] = None) -> Dict[str, Dict[str, List[dict]]]:
     data = load_json(path)
     apps = data.get("apps")
@@ -326,9 +360,13 @@ worksheetId：{worksheet_id}
         {{"controlId": "字段ID", "filterType": 1}},
         {{"controlId": "字段ID", "filterType": 2, "advancedSetting": {{"direction":"2","allowitem":"1"}}}}
       ],
-      "fastAdvancedSetting": {{"enablebtn": "1"}},
-      "fastEditAdKeys": ["enablebtn"],
-      "reason": "原因"
+      “fastAdvancedSetting”: {{“enablebtn”: “1”}},
+      “fastEditAdKeys”: [“enablebtn”],
+      “needColor”: true,
+      “colorControlId”: “单选字段ID，用于记录颜色标记”,
+      “needGroup”: true,
+      “groupControlId”: “单选字段ID，用于分组显示”,
+      “reason”: “原因”
     }}
   ]
 }}
@@ -337,12 +375,14 @@ worksheetId：{worksheet_id}
 1) 仅针对输入中的目标视图输出。
 2) controlId 必须来自字段列表。
 3) 只有 表格视图(type=0) 和 画廊视图(type=3) 允许配置 navGroup。
-4) navGroup（筛选列表）只能使用“下拉字段”（SingleSelect/MultipleSelect）。
+4) navGroup（筛选列表）只能使用”下拉字段”（SingleSelect/MultipleSelect）。
 5) 若存在多个下拉字段，优先选择业务管理意义最强的那个（如状态/类型/分类/等级/阶段等）。
 6) 仅表格/看板/画廊视图允许配置 fastFilters；日历视图不要配置。
-7) 若不需要某功能，对应 needXxx=false，数组留空。
+7) 若不需要某功能，对应 needXxx=false，数组/字段留空。
 8) fastFilters 建议 1-4 个。
 9) 输出必须为合法 JSON。
+10) 颜色(needColor): 仅 viewType=0 的表格视图支持。选一个最能代表记录状态/分类的单选字段(type=9 或 type=11)作为 colorControlId。若无合适单选字段，needColor=false，colorControlId 留空。
+11) 分组(needGroup): 仅 viewType=0 的表格视图支持。选一个有业务分类意义的单选字段(type=9 或 type=11)作为 groupControlId（可与 colorControlId 相同）。若无合适字段或分组无业务意义，needGroup=false，groupControlId 留空。
 """.strip()
 
 
@@ -385,6 +425,10 @@ def build_batch_filter_prompt(app_name: str, worksheets_data: List[dict]) -> str
           ],
           "fastAdvancedSetting": {{"enablebtn": "1"}},
           "fastEditAdKeys": ["enablebtn"],
+          "needColor": true,
+          "colorControlId": "单选字段ID，用于记录颜色标记",
+          "needGroup": true,
+          "groupControlId": "单选字段ID，用于分组显示",
           "reason": "原因"
         }}
       ]
@@ -399,9 +443,11 @@ def build_batch_filter_prompt(app_name: str, worksheets_data: List[dict]) -> str
 4) navGroup（筛选列表）只能使用"下拉字段"（isDropdown=true）。
 5) 若存在多个下拉字段，优先选择业务管理意义最强的（如状态/类型/分类/等级/阶段等）。
 6) 仅表格/看板/画廊视图允许配置 fastFilters；日历视图不要配置。
-7) 若不需要某功能，对应 needXxx=false，数组留空。
+7) 若不需要某功能，对应 needXxx=false，数组/字段留空。
 8) fastFilters 建议 1-4 个。
-9) 输出必须为合法 JSON，worksheets 数组长度必须等于 {count}。""".strip()
+9) 输出必须为合法 JSON，worksheets 数组长度必须等于 {count}。
+10) 颜色(needColor): 仅 viewType=0 的表格视图支持。选一个最能代表记录状态/分类的单选字段(type=9 或 type=11)作为 colorControlId。若无合适单选字段，needColor=false，colorControlId 留空。
+11) 分组(needGroup): 仅 viewType=0 的表格视图支持。选一个有业务分类意义的单选字段(type=9 或 type=11)作为 groupControlId（可与 colorControlId 相同）。若无合适字段或分组无业务意义，needGroup=false，groupControlId 留空。""".strip()
 
 
 def generate_with_retry(client, model: str, prompt: str, retries: int, ai_config: dict) -> Any:
@@ -564,6 +610,57 @@ def normalize_view_plan(
     fast_edit_keys = item.get("fastEditAdKeys") if isinstance(item.get("fastEditAdKeys"), list) else []
     fast_edit_keys = [str(x).strip() for x in fast_edit_keys if str(x).strip()]
 
+    # ── 颜色配置 ──
+    need_color = bool(item.get("needColor", False))
+    color_control_id = str(item.get("colorControlId", "")).strip()
+    if color_control_id and color_control_id not in field_map:
+        color_control_id = ""
+    if color_control_id:
+        f_info = field_map.get(color_control_id, {})
+        f_type = f_info.get("type")
+        if f_type not in (9, 11):
+            color_control_id = ""
+    if need_color and not color_control_id:
+        # 兜底：自动选最佳单选字段
+        for f in fields:
+            if not isinstance(f, dict):
+                continue
+            fid = str(f.get("id", "")).strip()
+            ft = f.get("type")
+            if fid and ft in (9, 11) and not bool(f.get("isSystem", False)):
+                color_control_id = fid
+                break
+    if not color_control_id:
+        need_color = False
+    if view_type != "0":
+        need_color = False
+        color_control_id = ""
+
+    # ── 分组配置 ──
+    need_group = bool(item.get("needGroup", False))
+    group_control_id = str(item.get("groupControlId", "")).strip()
+    if group_control_id and group_control_id not in field_map:
+        group_control_id = ""
+    if group_control_id:
+        f_info = field_map.get(group_control_id, {})
+        f_type = f_info.get("type")
+        if f_type not in (9, 11):
+            group_control_id = ""
+    if need_group and not group_control_id:
+        for f in fields:
+            if not isinstance(f, dict):
+                continue
+            fid = str(f.get("id", "")).strip()
+            ft = f.get("type")
+            if fid and ft in (9, 11) and not bool(f.get("isSystem", False)):
+                group_control_id = fid
+                break
+    if not group_control_id:
+        need_group = False
+    if view_type != "0":
+        need_group = False
+        group_control_id = ""
+
     return {
         "viewId": view_id,
         "viewName": str(item.get("viewName", "")).strip(),
@@ -576,6 +673,10 @@ def normalize_view_plan(
         "fastFilters": fast_filters,
         "fastAdvancedSetting": fast_adv,
         "fastEditAdKeys": fast_edit_keys,
+        "needColor": need_color,
+        "colorControlId": color_control_id,
+        "needGroup": need_group,
+        "groupControlId": group_control_id,
         "reason": reason,
     }
 
@@ -585,6 +686,7 @@ def main() -> None:
     parser.add_argument("--config", default=str(GEMINI_CONFIG_PATH), help="AI 配置 JSON 路径")
     parser.add_argument("--auth-config", default=str(AUTH_CONFIG_PATH), help="auth_config.py 路径")
     parser.add_argument("--view-create-result", default="", help="视图创建结果 JSON 路径（默认取最新）")
+    parser.add_argument("--app-auth-json", default="", help="HAP 授权 JSON 文件路径（兼容 pipeline 传参）")
     parser.add_argument("--app-ids", default="", help="可选，应用ID列表（逗号分隔）；不传则交互选择")
     parser.add_argument("--output", default="", help="输出 JSON 路径")
     parser.add_argument("--gemini-retries", type=int, default=DEFAULT_GEMINI_RETRIES, help="AI 请求失败时的重试次数")
@@ -633,8 +735,23 @@ def main() -> None:
         picked_apps = [apps[i - 1] for i in picked]
 
     wanted_app_ids = {app["appId"] for app in picked_apps}
-    view_create_result_path = resolve_view_create_result_json(args.view_create_result.strip())
-    view_targets_by_app = load_view_targets(view_create_result_path, wanted_app_ids=wanted_app_ids)
+
+    # view_create_result 可能不存在（如 views 步骤被跳过），此时只配置默认视图
+    view_targets_by_app: Dict[str, Dict[str, List[dict]]] = {}
+    view_create_result_path: Optional[Path] = None
+    vcr_arg = args.view_create_result.strip()
+    if vcr_arg:
+        try:
+            view_create_result_path = resolve_view_create_result_json(vcr_arg)
+            view_targets_by_app = load_view_targets(view_create_result_path, wanted_app_ids=wanted_app_ids)
+        except FileNotFoundError:
+            print("  ⚠ 视图创建结果文件不存在，仅配置默认视图")
+    else:
+        try:
+            view_create_result_path = resolve_view_create_result_json("")
+            view_targets_by_app = load_view_targets(view_create_result_path, wanted_app_ids=wanted_app_ids)
+        except FileNotFoundError:
+            print("  ⚠ 未找到视图创建结果文件，仅配置默认视图")
 
     output_apps = []
     total_views = 0
@@ -643,10 +760,33 @@ def main() -> None:
         ws_list = fetch_worksheets(app["appKey"], app["sign"])
         app_out = {"appId": app["appId"], "appName": app["appName"], "worksheets": []}
 
-        # 筛选出有目标视图的工作表，并行拉取字段
+        # 获取每个工作表的视图列表，注入默认"全部"视图到 targets
+        created_view_targets = view_targets_by_app.get(app["appId"], {})
+
+        def _inject_default_view(ws):
+            """为工作表注入默认全部视图到 target 列表。"""
+            ws_id = ws["workSheetId"]
+            targets = list(created_view_targets.get(ws_id, []))
+            existing_view_ids = {t["viewId"] for t in targets}
+            # 获取工作表现有视图，找默认"全部"视图
+            ws_views = fetch_worksheet_views(ws_id, app["appKey"], app["sign"])
+            default_view = find_default_all_view(ws_views)
+            if default_view and default_view["viewId"] not in existing_view_ids:
+                targets.insert(0, default_view)
+            return ws_id, targets
+
+        with ThreadPoolExecutor(max_workers=min(8, max(1, len(ws_list)))) as ex:
+            default_view_results = list(ex.map(_inject_default_view, ws_list))
+
+        # 合并: 用注入后的 targets 替换原始 targets
+        enriched_targets: Dict[str, List[dict]] = {}
+        for ws_id, targets in default_view_results:
+            if targets:
+                enriched_targets[ws_id] = targets
+
         ws_with_targets = [
             ws for ws in ws_list
-            if view_targets_by_app.get(app["appId"], {}).get(ws["workSheetId"])
+            if enriched_targets.get(ws["workSheetId"])
         ]
         if not ws_with_targets:
             output_apps.append(app_out)
@@ -664,7 +804,7 @@ def main() -> None:
         ws_meta = {}  # ws_id -> (fields, field_map, views_by_id, target_views)
         for ws, fields in ws_fields_pairs:
             ws_id = ws["workSheetId"]
-            target_views = view_targets_by_app[app["appId"]][ws_id]
+            target_views = enriched_targets[ws_id]
             field_map = {str(f.get("id", "")).strip(): f for f in fields if str(f.get("id", "")).strip()}
             views_by_id = {str(v.get("viewId", "")).strip(): v for v in target_views}
             ws_meta[ws_id] = (fields, field_map, views_by_id, target_views)
@@ -717,6 +857,10 @@ def main() -> None:
                         "fastFilters": [],
                         "fastAdvancedSetting": {"enablebtn": "0"},
                         "fastEditAdKeys": ["enablebtn"],
+                        "needColor": False,
+                        "colorControlId": "",
+                        "needGroup": False,
+                        "groupControlId": "",
                         "reason": "Gemini 未返回该视图，默认不改",
                     })
             app_out["worksheets"].append({
@@ -731,7 +875,7 @@ def main() -> None:
         "generatedAt": datetime.now().isoformat(timespec="seconds"),
         "model": model_name,
         "source": "view_filter_plan_ai_v2",
-        "viewCreateResultJson": str(view_create_result_path),
+        "viewCreateResultJson": str(view_create_result_path) if view_create_result_path else "",
         "apps": output_apps,
         "summary": {"appCount": len(output_apps), "viewCount": total_views},
     }

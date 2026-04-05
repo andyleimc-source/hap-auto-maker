@@ -120,7 +120,7 @@ def build_enhanced_prompt(
 
 规划原则：
 1. 每个图表必须有明确的业务分析目的
-2. 图表类型要多样化（至少使用 4 种不同 reportType）
+2. 图表类型要多样化（至少使用 6 种不同 reportType），且必须包含至少 1 个 KPI 类图表(数值图10/仪表盘14/进度图15)和至少 1 个非柱图/饼图类型(如漏斗图6/排行图16/透视表8/双轴图7)
 3. 覆盖尽可能多的工作表（不要集中在一个表上）
 4. xaxes.controlId 和 yaxisList[].controlId 必须来自上方字段列表或系统字段（ctime/utime/record_count）
 5. 数值图(10)/仪表盘(14)/进度图(15)的 xaxes.controlId 必须设为空字符串
@@ -169,7 +169,6 @@ def build_enhanced_prompt(
 def validate_enhanced_plan(
     raw: dict,
     worksheets_by_id: dict[str, dict],
-    min_count: int = 3,
 ) -> list[dict]:
     """增强版校验：字段存在性 + 类型兼容性。
 
@@ -180,7 +179,6 @@ def validate_enhanced_plan(
     Args:
         raw: AI 输出的原始 JSON
         worksheets_by_id: {worksheetId: {fields: [...]}}
-        min_count: 最少图表数量（增量场景传 1，批量场景默认 3）
 
     Returns:
         校验通过的 charts 列表
@@ -201,7 +199,7 @@ def validate_enhanced_plan(
     charts = raw.get("charts", [])
     if not isinstance(charts, list) or len(charts) == 0:
         raise ValueError("未返回 charts 数组")
-    if len(charts) < min_count:
+    if len(charts) < 3:
         raise ValueError(f"图表数量不足，只返回 {len(charts)} 个")
 
     validated = []
@@ -263,29 +261,11 @@ def validate_enhanced_plan(
                 chart["xaxes"]["controlId"] = None  # 自动修正
                 print(f"  [自动修正] 图表 {i+1}「{name}」reportType={report_type}，xaxes.controlId 已修正为 null")
 
-        # 双轴图/对称条形图：确保有 yreportType 且 rightY.yaxisList 非空
-        if _HAS_SCHEMA and report_type in (DUAL_AXIS_TYPE, 11):
+        # 双轴图：确保有 yreportType
+        if _HAS_SCHEMA and report_type == DUAL_AXIS_TYPE:
             if chart.get("yreportType") is None:
                 chart["yreportType"] = 2  # 默认右轴为折线图
                 print(f"  [自动补全] 图表 {i+1}「{name}」双轴图自动设置 yreportType=2")
-            right_y = chart.get("rightY")
-            right_y_list = right_y.get("yaxisList", []) if isinstance(right_y, dict) else []
-            if not isinstance(right_y, dict) or not right_y_list:
-                # rightY 缺失或辅助Y轴为空 → 用主轴第一个字段作为兜底，或降级为柱图
-                yaxis_list = chart.get("yaxisList", [])
-                if yaxis_list:
-                    fallback_y = dict(yaxis_list[0])
-                    fallback_y["rename"] = fallback_y.get("rename", "") + "（右轴）"
-                    chart["rightY"] = {
-                        "reportType": 2,
-                        "yaxisList": [fallback_y],
-                    }
-                    print(f"  [自动补全] 图表 {i+1}「{name}」rightY.yaxisList 为空，复用主轴字段作为右轴兜底")
-                else:
-                    print(f"  [降级] 图表 {i+1}「{name}」双轴图缺少 rightY 且 yaxisList 为空，降级为柱图")
-                    chart["reportType"] = 1
-                    chart.pop("yreportType", None)
-                    chart.pop("rightY", None)
 
         yaxis_list = chart.get("yaxisList", [])
         if not isinstance(yaxis_list, list) or len(yaxis_list) == 0:

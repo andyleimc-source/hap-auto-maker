@@ -197,7 +197,11 @@ def suggest_chart_types(classified_fields: dict[str, list[dict]]) -> list[dict]:
     """根据字段分类推荐适合的图表类型。"""
     suggestions = []
 
-    if classified_fields.get("select"):
+    has_select = bool(classified_fields.get("select"))
+    has_date = bool(classified_fields.get("date"))
+    has_number = bool(classified_fields.get("number"))
+
+    if has_select:
         suggestions.append({
             "reportType": 1, "reason": "有单选/下拉字段，适合做分类柱状图",
             "xaxes_field_category": "select",
@@ -206,17 +210,39 @@ def suggest_chart_types(classified_fields: dict[str, list[dict]]) -> list[dict]:
             "reportType": 3, "reason": "有单选/下拉字段，适合做占比饼图",
             "xaxes_field_category": "select",
         })
+        suggestions.append({
+            "reportType": 6, "reason": "有单选/下拉字段（如阶段/状态），适合做转化漏斗图",
+            "xaxes_field_category": "select",
+        })
+        suggestions.append({
+            "reportType": 16, "reason": "有单选/下拉字段，适合做 TOP N 排行图",
+            "xaxes_field_category": "select",
+        })
 
-    if classified_fields.get("date"):
+    if has_date:
         suggestions.append({
             "reportType": 2, "reason": "有日期字段，适合做趋势折线图",
             "xaxes_field_category": "date",
         })
 
-    if classified_fields.get("number"):
+    if has_number:
         suggestions.append({
             "reportType": 10, "reason": "有数值字段，适合做 KPI 数值图",
             "xaxes_field_category": None,
+        })
+        suggestions.append({
+            "reportType": 14, "reason": "有数值字段，适合做仪表盘（目标达成率）",
+            "xaxes_field_category": None,
+        })
+        suggestions.append({
+            "reportType": 15, "reason": "有数值字段，适合做进度图（完成进度）",
+            "xaxes_field_category": None,
+        })
+
+    if has_number and has_date:
+        suggestions.append({
+            "reportType": 7, "reason": "有数值+日期字段，适合做双轴图（双指标趋势对比）",
+            "xaxes_field_category": "date",
         })
 
     # 总是推荐一个记录数量的数值图
@@ -224,6 +250,12 @@ def suggest_chart_types(classified_fields: dict[str, list[dict]]) -> list[dict]:
         "reportType": 10, "reason": "通用：记录总数 KPI",
         "xaxes_field_category": None,
         "yaxis_controlId": "record_count",
+    })
+
+    # 总是推荐透视表（多维交叉分析）
+    suggestions.append({
+        "reportType": 8, "reason": "通用：多维交叉分析透视表",
+        "xaxes_field_category": None,
     })
 
     return suggestions

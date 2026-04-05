@@ -209,6 +209,17 @@ def auto_complete_post_updates(view: dict, ws_fields: list[dict] | None = None) 
             adv = upd.get("advancedSetting") or {}
             begindate = begindate or str(adv.get("begindate", "")).strip()
             enddate = enddate or str(adv.get("enddate", "")).strip()
+        # 如果 AI 没有提供日期字段 ID，从工作表字段列表中自动查找日期字段(type=15/16)
+        if not begindate and ws_fields:
+            date_field_ids = []
+            for f in ws_fields:
+                f_type = int(f.get("type", 0) or f.get("controlType", 0) or 0)
+                f_id = str(f.get("id", "") or f.get("controlId", "")).strip()
+                if f_type in (15, 16) and f_id:
+                    date_field_ids.append(f_id)
+            if date_field_ids:
+                begindate = date_field_ids[0]
+                enddate = date_field_ids[1] if len(date_field_ids) >= 2 else date_field_ids[0]
         if not begindate:
             return []
         return [{

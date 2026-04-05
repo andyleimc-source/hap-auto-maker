@@ -14,6 +14,7 @@ NODES = {
         "typeId": 26, "appType": 10,
         "name": "未命名审批流程",
         "verified": False,  # 创建成功但 publish 报 103
+        "allowed": False,
         "doc": "可创建和配置 accounts，但 publish 需要 processNode 子流程。待研究。",
     },
 }

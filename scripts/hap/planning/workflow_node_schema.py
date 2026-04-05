@@ -335,7 +335,10 @@ WORKFLOW_NODE_SCHEMA: dict[str, dict] = {
             "nodeAppId": "",
         },
         "notes": [
-            "selectNodeId 必须指向触发节点，否则无法从触发记录引用字段值",
+            "selectNodeId 规则（抓包验证）：",
+            "  - 跨表新增（target≠触发表）：selectNodeId='' 空字符串",
+            "    若填触发节点ID，前端会变成'基于多条记录逐条新增'并报'节点已删除'",
+            "  - 同表新增（target=触发表）：selectNodeId=startNodeId",
             "单选字段(type=9/11) fieldValue 必须是完整 UUID key，截断会被静默丢弃",
             "动态引用格式: $startNodeId-fieldId$",
             "建议包含目标表全部可操作字段",

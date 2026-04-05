@@ -17,24 +17,28 @@ NODES = {
         "typeId": 6, "actionId": "3", "appType": 1,
         "name": "删除记录", "needs_worksheet": True,
         "verified": False,
+        "allowed": True,
         "doc": "需要 filters 指定删除条件。",
     },
     "get_record": {
         "typeId": 6, "actionId": "4", "appType": 1,
         "name": "获取单条数据", "needs_worksheet": True,
         "verified": True,
+        "allowed": True,
         "doc": "需要 filters + sorts。实测可 publish。",
     },
     "get_records": {
         "typeId": 13, "actionId": "400",
         "name": "查询工作表", "needs_worksheet": False,
         "verified": False,
+        "allowed": False,
         "doc": "typeId=13 而非 6。需要 filters + sorts + number。",
     },
     "calibrate_record": {
         "typeId": 6, "actionId": "6", "appType": 1,
         "name": "校准单条数据", "needs_worksheet": True,
         "verified": False,
+        "allowed": False,
         "doc": "需要 fields + errorFields。",
     },
 }

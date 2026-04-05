@@ -131,6 +131,8 @@ def main() -> None:
             "viewCount": 0,
             "navAppliedCount": 0,
             "fastAppliedCount": 0,
+            "colorAppliedCount": 0,
+            "groupAppliedCount": 0,
             "failedCount": 0,
         },
     }
@@ -156,7 +158,7 @@ def main() -> None:
             view_name = str(vp.get("viewName", "")).strip()
             view_type = str(vp.get("viewType", "")).strip()
             view_result = {"viewId": view_id, "viewName": view_name, "viewType": view_type, "navApply": None, "fastApply": None}
-            stats = {"navAppliedCount": 0, "fastAppliedCount": 0, "failedCount": 0}
+            stats = {"navAppliedCount": 0, "fastAppliedCount": 0, "colorAppliedCount": 0, "groupAppliedCount": 0, "failedCount": 0}
 
             if bool(vp.get("needNavGroup", False)) and view_type in NAV_SUPPORTED_VIEW_TYPES:
                 payload = {
@@ -200,6 +202,67 @@ def main() -> None:
                     reason = f"viewType={view_type} 不支持快速筛选"
                 view_result["fastApply"] = {"skipped": True, "reason": reason}
 
+            # ── 颜色配置 ──
+            color_control_id = str(vp.get("colorControlId", "")).strip()
+            if bool(vp.get("needColor", False)) and color_control_id and view_type == "0":
+                payload = {
+                    "appId": app_id, "worksheetId": ws_id, "viewId": view_id,
+                    "editAttrs": ["advancedSetting"],
+                    "advancedSetting": {
+                        "enablerules": "1",
+                        "colorid": color_control_id,
+                        "colortype": "0",
+                    },
+                    "editAdKeys": ["enablerules", "colorid", "colortype"],
+                }
+                resp = save_view(payload, auth_config_path, app_id, ws_id, view_id, args.dry_run)
+                ok = bool(args.dry_run) or (isinstance(resp, dict) and int(resp.get("state", 0) or 0) == 1)
+                view_result["colorApply"] = {"payload": payload, "response": resp, "success": ok}
+                if ok:
+                    stats["colorAppliedCount"] += 1
+                else:
+                    stats["failedCount"] += 1
+            else:
+                view_result["colorApply"] = {"skipped": True, "reason": "needColor=false or no colorControlId"}
+
+            # ── 分组配置 ──
+            group_control_id = str(vp.get("groupControlId", "")).strip()
+            if bool(vp.get("needGroup", False)) and group_control_id and view_type == "0":
+                group_view_obj = {
+                    "viewId": view_id,
+                    "groupFilters": [{
+                        "controlId": group_control_id,
+                        "values": [],
+                        "dataType": 11,
+                        "spliceType": 1,
+                        "filterType": 2,
+                        "dateRange": 0,
+                        "minValue": "",
+                        "maxValue": "",
+                        "isGroup": True,
+                    }],
+                    "navShow": True,
+                }
+                group_view_str = json.dumps(group_view_obj, ensure_ascii=False, separators=(",", ":"))
+                payload = {
+                    "appId": app_id, "worksheetId": ws_id, "viewId": view_id,
+                    "editAttrs": ["advancedSetting"],
+                    "advancedSetting": {
+                        "groupView": group_view_str,
+                        "navempty": "1",
+                    },
+                    "editAdKeys": ["groupView", "navempty"],
+                }
+                resp = save_view(payload, auth_config_path, app_id, ws_id, view_id, args.dry_run)
+                ok = bool(args.dry_run) or (isinstance(resp, dict) and int(resp.get("state", 0) or 0) == 1)
+                view_result["groupApply"] = {"payload": payload, "response": resp, "success": ok}
+                if ok:
+                    stats["groupAppliedCount"] += 1
+                else:
+                    stats["failedCount"] += 1
+            else:
+                view_result["groupApply"] = {"skipped": True, "reason": "needGroup=false or no groupControlId"}
+
             return ws_id, ws_name, view_result, stats
 
         # 构建所有视图任务（跨工作表展平）
@@ -239,7 +302,7 @@ def main() -> None:
                 ws_id, ws_name, view_result, stats = future.result()
                 with _lock:
                     ws_results[ws_id]["views"].append(view_result)
-                    for k in ("navAppliedCount", "fastAppliedCount", "failedCount"):
+                    for k in ("navAppliedCount", "fastAppliedCount", "colorAppliedCount", "groupAppliedCount", "failedCount"):
                         result["summary"][k] += stats[k]
 
         for ws_id in ws_order:
@@ -262,6 +325,8 @@ def main() -> None:
     print(f"- 视图数: {result['summary']['viewCount']}")
     print(f"- 筛选列表应用次数: {result['summary']['navAppliedCount']}")
     print(f"- 快速筛选应用次数: {result['summary']['fastAppliedCount']}")
+    print(f"- 颜色配置应用次数: {result['summary']['colorAppliedCount']}")
+    print(f"- 分组配置应用次数: {result['summary']['groupAppliedCount']}")
     print(f"- 失败次数: {result['summary']['failedCount']}")
 
 

@@ -16,12 +16,14 @@ NODES = {
         "typeId": 3,
         "name": "填写",
         "verified": False,
+        "allowed": False,
         "doc": "需要 formProperties + accounts + selectNodeId。",
     },
     "copy": {
         "typeId": 5,
         "name": "抄送",
         "verified": True,
+        "allowed": False,
         "doc": "新版用 formProperties+viewId+showTitle；旧版用 sendContent。需要 selectNodeId。",
     },
 }

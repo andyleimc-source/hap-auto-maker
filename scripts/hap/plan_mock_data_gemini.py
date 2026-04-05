@@ -91,10 +91,11 @@ def build_prompt(snapshot: dict) -> str:
 5. MultipleSelect 字段值必须是包含一个或多个 key 字符串的数组，例如 ["key1", "key2"]。绝对禁止将数组序列化为字符串后再放进外层数组，即禁止 ["[\"key1\", \"key2\"]"] 这种格式。
 6. Currency（金额）字段使用数字，例如 50000。
 7. Region（地区）字段使用中文地址文本，例如 "北京/北京市/朝阳区"。
-8. RichText（富文本）字段使用纯文本字符串。
-9. valuesByFieldId 的 key 必须是字段 ID。
-10. 每条记录都要有一句中文 recordSummary，描述该记录的业务含义。
-11. ⚠️ 每个 writableField 都必须填值，禁止遗漏！只有 skippedFields 里的字段才可以不填。
+8. Location（定位）字段使用 JSON 对象，包含 address 字段，例如 {{"address": "上海市浦东新区张江高科技园区"}}。
+9. RichText（富文本）字段使用纯文本字符串。
+10. valuesByFieldId 的 key 必须是字段 ID。
+11. 每条记录都要有一句中文 recordSummary，描述该记录的业务含义。
+12. ⚠️ 每个 writableField 都必须填值，禁止遗漏！只有 skippedFields 里的字段才可以不填。
 
 应用信息：
 {json.dumps(app, ensure_ascii=False, indent=2)}
@@ -129,6 +130,7 @@ def build_prompt(snapshot: dict) -> str:
             "多选字段ID": ["optionKey1", "optionKey2"],
             "日期字段ID": "2026-03-15",
             "地区字段ID": "广东/深圳市/南山区",
+            "定位字段ID": {{"address": "上海市浦东新区张江高科技园区"}},
             "富文本字段ID": "详细描述内容",
             "布尔字段ID": true
           }}
@@ -160,10 +162,11 @@ def build_prompt_v2(app: dict, worksheets: List[dict]) -> str:
 4. MultipleSelect 字段值必须是包含一个或多个 key 字符串的数组，例如 ["key1", "key2"]。
 5. Currency（金额）字段使用数字，例如 50000。
 6. Region（地区）字段使用中文地址文本，例如 "北京/北京市/朝阳区"。
-7. RichText（富文本）字段使用纯文本字符串。
-8. valuesByFieldId 的 key 必须是字段 ID。
-9. 每条记录都要有一句中文 recordSummary。
-10. ⚠️ 每个 writableField 都必须填值，禁止遗漏！
+7. Location（定位）字段使用 JSON 对象，包含 address 字段，例如 {{"address": "上海市浦东新区张江高科技园区"}}。
+8. RichText（富文本）字段使用纯文本字符串。
+9. valuesByFieldId 的 key 必须是字段 ID。
+10. 每条记录都要有一句中文 recordSummary。
+11. ⚠️ 每个 writableField 都必须填值，禁止遗漏！
 
 应用信息：
 {json.dumps(app, ensure_ascii=False, indent=2)}
@@ -324,6 +327,22 @@ def validate_plan(raw: dict, snapshot: dict) -> Dict[str, Any]:
                     if not fixed:
                         continue
                     value = fixed
+                elif field_type == "Location":
+                    # AI 可能返回字符串、dict 或 JSON 字符串，统一转为 dict
+                    if isinstance(value, str):
+                        try:
+                            parsed = json.loads(value)
+                            if isinstance(parsed, dict):
+                                value = parsed
+                            else:
+                                value = {"address": value}
+                        except (json.JSONDecodeError, ValueError):
+                            value = {"address": value}
+                    elif not isinstance(value, dict):
+                        value = {"address": str(value)}
+                    if "address" not in value or not str(value.get("address", "")).strip():
+                        # 兜底：用 recordSummary 提取地址
+                        value["address"] = summary
                 elif field_type in {"Date", "DateTime"}:
                     value = normalize_recent_datetime_value(
                         field_type,
