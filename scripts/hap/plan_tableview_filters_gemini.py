@@ -686,6 +686,7 @@ def main() -> None:
     parser.add_argument("--config", default=str(GEMINI_CONFIG_PATH), help="AI 配置 JSON 路径")
     parser.add_argument("--auth-config", default=str(AUTH_CONFIG_PATH), help="auth_config.py 路径")
     parser.add_argument("--view-create-result", default="", help="视图创建结果 JSON 路径（默认取最新）")
+    parser.add_argument("--app-auth-json", default="", help="HAP 授权 JSON 文件路径（兼容 pipeline 传参）")
     parser.add_argument("--app-ids", default="", help="可选，应用ID列表（逗号分隔）；不传则交互选择")
     parser.add_argument("--output", default="", help="输出 JSON 路径")
     parser.add_argument("--gemini-retries", type=int, default=DEFAULT_GEMINI_RETRIES, help="AI 请求失败时的重试次数")
