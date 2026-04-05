@@ -930,12 +930,38 @@ def to_receive_control_value(field_meta: dict, value: Any) -> Any:
         if isinstance(value, list):
             return json.dumps([{"sid": str(item)} for item in value], ensure_ascii=False)
         return json.dumps([{"sid": str(value)}], ensure_ascii=False)
+    if field_type == "Location":
+        if isinstance(value, dict):
+            return json.dumps(value, ensure_ascii=False)
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+                if isinstance(parsed, dict):
+                    return value
+            except (json.JSONDecodeError, ValueError):
+                pass
+            return json.dumps({"address": value}, ensure_ascii=False)
+        return json.dumps({"address": str(value)}, ensure_ascii=False)
     return value
 
 
 def to_v3_field_value(field_meta: dict, value: Any) -> Any:
     if value is None:
         return None
+    field_type = str(field_meta.get("type", "")).strip()
+    if field_type == "Location":
+        # V3 API 接受 JSON 字符串或 dict，统一转为 JSON 字符串
+        if isinstance(value, dict):
+            return json.dumps(value, ensure_ascii=False)
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+                if isinstance(parsed, dict):
+                    return value  # 已经是合法 JSON 字符串
+            except (json.JSONDecodeError, ValueError):
+                pass
+            return json.dumps({"address": value}, ensure_ascii=False)
+        return json.dumps({"address": str(value)}, ensure_ascii=False)
     if isinstance(value, list):
         return [str(item) for item in value]
     if isinstance(value, dict):

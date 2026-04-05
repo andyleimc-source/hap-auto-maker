@@ -41,7 +41,7 @@ APP_INFO_URL = f"{HAP_BASE}/v3/app"
 WORKSHEET_INFO_URL = f"{HAP_BASE}/v3/app/worksheets/{{worksheet_id}}"
 DELETE_VIEW_URL = "https://www.mingdao.com/api/Worksheet/DeleteWorksheetView"
 
-TARGET_VIEW_NAMES = {"全部", "视图"}
+TARGET_VIEW_NAMES = {"视图"}
 DELETE_ALL_VIEWS = False  # 由 --all-views 参数覆盖
 
 
