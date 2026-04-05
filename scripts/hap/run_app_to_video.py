@@ -13,7 +13,6 @@ import subprocess
 import sys
 import time
 import traceback
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -22,6 +21,7 @@ if str(CURRENT_DIR) not in sys.path:
     sys.path.insert(0, str(CURRENT_DIR))
 
 from script_locator import resolve_script
+from utils import now_ts, now_iso, load_json, write_json
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
@@ -29,23 +29,6 @@ APP_RUNS_DIR = OUTPUT_ROOT / "app_runs"
 REQUIREMENT_SPEC_LATEST = OUTPUT_ROOT / "requirement_specs" / "requirement_spec_latest.json"
 EXECUTION_RUN_LATEST = OUTPUT_ROOT / "execution_runs" / "execution_run_latest.json"
 MAKE_APP_SCRIPT = (BASE_DIR / "make_app.py").resolve()
-
-
-def now_ts() -> str:
-    return datetime.now().strftime("%Y%m%d_%H%M%S")
-
-
-def now_iso() -> str:
-    return datetime.now().astimezone().isoformat(timespec="seconds")
-
-
-def load_json(path: Path) -> dict:
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def write_json(path: Path, payload: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def write_text(path: Path, text: str) -> None:

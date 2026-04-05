@@ -28,6 +28,7 @@ if str(CURRENT_DIR) not in sys.path:
     sys.path.insert(0, str(CURRENT_DIR))
 
 import auth_retry
+from utils import now_ts, load_json, write_json
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
@@ -38,21 +39,6 @@ BASE_URL = "https://www.mingdao.com"
 ADD_SECTION_URL    = BASE_URL + "/api/HomeApp/AddAppSection"
 RENAME_SECTION_URL = BASE_URL + "/api/HomeApp/UpdateAppSectionName"
 MOVE_WORKSHEET_URL = BASE_URL + "/api/AppManagement/RemoveWorkSheetAscription"
-
-
-def now_ts() -> str:
-    return datetime.now().strftime("%Y%m%d_%H%M%S")
-
-
-def load_json(path: Path) -> dict:
-    if not path.exists():
-        raise FileNotFoundError(f"文件不存在: {path}")
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def write_json(path: Path, payload: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def referer(app_id: str) -> str:

@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional
 import requests
 import auth_retry
 from ai_utils import AI_CONFIG_PATH, create_generation_config, get_ai_client, load_ai_config
+from utils import now_ts, load_json, write_json, latest_file
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
@@ -40,24 +41,6 @@ VIEW_TYPE_LABELS = {"0": "表格视图", "1": "看板视图", "3": "画廊视图
 DEFAULT_GEMINI_RETRIES = 4
 
 
-def now_ts() -> str:
-    return datetime.now().strftime("%Y%m%d_%H%M%S")
-
-
-def load_json(path: Path) -> dict:
-    if not path.exists():
-        raise FileNotFoundError(f"文件不存在: {path}")
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def write_json(path: Path, payload: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-def latest_file(base_dir: Path, pattern: str) -> Optional[Path]:
-    files = sorted(base_dir.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
-    return files[0] if files else None
 
 
 def parse_selection(text: str, max_index: int) -> List[int]:

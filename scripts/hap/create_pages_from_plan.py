@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, List
 
 import auth_retry
+from utils import load_json, write_json
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 CURRENT_DIR = Path(__file__).resolve().parent
@@ -64,17 +65,6 @@ class Logger:
 # ---------------------------------------------------------------------------
 # 工具函数
 # ---------------------------------------------------------------------------
-
-def load_json(path: Path) -> dict:
-    if not path.exists():
-        raise FileNotFoundError(f"文件不存在: {path}")
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def write_json(path: Path, payload: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-
 
 def resolve_plan_path(value: str) -> Path:
     if value:

@@ -13,7 +13,6 @@ from __future__ import annotations
 import argparse
 import re
 import sys
-from datetime import datetime
 from pathlib import Path
 from typing import List
 
@@ -31,6 +30,7 @@ from mock_data_common import (
     print_app_choices,
 )
 from ai_utils import get_ai_client, load_ai_config
+from utils import now_ts
 
 
 # ──────────────────────────────────────────────
@@ -41,10 +41,6 @@ def sanitize_folder_name(name: str) -> str:
     """将应用名称转为合法文件夹名（保留中文、字母、数字、下划线、连字符）。"""
     cleaned = re.sub(r'[\\/:*?"<>|]', "_", name).strip()
     return cleaned or "unnamed_app"
-
-
-def now_ts() -> str:
-    return datetime.now().strftime("%Y%m%d_%H%M%S")
 
 
 # ──────────────────────────────────────────────

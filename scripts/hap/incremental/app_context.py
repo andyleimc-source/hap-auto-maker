@@ -30,6 +30,12 @@ from typing import Optional
 
 import requests
 
+_HAP_DIR = Path(__file__).resolve().parents[1]
+if str(_HAP_DIR) not in sys.path:
+    sys.path.insert(0, str(_HAP_DIR))
+
+from utils import latest_file
+
 BASE_DIR = Path(__file__).resolve().parents[3]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 APP_AUTH_DIR = OUTPUT_ROOT / "app_authorizations"
@@ -38,10 +44,6 @@ APP_INFO_URL = f"{V3_BASE}/v3/app"
 
 
 # ── 授权加载 ───────────────────────────────────────────────────────────────────
-
-def latest_file(base_dir: Path, pattern: str) -> Optional[Path]:
-    files = sorted(base_dir.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
-    return files[0] if files else None
 
 
 def resolve_app_auth(app_auth_json: str = "", app_id: str = "") -> Path:

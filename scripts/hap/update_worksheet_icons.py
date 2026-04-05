@@ -24,6 +24,7 @@ if str(CURRENT_DIR) not in sys.path:
     sys.path.insert(0, str(CURRENT_DIR))
 
 import auth_retry
+from utils import latest_file
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
@@ -34,11 +35,6 @@ AUTH_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "auth_config.py"
 
 APP_INFO_URL = "https://api.mingdao.com/v3/app"
 EDIT_ICON_URL = "https://www.mingdao.com/api/AppManagement/EditWorkSheetInfoForApp"
-
-
-def latest_file(base_dir: Path, pattern: str) -> Optional[Path]:
-    files = sorted(base_dir.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
-    return files[0] if files else None
 
 
 def resolve_app_auth_json(value: str) -> Path:

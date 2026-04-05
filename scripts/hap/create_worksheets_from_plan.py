@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
 import requests
+from utils import latest_file, load_json
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 DEFAULT_BASE_URL = "https://api.mingdao.com"
@@ -29,11 +30,6 @@ WORKSHEET_PLAN_DIR = OUTPUT_ROOT / "worksheet_plans"
 WORKSHEET_CREATE_RESULT_DIR = OUTPUT_ROOT / "worksheet_create_results"
 ALLOWED_CARDINALITY = {"1-1", "1-N"}
 RELATION_UPDATE_RETRYABLE_ERRORS = {"数据过时"}
-
-
-def latest_file(base_dir: Path, pattern: str) -> Optional[Path]:
-    files = sorted(base_dir.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
-    return files[0] if files else None
 
 
 def resolve_json_input(value: str, default_pattern: str = "") -> Path:
@@ -64,12 +60,6 @@ def resolve_json_input(value: str, default_pattern: str = "") -> Path:
             if p:
                 return p.resolve()
     raise FileNotFoundError(f"未找到匹配文件: pattern={default_pattern}")
-
-
-def load_json(path: Path) -> dict:
-    if not path.exists():
-        raise FileNotFoundError(f"文件不存在: {path}")
-    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def load_app_authorize(auth_path: Path, app_id: str = "") -> dict:

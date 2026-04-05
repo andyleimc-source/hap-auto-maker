@@ -25,6 +25,7 @@ if str(CURRENT_DIR) not in sys.path:
 
 import auth_retry
 from ai_utils import AI_CONFIG_PATH, create_generation_config, get_ai_client, load_ai_config
+from utils import latest_file, load_json
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
@@ -36,17 +37,6 @@ AUTH_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "auth_config.py"
 APP_INFO_URL = "https://api.mingdao.com/v3/app"
 GET_CONTROLS_URL = "https://www.mingdao.com/api/Worksheet/GetWorksheetControls"
 VALID_SIZES = (12, 6, 4, 3)
-
-
-def latest_file(base_dir: Path, pattern: str) -> Optional[Path]:
-    files = sorted(base_dir.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
-    return files[0] if files else None
-
-
-def load_json(path: Path) -> dict:
-    if not path.exists():
-        raise FileNotFoundError(f"文件不存在: {path}")
-    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def extract_json(text: str) -> dict:

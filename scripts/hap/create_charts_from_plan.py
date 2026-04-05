@@ -28,22 +28,12 @@ SAVE_REPORT_URL = "https://api.mingdao.com/report/reportConfig/saveReportConfig"
 SAVE_PAGE_URL = "https://api.mingdao.com/report/custom/savePage"
 
 from charts import CHART_REGISTRY, REPORT_TYPE_NAMES, build_report_body as _charts_build_report_body
+from utils import load_json, write_json
 
 
 # ---------------------------------------------------------------------------
 # 工具函数
 # ---------------------------------------------------------------------------
-
-def load_json(path: Path) -> dict:
-    if not path.exists():
-        raise FileNotFoundError(f"文件不存在: {path}")
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def write_json(path: Path, payload: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-
 
 def resolve_plan_path(value: str) -> Path:
     if value:

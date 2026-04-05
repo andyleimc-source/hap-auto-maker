@@ -14,7 +14,6 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -35,6 +34,7 @@ from mock_data_common import (
     write_json,
 )
 from ai_utils import load_ai_config
+from utils import now_ts, now_iso
 
 PLAN_SCRIPT = CURRENT_DIR / "plan_role_recommendations_gemini.py"
 CREATE_SCRIPT = CURRENT_DIR / "create_roles_from_recommendation.py"
@@ -46,14 +46,6 @@ APP_VIDEO_RUNS_DIR = OUTPUT_ROOT / "app_video_runs"
 
 VIDEO_MODE_SKIP = "skip"
 VIDEO_MODE_RESUME_LATEST = "resume-latest"
-
-
-def now_ts() -> str:
-    return datetime.now().strftime("%Y%m%d_%H%M%S")
-
-
-def now_iso() -> str:
-    return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
 def choose_app_by_name(apps: List[dict], app_name: str) -> dict:

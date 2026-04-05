@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 import requests
+from utils import latest_file
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
@@ -18,11 +19,6 @@ APP_AUTH_DIR = OUTPUT_ROOT / "app_authorizations"
 WORKSHEET_INVENTORY_DIR = OUTPUT_ROOT / "worksheet_inventory"
 
 APP_INFO_URL = "https://api.mingdao.com/v3/app"
-
-
-def latest_file(base_dir: Path, pattern: str) -> Optional[Path]:
-    files = sorted(base_dir.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
-    return files[0] if files else None
 
 
 def resolve_app_auth_json(value: str) -> Path:

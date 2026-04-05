@@ -21,6 +21,7 @@ if str(CURRENT_DIR) not in sys.path:
     sys.path.insert(0, str(CURRENT_DIR))
 
 from script_locator import resolve_script
+from utils import latest_file
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
@@ -33,11 +34,6 @@ CREATE_SCRIPT = resolve_script("create_worksheets_from_plan.py")
 PIPELINE_ICON_SCRIPT = resolve_script("pipeline_icon.py")
 
 APP_INFO_URL = "https://api.mingdao.com/v3/app"
-
-
-def latest_file(base_dir: Path, pattern: str) -> Optional[Path]:
-    files = sorted(base_dir.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
-    return files[0] if files else None
 
 
 def extract_json_object(text: str) -> Optional[dict]:

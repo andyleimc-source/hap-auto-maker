@@ -29,6 +29,7 @@ from mock_data_common import (
     simplify_field,
     write_json,
 )
+from utils import now_ts, write_json_with_latest
 
 ICON_JSON_PATH = BASE_DIR / "data" / "assets" / "icons" / "icon.json"
 CHATBOT_OUTPUT_DIR = OUTPUT_ROOT / "chatbot"
@@ -68,21 +69,10 @@ def ensure_chatbot_dirs() -> None:
         ensure_dir(path)
 
 
-def now_ts() -> str:
-    return now_iso().replace("-", "").replace(":", "").replace("+08:00", "").replace("T", "_")
-
-
 def make_chatbot_log_path(prefix: str, app_id: str = "") -> Path:
     ensure_chatbot_dirs()
     safe_app = (app_id or "general").replace("/", "_")
     return (CHATBOT_LOG_DIR / f"{prefix}_{safe_app}_{now_ts()}.jsonl").resolve()
-
-
-def write_json_with_latest(output_dir: Path, output_path: Path, latest_name: str, payload: dict) -> Path:
-    ensure_dir(output_dir)
-    write_json(output_path, payload)
-    write_json((output_dir / latest_name).resolve(), payload)
-    return output_path
 
 
 def flatten_sections(sections: List[dict], level: int = 0) -> List[dict]:

@@ -15,7 +15,6 @@ import subprocess
 import sys
 import textwrap
 import threading
-from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -26,6 +25,7 @@ if str(CURRENT_DIR) not in sys.path:
     sys.path.insert(0, str(CURRENT_DIR))
 
 from script_locator import resolve_script
+from utils import now_ts, now_iso, load_json
 
 # 启用终端行编辑（方向键左右移动等）
 try:
@@ -104,20 +104,6 @@ def _load_org_group_ids() -> str:
         return str(data.get("group_ids", "")).strip()
     except Exception:
         return ""
-
-
-def now_iso() -> str:
-    return datetime.now().astimezone().isoformat(timespec="seconds")
-
-
-def now_ts() -> str:
-    return datetime.now().strftime("%Y%m%d_%H%M%S")
-
-
-def load_json(path: Path) -> dict:
-    if not path.exists():
-        raise FileNotFoundError(f"文件不存在: {path}")
-    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def extract_json(text: str) -> dict:

@@ -35,6 +35,7 @@ if str(CURRENT_DIR) not in sys.path:
     sys.path.insert(0, str(CURRENT_DIR))
 
 import auth_retry
+from utils import latest_file
 
 HAP_BASE = "https://api.mingdao.com"
 APP_INFO_URL = f"{HAP_BASE}/v3/app"
@@ -46,11 +47,6 @@ DELETE_ALL_VIEWS = False  # 由 --all-views 参数覆盖
 
 
 # ---------- HAP auth ----------
-
-def latest_file(base_dir: Path, pattern: str) -> Optional[Path]:
-    files = sorted(base_dir.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
-    return files[0] if files else None
-
 
 def resolve_app_auth_json(value: str) -> Path:
     if value:

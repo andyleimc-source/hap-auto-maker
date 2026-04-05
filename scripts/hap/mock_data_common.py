@@ -18,6 +18,7 @@ import requests
 from ai_utils import AI_CONFIG_PATH, load_ai_config
 
 import auth_retry
+from utils import now_ts, now_iso, latest_file, load_json, write_json, write_json_with_latest
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
@@ -146,46 +147,13 @@ CONTROL_TYPE_MAP = {
 }
 
 
-def now_ts() -> str:
-    return datetime.now().strftime("%Y%m%d_%H%M%S")
-
-
-def now_iso() -> str:
-    return datetime.now().astimezone().isoformat(timespec="seconds")
-
-
 def sanitize_name(name: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_-]+", "_", name).strip("_") or "item"
-
-
-def latest_file(base_dir: Path, pattern: str) -> Optional[Path]:
-    files = sorted(base_dir.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
-    return files[0] if files else None
 
 
 def ensure_dir(path: Path) -> Path:
     path.mkdir(parents=True, exist_ok=True)
     return path
-
-
-def load_json(path: Path) -> dict:
-    if not path.exists():
-        raise FileNotFoundError(f"文件不存在: {path}")
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def write_json(path: Path, payload: dict) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    return path
-
-
-def write_json_with_latest(output_dir: Path, output_path: Path, latest_name: str, payload: dict) -> Path:
-    ensure_dir(output_dir)
-    write_json(output_path, payload)
-    latest_path = (output_dir / latest_name).resolve()
-    write_json(latest_path, payload)
-    return output_path
 
 
 def make_log_path(prefix: str, app_id: str = "") -> Path:

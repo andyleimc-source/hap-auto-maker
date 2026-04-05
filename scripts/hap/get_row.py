@@ -13,15 +13,11 @@ import json
 from pathlib import Path
 
 import requests
+from utils import latest_file
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 APP_AUTH_DIR = BASE_DIR / "data" / "outputs" / "app_authorizations"
 V3_BASE = "https://api.mingdao.com"
-
-
-def latest_file(base_dir: Path, pattern: str):
-    files = sorted(base_dir.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
-    return files[0] if files else None
 
 
 def resolve_auth(value: str) -> Path:
