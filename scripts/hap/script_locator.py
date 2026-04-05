@@ -18,6 +18,9 @@ CURRENT_DIR = Path(__file__).resolve().parent
 
 SEARCH_DIRS = (
     CURRENT_DIR,
+    CURRENT_DIR / "planners",
+    CURRENT_DIR / "executors",
+    CURRENT_DIR / "pipeline",
     SCRIPTS_DIR / "gemini",
     SCRIPTS_DIR / "auth",
     SCRIPTS_DIR,
