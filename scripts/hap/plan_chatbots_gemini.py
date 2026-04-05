@@ -95,7 +95,7 @@ def build_prompt(schema: dict, feedback_history: List[dict], previous_proposals:
         previous_text = json.dumps(previous_proposals, ensure_ascii=False, indent=2)
 
     return f"""
-你是明道云 HAP 对话机器人策划顾问。请基于以下应用结构，为该应用随机生成 2 个高质量、彼此差异明显的对话机器人方案。
+你是明道云 HAP 对话机器人策划顾问。请基于以下应用结构，为该应用生成 1 个高质量的对话机器人方案。
 
 应用名称：{app_name}
 目标分组：{str(selected_section.get('name', '')).strip() or '默认分组'}
@@ -109,12 +109,11 @@ def build_prompt(schema: dict, feedback_history: List[dict], previous_proposals:
 {feedback_text}
 
 要求：
-1. 必须输出 2 个机器人。
-2. 每个机器人必须适配该应用现有工作表，不要脱离业务。
-3. 名称简洁，不要重复，不要出现“助手1/助手2”这种占位名。
+1. 必须输出 1 个机器人。
+2. 机器人必须适配该应用现有工作表，不要脱离业务。
+3. 名称简洁，不要出现”助手”这种占位名。
 4. 简介要说明它主要处理什么数据、解决什么问题。
-5. 三个方案要尽量覆盖不同角色或不同业务切面。
-6. 输出严格 JSON，不要 markdown，不要解释。
+5. 输出严格 JSON，不要 markdown，不要解释。
 
 JSON 结构如下：
 {{
