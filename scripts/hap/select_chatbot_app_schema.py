@@ -34,6 +34,11 @@ DEFAULT_BASE_URL = "https://api.mingdao.com"
 def auto_pick_section(sections: list[dict]) -> dict:
     if not sections:
         raise RuntimeError("当前应用没有可用分组，无法创建对话机器人")
+    # 优先找"仪表盘"分组（统计页面和机器人专用）
+    for section in sections:
+        if section.get("name") == "仪表盘" and str(section.get("appSectionId", "")).strip():
+            return section
+    # 兜底：第一个有 ID 的分组
     for section in sections:
         if str(section.get("appSectionId", "")).strip():
             return section
