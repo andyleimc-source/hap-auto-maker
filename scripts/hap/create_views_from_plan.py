@@ -174,7 +174,7 @@ def normalize_calendarcids(value: Any) -> str:
     return json.dumps(normalized, ensure_ascii=False, separators=(",", ":"))
 
 
-def auto_complete_post_updates(view: dict) -> list[dict]:
+def auto_complete_post_updates(view: dict, ws_fields: list[dict] | None = None) -> list[dict]:
     """从注册中心自动生成 postCreateUpdates，补全 AI 未填写的关键配置。
 
     针对甘特图(5)、层级视图(2)、资源视图(9)等需要二次保存的视图类型，
@@ -220,10 +220,23 @@ def auto_complete_post_updates(view: dict) -> list[dict]:
     # ── 层级视图(2): viewControl + childType ────────────────────────────────
     # 抓包确认（2026-04-04）：保存时用 viewControl='create' 让 HAP 自动创建
     # 自关联字段，或用具体字段 ID。childType=1 表示使用关联字段模式。
+    # ⚠️ 重要：如果工作表已有自关联字段(type=29, dataSource=本表)，必须复用，
+    #    禁止用 "create" 重复创建，否则每次跑都会新建一对父/子字段。
     if view_type == 2:
         layers_id = str(view.get("layersControlId", "") or "").strip()
         for upd in view.get("postCreateUpdates") or []:
             layers_id = layers_id or str(upd.get("layersControlId", "")).strip()
+        # 如果 AI 没有提供字段 ID，从工作表字段列表中查找已有的自关联字段
+        if not layers_id and ws_fields:
+            ws_id_self = str(view.get("_worksheetId", "") or "").strip()
+            for f in ws_fields:
+                f_type = int(f.get("type", 0) or f.get("controlType", 0) or 0)
+                f_datasource = str(f.get("dataSource", "")).strip()
+                f_id = str(f.get("id", "") or f.get("controlId", "")).strip()
+                # 自关联：type=29 且 dataSource 是本表
+                if f_type == 29 and f_datasource and (not ws_id_self or f_datasource == ws_id_self):
+                    layers_id = f_id
+                    break
         view_control = layers_id or "create"
         return [{
             "editAttrs": ["viewControl", "childType", "viewType"],
@@ -511,7 +524,11 @@ def main() -> None:
                 ai_updates = view.get("postCreateUpdates")
                 if not isinstance(ai_updates, list):
                     ai_updates = []
-                auto_updates = auto_complete_post_updates(view)
+                # 传入工作表字段列表和工作表 ID，供层级视图复用已有自关联字段
+                view_with_ws = dict(view)
+                view_with_ws["_worksheetId"] = ws_id
+                ws_fields = ws.get("fields", [])
+                auto_updates = auto_complete_post_updates(view_with_ws, ws_fields)
                 post_updates = merge_post_updates(ai_updates, auto_updates, view_type_int)
                 if created_view_id and final_success:
                     for upd in post_updates:
