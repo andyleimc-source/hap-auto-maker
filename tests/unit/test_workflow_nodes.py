@@ -152,14 +152,18 @@ class TestRecordOpsBuild:
             node_type, "proc-1", "node-1", "ws-1", "操作", extra or {}
         )
 
-    def test_delete_record_returns_none(self):
-        # typeId=6 由 add_action_nodes 处理，build 返回 None
+    def test_delete_record_returns_body(self):
+        # typeId=6，build() 直接返回 body（delete_record 现已实现）
         result = self._build("delete_record")
-        assert result is None
+        assert result is not None
+        assert result["flowNodeType"] == 6
+        assert result["actionId"] == "3"
 
-    def test_get_record_returns_none(self):
+    def test_get_record_returns_body(self):
         result = self._build("get_record")
-        assert result is None
+        assert result is not None
+        assert result["flowNodeType"] == 6
+        assert result["actionId"] == "4"
 
     def test_get_records_returns_body(self):
         body = self._build("get_records")
