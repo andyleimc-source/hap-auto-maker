@@ -633,6 +633,9 @@ def main() -> None:
             "--requirements", str(ws.get("requirements", "")),
             "--output", str(plan_output),
         ]
+        max_ws = int(ws.get("max_worksheets", 0) or 0)
+        if max_ws > 0:
+            cmd2a.extend(["--max-worksheets", str(max_ws)])
         return execute_step(2, "worksheets_plan", "规划工作表", cmd2a, uses_gemini=True)
 
     def run_step_3() -> bool:
