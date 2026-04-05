@@ -207,6 +207,40 @@ def fetch_controls(worksheet_id: str, auth_config_path: Path) -> dict:
     return {"fields": controls}
 
 
+WORKSHEET_INFO_URL = "https://api.mingdao.com/v3/app/worksheets/{worksheet_id}"
+
+
+def fetch_worksheet_views(worksheet_id: str, app_key: str, sign: str) -> list[dict]:
+    """获取工作表的所有视图列表（v3 API）。"""
+    url = WORKSHEET_INFO_URL.format(worksheet_id=worksheet_id)
+    headers = {"HAP-Appkey": app_key, "HAP-Sign": sign, "Accept": "application/json, text/plain, */*"}
+    resp = requests.get(url, headers=headers, timeout=30)
+    data = resp.json()
+    if not data.get("success"):
+        return []
+    views = data.get("data", {}).get("views") or []
+    return views if isinstance(views, list) else []
+
+
+def find_default_all_view(views: list[dict]) -> Optional[dict]:
+    """从视图列表中找到系统默认的"全部"视图（viewType=0 且 name="全部"的第一个）。"""
+    for v in views:
+        if not isinstance(v, dict):
+            continue
+        vtype = v.get("viewType")
+        if isinstance(vtype, str):
+            try:
+                vtype = int(vtype)
+            except ValueError:
+                continue
+        name = str(v.get("name", "")).strip()
+        if vtype == 0 and name == "全部":
+            view_id = str(v.get("viewId") or v.get("id") or "").strip()
+            if view_id:
+                return {"viewId": view_id, "viewName": name, "viewType": "0", "viewTypeName": "表格视图"}
+    return None
+
+
 def load_view_targets(path: Path, wanted_app_ids: Optional[set[str]] = None) -> Dict[str, Dict[str, List[dict]]]:
     data = load_json(path)
     apps = data.get("apps")
@@ -633,8 +667,23 @@ def main() -> None:
         picked_apps = [apps[i - 1] for i in picked]
 
     wanted_app_ids = {app["appId"] for app in picked_apps}
-    view_create_result_path = resolve_view_create_result_json(args.view_create_result.strip())
-    view_targets_by_app = load_view_targets(view_create_result_path, wanted_app_ids=wanted_app_ids)
+
+    # view_create_result 可能不存在（如 views 步骤被跳过），此时只配置默认视图
+    view_targets_by_app: Dict[str, Dict[str, List[dict]]] = {}
+    view_create_result_path: Optional[Path] = None
+    vcr_arg = args.view_create_result.strip()
+    if vcr_arg:
+        try:
+            view_create_result_path = resolve_view_create_result_json(vcr_arg)
+            view_targets_by_app = load_view_targets(view_create_result_path, wanted_app_ids=wanted_app_ids)
+        except FileNotFoundError:
+            print("  ⚠ 视图创建结果文件不存在，仅配置默认视图")
+    else:
+        try:
+            view_create_result_path = resolve_view_create_result_json("")
+            view_targets_by_app = load_view_targets(view_create_result_path, wanted_app_ids=wanted_app_ids)
+        except FileNotFoundError:
+            print("  ⚠ 未找到视图创建结果文件，仅配置默认视图")
 
     output_apps = []
     total_views = 0
@@ -643,10 +692,33 @@ def main() -> None:
         ws_list = fetch_worksheets(app["appKey"], app["sign"])
         app_out = {"appId": app["appId"], "appName": app["appName"], "worksheets": []}
 
-        # 筛选出有目标视图的工作表，并行拉取字段
+        # 获取每个工作表的视图列表，注入默认"全部"视图到 targets
+        created_view_targets = view_targets_by_app.get(app["appId"], {})
+
+        def _inject_default_view(ws):
+            """为工作表注入默认全部视图到 target 列表。"""
+            ws_id = ws["workSheetId"]
+            targets = list(created_view_targets.get(ws_id, []))
+            existing_view_ids = {t["viewId"] for t in targets}
+            # 获取工作表现有视图，找默认"全部"视图
+            ws_views = fetch_worksheet_views(ws_id, app["appKey"], app["sign"])
+            default_view = find_default_all_view(ws_views)
+            if default_view and default_view["viewId"] not in existing_view_ids:
+                targets.insert(0, default_view)
+            return ws_id, targets
+
+        with ThreadPoolExecutor(max_workers=min(8, max(1, len(ws_list)))) as ex:
+            default_view_results = list(ex.map(_inject_default_view, ws_list))
+
+        # 合并: 用注入后的 targets 替换原始 targets
+        enriched_targets: Dict[str, List[dict]] = {}
+        for ws_id, targets in default_view_results:
+            if targets:
+                enriched_targets[ws_id] = targets
+
         ws_with_targets = [
             ws for ws in ws_list
-            if view_targets_by_app.get(app["appId"], {}).get(ws["workSheetId"])
+            if enriched_targets.get(ws["workSheetId"])
         ]
         if not ws_with_targets:
             output_apps.append(app_out)
@@ -664,7 +736,7 @@ def main() -> None:
         ws_meta = {}  # ws_id -> (fields, field_map, views_by_id, target_views)
         for ws, fields in ws_fields_pairs:
             ws_id = ws["workSheetId"]
-            target_views = view_targets_by_app[app["appId"]][ws_id]
+            target_views = enriched_targets[ws_id]
             field_map = {str(f.get("id", "")).strip(): f for f in fields if str(f.get("id", "")).strip()}
             views_by_id = {str(v.get("viewId", "")).strip(): v for v in target_views}
             ws_meta[ws_id] = (fields, field_map, views_by_id, target_views)
@@ -731,7 +803,7 @@ def main() -> None:
         "generatedAt": datetime.now().isoformat(timespec="seconds"),
         "model": model_name,
         "source": "view_filter_plan_ai_v2",
-        "viewCreateResultJson": str(view_create_result_path),
+        "viewCreateResultJson": str(view_create_result_path) if view_create_result_path else "",
         "apps": output_apps,
         "summary": {"appCount": len(output_apps), "viewCount": total_views},
     }
