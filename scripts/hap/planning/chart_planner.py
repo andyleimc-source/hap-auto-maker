@@ -261,11 +261,29 @@ def validate_enhanced_plan(
                 chart["xaxes"]["controlId"] = None  # 自动修正
                 print(f"  [自动修正] 图表 {i+1}「{name}」reportType={report_type}，xaxes.controlId 已修正为 null")
 
-        # 双轴图：确保有 yreportType
-        if _HAS_SCHEMA and report_type == DUAL_AXIS_TYPE:
+        # 双轴图/对称条形图：确保有 yreportType 且 rightY.yaxisList 非空
+        if _HAS_SCHEMA and report_type in (DUAL_AXIS_TYPE, 11):
             if chart.get("yreportType") is None:
                 chart["yreportType"] = 2  # 默认右轴为折线图
                 print(f"  [自动补全] 图表 {i+1}「{name}」双轴图自动设置 yreportType=2")
+            right_y = chart.get("rightY")
+            right_y_list = right_y.get("yaxisList", []) if isinstance(right_y, dict) else []
+            if not isinstance(right_y, dict) or not right_y_list:
+                # rightY 缺失或辅助Y轴为空 → 用主轴第一个字段作为兜底，或降级为柱图
+                yaxis_list = chart.get("yaxisList", [])
+                if yaxis_list:
+                    fallback_y = dict(yaxis_list[0])
+                    fallback_y["rename"] = fallback_y.get("rename", "") + "（右轴）"
+                    chart["rightY"] = {
+                        "reportType": 2,
+                        "yaxisList": [fallback_y],
+                    }
+                    print(f"  [自动补全] 图表 {i+1}「{name}」rightY.yaxisList 为空，复用主轴字段作为右轴兜底")
+                else:
+                    print(f"  [降级] 图表 {i+1}「{name}」双轴图缺少 rightY 且 yaxisList 为空，降级为柱图")
+                    chart["reportType"] = 1
+                    chart.pop("yreportType", None)
+                    chart.pop("rightY", None)
 
         yaxis_list = chart.get("yaxisList", [])
         if not isinstance(yaxis_list, list) or len(yaxis_list) == 0:

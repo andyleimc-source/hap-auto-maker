@@ -402,15 +402,22 @@ def validate_plan(raw: dict, worksheets_by_id: Dict[str, dict]) -> List[dict]:
             continue
         chart["yaxisList"] = clean_yaxis
 
-        # 双轴图(reportType=8) 必须有 rightY 且 rightY.yaxisList 非空，否则降级为柱状图(1)
-        if report_type == 8:
+        # 双轴图(7)/对称条形图(11) 必须有 rightY 且 rightY.yaxisList 非空
+        if report_type in (7, 11):
             right_y = chart.get("rightY")
             right_y_list = right_y.get("yaxisList", []) if isinstance(right_y, dict) else []
             if not isinstance(right_y, dict) or not right_y_list:
-                print(f"[降级] 图表 {i+1}「{name}」双轴图缺少 rightY/辅助Y轴，降级为柱状图(reportType=1)")
-                chart["reportType"] = 1
-                chart.pop("yreportType", None)
-                chart.pop("rightY", None)
+                # 用主轴第一个字段兜底，而非直接降级
+                if clean_yaxis:
+                    fallback_y = dict(clean_yaxis[0])
+                    fallback_y["rename"] = fallback_y.get("rename", "") + "（右轴）"
+                    chart["rightY"] = {"reportType": 2, "yaxisList": [fallback_y]}
+                    print(f"[自动补全] 图表 {i+1}「{name}」rightY.yaxisList 为空，复用主轴字段作为右轴兜底")
+                else:
+                    print(f"[降级] 图表 {i+1}「{name}」双轴图缺少 rightY 且 yaxisList 为空，降级为柱状图(reportType=1)")
+                    chart["reportType"] = 1
+                    chart.pop("yreportType", None)
+                    chart.pop("rightY", None)
 
         validated.append(chart)
     if not validated:
