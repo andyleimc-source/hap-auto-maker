@@ -62,12 +62,12 @@ def build_prompt(app_name: str, worksheets: List[dict]) -> str:
 请将上述工作表划分为 2-5 个业务分组（Section），每个分组包含功能或业务上相关的工作表。
 
 分组原则：
-1. 同一业务领域的工作表放一组（如客户相关、财务相关、生产相关）
-2. 每个分组最少 2 张工作表，最多 8 张工作表
-3. 所有工作表都必须被分配，不能遗漏
-4. 分组名称用 2-6 个中文字，简洁明了
-5. 如果某分组只剩 1 张工作表，将其合并到最相关的分组中
-6. 额外创建一个名为"数据分析"的空分组（worksheets 为空数组 []），用于后续放置统计页面和对话机器人
+1. 第一个分组必须固定为"仪表盘"，worksheets 为空数组 []，用于放置统计页面和对话机器人
+2. 同一业务领域的工作表放一组（如客户相关、财务相关、生产相关）
+3. 每个业务分组最少 2 张工作表，最多 8 张工作表
+4. 所有工作表都必须被分配，不能遗漏
+5. 分组名称用 2-6 个中文字，简洁明了
+6. 如果某分组只剩 1 张工作表，将其合并到最相关的分组中
 7. 每个分组内，主表（核心业务表）排在前面，明细表/子表/辅助表排在后面
 
 ## 输出格式（严格 JSON，不要任何解释文字）
@@ -75,7 +75,11 @@ def build_prompt(app_name: str, worksheets: List[dict]) -> str:
 {{
   "sections": [
     {{
-      "name": "分组名称",
+      "name": "仪表盘",
+      "worksheets": []
+    }},
+    {{
+      "name": "业务分组名称",
       "worksheets": ["工作表名1", "工作表名2"]
     }}
   ]
@@ -146,10 +150,13 @@ def main() -> None:
     worksheet_names: Set[str] = {str(ws.get("name", "")).strip() for ws in worksheets if ws.get("name")}
 
     if len(worksheets) < 4:
-        # 工作表数量不足以形成多分组，全部放一个默认分组
+        # 工作表数量不足以形成多分组，全部放一个默认分组；"仪表盘"排第一
         result = {
             "app_name": app_name,
-            "sections": [{"name": "全部", "worksheets": list(worksheet_names)}]
+            "sections": [
+                {"name": "仪表盘", "worksheets": []},
+                {"name": "全部", "worksheets": list(worksheet_names)},
+            ]
         }
     else:
         ai_config = load_ai_config(AI_CONFIG_PATH, tier="fast")
@@ -160,7 +167,16 @@ def main() -> None:
         plan_result = call_ai_plan(prompt, ai_config, client)
 
         validate_sections_plan(plan_result, worksheet_names)
-        result = {"app_name": app_name, "sections": plan_result["sections"]}
+        sections = plan_result["sections"]
+        # 确保"仪表盘"分组存在且排第一（防止 AI 不遵守）
+        dashboard = next((s for s in sections if s.get("name") == "仪表盘"), None)
+        if dashboard is None:
+            dashboard = {"name": "仪表盘", "worksheets": []}
+            sections.insert(0, dashboard)
+        elif sections[0].get("name") != "仪表盘":
+            sections.remove(dashboard)
+            sections.insert(0, dashboard)
+        result = {"app_name": app_name, "sections": sections}
 
     # 输出路径
     if args.output:
