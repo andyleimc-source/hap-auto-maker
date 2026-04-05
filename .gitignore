@@ -39,17 +39,30 @@ data/logs/
 data/outputs/
 data/temp/
 
-# PRD & 本地开发文档 (不同步到 Git)
+# 本地开发 & 项目内部文档（不公开）
 PRD.md
 plan.md
 progress.md
 rules.md
 achieve/
-# vibi 标准开发文档
 PLAN.md
 RULES.md
 DEBUG.md
 TEST_CASES.md
+HANDOFF.md
+BUG.md
+DECISIONS.md
+LESSONS.md
+FIXPLAN*.md
+todo.md
+archive/
+
+# 本地 memory（AI 跨会话记忆，含项目内部信息）
+memory/
+
+# 工作流 / 规划运行产物（含 app_id 等运行时数据）
+workflow/output/
+workflow/docs/
 
 # Ruff lint 缓存
 .ruff_cache/
