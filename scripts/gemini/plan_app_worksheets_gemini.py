@@ -322,6 +322,7 @@ def main() -> None:
     parser.add_argument("--config", default=str(CONFIG_PATH), help="AI 配置 JSON 路径")
     parser.add_argument("--output", default="", help="输出 JSON 文件路径")
     parser.add_argument("--max-retries", type=int, default=MAX_PLAN_RETRIES, help="规划校验失败后的最大重试次数")
+    parser.add_argument("--max-worksheets", type=int, default=0, help="工作表数量上限（0=不限）")
     args = parser.parse_args()
 
     # 显式使用 reasoning 档位
@@ -329,6 +330,7 @@ def main() -> None:
     client = get_ai_client(ai_config)
     model_name = ai_config["model"]
     min_worksheet_count = extract_min_worksheet_count(args.requirements)
+    max_worksheet_count = args.max_worksheets
 
     # 使用 worksheet_planner 生成增强版 prompt（含注册中心字段类型枚举）
     prompt = build_enhanced_prompt(
@@ -336,6 +338,7 @@ def main() -> None:
         business_context=args.business_context,
         extra_requirements=args.requirements,
         min_worksheets=min_worksheet_count,
+        max_worksheets=max_worksheet_count,
     )
     print(f"[prompt] 长度={len(prompt)}，前200字: {prompt[:200]!r}")
 
@@ -385,7 +388,7 @@ def main() -> None:
             extra_requirements=args.requirements,
         )
         # 使用 worksheet_planner 增强校验（含注册中心字段类型检查）
-        validation_errors = validate_worksheet_plan(plan, min_worksheets=min_worksheet_count)
+        validation_errors = validate_worksheet_plan(plan, min_worksheets=min_worksheet_count, max_worksheets=max_worksheet_count)
         if validation_errors:
             print(f"[validate attempt={attempt}] 发现 {len(validation_errors)} 个错误: {validation_errors}")
         if not validation_errors:

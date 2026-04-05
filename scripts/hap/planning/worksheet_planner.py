@@ -53,13 +53,17 @@ def build_enhanced_prompt(
     business_context: str,
     extra_requirements: str = "",
     min_worksheets: int = 0,
+    max_worksheets: int = 0,
 ) -> str:
     """生成增强版工作表规划 prompt。"""
     field_type_enum = build_field_type_enum()
     field_type_section = build_field_type_prompt_section()
     count_rule = ""
     if min_worksheets > 0:
-        count_rule = f"\n12) worksheets 数量必须 >= {min_worksheets}。"
+        count_rule += f"\n12) worksheets 数量必须 >= {min_worksheets}。"
+    if max_worksheets > 0:
+        count_rule += f"\n13) worksheets 数量必须 <= {max_worksheets}，超出则合并相似业务表。"
+    count_rule += '\n14) app_name 必须为 10 个中文字以内的简洁名称，不要带「管理平台」「管理系统」等后缀。'
 
     return f"""你是企业应用架构师。请为应用《{app_name}》设计工作表结构，输出严格 JSON。
 
@@ -116,15 +120,24 @@ def build_enhanced_prompt(
 12) Number/Money 字段必须设 unit（如 % 元 天 小时）和 dot（小数位数），进度/百分比字段 unit="%"、dot=1{count_rule}"""
 
 
-def validate_worksheet_plan(plan: dict, min_worksheets: int = 0) -> list[str]:
+def validate_worksheet_plan(plan: dict, min_worksheets: int = 0, max_worksheets: int = 0) -> list[str]:
     """增强版校验，利用注册中心检查字段类型。"""
     errors = []
+
+    # 校验 app_name 长度
+    app_name = str(plan.get("app_name", "")).strip()
+    if app_name and len(app_name) > 10:
+        errors.append(f"app_name 过长: 「{app_name}」({len(app_name)}字)，必须 <= 10 个中文字")
+
     worksheets = plan.get("worksheets", [])
     if not isinstance(worksheets, list):
         return ["worksheets 必须是数组"]
 
     if min_worksheets > 0 and len(worksheets) < min_worksheets:
         errors.append(f"worksheets 数量不足: 期望至少 {min_worksheets}，实际 {len(worksheets)}")
+
+    if max_worksheets > 0 and len(worksheets) > max_worksheets:
+        errors.append(f"worksheets 数量超限: 期望最多 {max_worksheets}，实际 {len(worksheets)}")
 
     ws_names = set()
     for i, ws in enumerate(worksheets):

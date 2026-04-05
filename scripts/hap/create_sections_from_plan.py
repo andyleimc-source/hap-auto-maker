@@ -129,6 +129,22 @@ def patch_worksheet_plan(plan_path: Path, sections: List[dict], name_to_section_
     print(f"  ✓ 已更新 worksheet_plan.json 中 {updated} 个工作表的 appSectionId")
 
 
+def rename_section(app_id: str, section_id: str, name: str, dry_run: bool) -> None:
+    """重命名已有分组。"""
+    max_retries = 3
+    for attempt in range(max_retries):
+        resp = hap_post(RENAME_SECTION_URL, app_id, {
+            "appId": app_id,
+            "appSectionId": section_id,
+            "name": name,
+        }, dry_run)
+        if dry_run or resp.get("state") == 1:
+            return
+        print(f"  ⚠ 重命名默认分组第 {attempt + 1} 次失败: {resp}")
+        if attempt == max_retries - 1:
+            raise RuntimeError(f"重命名默认分组失败: {resp}")
+
+
 def run_mode_one(args) -> dict:
     """创建分组并写回 worksheet_plan。返回 result dict。"""
     sections_plan = load_json(Path(args.sections_plan_json).expanduser().resolve())
@@ -139,15 +155,29 @@ def run_mode_one(args) -> dict:
         print("sections_plan 中没有分组，跳过")
         return {"app_id": args.app_id, "sections": [], "worksheet_name_to_section_id": {}}
 
+    # 获取默认分组 ID，第一个分组复用它（避免留下"未命名分组"）
+    default_section_id = get_default_section_id(args.app_id) if not args.dry_run else ""
+
     name_to_section_id: Dict[str, str] = {}
     result_sections = []
+    first_section = True
 
     for sec in sections:
         name = str(sec.get("name", "")).strip()
         if not name:
             print(f"  ⚠ 跳过无名分组: {sec}")
             continue
-        section_id = create_section(args.app_id, name, args.dry_run)
+
+        if first_section and default_section_id:
+            # 复用默认分组：重命名而非新建
+            rename_section(args.app_id, default_section_id, name, args.dry_run)
+            section_id = default_section_id
+            print(f"  ✓ 复用默认分组→「{name}」({section_id})")
+            first_section = False
+        else:
+            section_id = create_section(args.app_id, name, args.dry_run)
+            first_section = False
+
         name_to_section_id[name] = section_id
         result_sections.append({
             "name": name,
