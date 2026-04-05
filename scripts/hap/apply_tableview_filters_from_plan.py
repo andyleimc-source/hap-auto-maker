@@ -158,7 +158,7 @@ def main() -> None:
             view_name = str(vp.get("viewName", "")).strip()
             view_type = str(vp.get("viewType", "")).strip()
             view_result = {"viewId": view_id, "viewName": view_name, "viewType": view_type, "navApply": None, "fastApply": None}
-            stats = {"navAppliedCount": 0, "fastAppliedCount": 0, "failedCount": 0}
+            stats = {"navAppliedCount": 0, "fastAppliedCount": 0, "colorAppliedCount": 0, "groupAppliedCount": 0, "failedCount": 0}
 
             if bool(vp.get("needNavGroup", False)) and view_type in NAV_SUPPORTED_VIEW_TYPES:
                 payload = {
@@ -219,7 +219,7 @@ def main() -> None:
                 ok = bool(args.dry_run) or (isinstance(resp, dict) and int(resp.get("state", 0) or 0) == 1)
                 view_result["colorApply"] = {"payload": payload, "response": resp, "success": ok}
                 if ok:
-                    stats["colorAppliedCount"] = stats.get("colorAppliedCount", 0) + 1
+                    stats["colorAppliedCount"] += 1
                 else:
                     stats["failedCount"] += 1
             else:
@@ -257,7 +257,7 @@ def main() -> None:
                 ok = bool(args.dry_run) or (isinstance(resp, dict) and int(resp.get("state", 0) or 0) == 1)
                 view_result["groupApply"] = {"payload": payload, "response": resp, "success": ok}
                 if ok:
-                    stats["groupAppliedCount"] = stats.get("groupAppliedCount", 0) + 1
+                    stats["groupAppliedCount"] += 1
                 else:
                     stats["failedCount"] += 1
             else:
