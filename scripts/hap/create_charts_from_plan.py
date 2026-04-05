@@ -244,12 +244,14 @@ def _build_report_body_legacy(chart: dict, app_id: str) -> dict:
         xaxes_payload["controlName"] = ""
         xaxes_payload["cname"] = ""
 
-    # 双轴图（reportType=8）需要设置第二轴类型
+    # 双轴图（reportType=7）需要设置第二轴类型和 rightY
     yreport_type = chart.get("yreportType")
-    if report_type == 8 and yreport_type is None:
+    if report_type == 7 and yreport_type is None:
         yreport_type = 2  # 默认第二轴为折线图
 
-    return {
+    right_y_raw = chart.get("rightY")
+
+    body = {
         "splitId": "",
         "split": {},
         "displaySetup": display_setup,
@@ -286,6 +288,16 @@ def _build_report_body_legacy(chart: dict, app_id: str) -> dict:
         "id": "",
         "version": "6.5",
     }
+
+    # 双轴图：把 rightY 的 yaxisList 序列化后写入 body
+    if report_type == 7 and isinstance(right_y_raw, dict):
+        right_y_list = right_y_raw.get("yaxisList", [])
+        body["rightY"] = {
+            "reportType": int(right_y_raw.get("reportType", 2)),
+            "yaxisList": [build_yaxis_payload(y) for y in right_y_list],
+        }
+
+    return body
 
 
 # ---------------------------------------------------------------------------
