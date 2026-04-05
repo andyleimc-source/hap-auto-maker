@@ -24,7 +24,7 @@ from typing import Any, Optional
 import auth_retry
 from utils import now_ts, latest_file, load_json, write_json
 
-BASE_DIR = Path(__file__).resolve().parents[2]
+BASE_DIR = Path(__file__).resolve().parents[3]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 PLAN_DIR = OUTPUT_ROOT / "tableview_filter_plans"
 RESULT_DIR = OUTPUT_ROOT / "tableview_filter_apply_results"

@@ -33,7 +33,7 @@ from ai_utils import create_generation_config, get_ai_client, load_ai_config
 from utils import now_ts, load_json, write_json
 from planning.chart_planner import build_enhanced_prompt as chart_planner_build_prompt
 
-BASE_DIR = Path(__file__).resolve().parents[2]
+BASE_DIR = Path(__file__).resolve().parents[3]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 CHART_PLAN_DIR = OUTPUT_ROOT / "chart_plans"
 MOCK_SCHEMA_DIR = OUTPUT_ROOT / "mock_data_schema_snapshots"

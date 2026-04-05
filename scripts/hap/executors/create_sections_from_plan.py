@@ -32,7 +32,7 @@ from typing import Any, Dict, List, Optional
 import auth_retry
 from utils import now_ts, load_json, write_json
 
-BASE_DIR = Path(__file__).resolve().parents[2]
+BASE_DIR = Path(__file__).resolve().parents[3]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 SECTIONS_CREATE_RESULT_DIR = OUTPUT_ROOT / "sections_create_results"
 AUTH_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "auth_config.py"

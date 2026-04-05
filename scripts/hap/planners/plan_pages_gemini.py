@@ -30,7 +30,7 @@ import auth_retry
 from ai_utils import AI_CONFIG_PATH, create_generation_config, get_ai_client, load_ai_config
 from utils import now_ts, load_json, write_json
 
-BASE_DIR = Path(__file__).resolve().parents[2]
+BASE_DIR = Path(__file__).resolve().parents[3]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 PAGE_PLAN_DIR = OUTPUT_ROOT / "page_plans"
 LOG_DIR = BASE_DIR / "data" / "logs"

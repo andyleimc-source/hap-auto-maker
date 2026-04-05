@@ -48,7 +48,7 @@ except ImportError as _vp_import_err:
     _HAS_VIEW_PLANNER = False
     print(f"[warning] view_planner 不可用，回退到单阶段模式: {_vp_import_err}", file=_sys.stderr)
 
-BASE_DIR = Path(__file__).resolve().parents[2]
+BASE_DIR = Path(__file__).resolve().parents[3]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 APP_AUTH_DIR = OUTPUT_ROOT / "app_authorizations"
 VIEW_PLAN_DIR = OUTPUT_ROOT / "view_plans"

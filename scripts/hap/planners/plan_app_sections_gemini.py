@@ -22,7 +22,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Set
 
-BASE_DIR = Path(__file__).resolve().parents[2]
+BASE_DIR = Path(__file__).resolve().parents[3]
 
 from ai_utils import AI_CONFIG_PATH, create_generation_config, get_ai_client, load_ai_config, parse_ai_json
 from utils import now_ts, load_json, write_json
@@ -53,7 +53,7 @@ def build_prompt(app_name: str, worksheets: List[dict]) -> str:
 分组原则：
 1. 第一个分组必须固定为"仪表盘"，worksheets 为空数组 []，用于放置统计页面和对话机器人
 2. 同一业务领域的工作表放一组（如客户相关、财务相关、生产相关）
-3. 每个业务分组最少 2 张工作表，最多 8 张工作表
+3. 每个业务分组最少 2 张工作表，最多 12 张工作表
 4. 所有工作表都必须被分配，不能遗漏
 5. 分组名称用 2-6 个中文字，简洁明了
 6. 如果某分组只剩 1 张工作表，将其合并到最相关的分组中
@@ -100,8 +100,8 @@ def validate_sections_plan(plan: dict, worksheet_names: Set[str]) -> None:
         if not isinstance(ws_list, list):
             raise ValueError(f"sections[{i}].worksheets 必须是列表")
         # 允许空分组（如"数据分析"分组，用于后续放统计页面）
-        if len(ws_list) > 8:
-            raise ValueError(f"分组「{name}」有 {len(ws_list)} 张工作表，每个分组最多允许 8 张")
+        if len(ws_list) > 12:
+            raise ValueError(f"分组「{name}」有 {len(ws_list)} 张工作表，每个分组最多允许 12 张")
         for ws_name in ws_list:
             ws_name = str(ws_name).strip()
             if ws_name not in worksheet_names:

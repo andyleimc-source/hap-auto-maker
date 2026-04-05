@@ -25,7 +25,7 @@ from typing import Dict, List, Optional, Set, Tuple
 import requests
 from utils import latest_file, load_json
 
-BASE_DIR = Path(__file__).resolve().parents[2]
+BASE_DIR = Path(__file__).resolve().parents[3]
 DEFAULT_BASE_URL = "https://api.mingdao.com"
 CREATE_WS_ENDPOINT = "/v3/app/worksheets"
 EDIT_WS_ENDPOINT = "/v3/app/worksheets/{worksheet_id}"
@@ -202,10 +202,11 @@ def build_field_payload(field: dict, is_first_text_title: bool) -> dict:
 
 # 开放平台 CreateWorksheet 支持的基础类型白名单（其余全部 deferred）
 # 来源：API 实测，极保守白名单——逐步测试通过：Text/Number/SingleSelect/MultipleSelect/
-#        Dropdown/Attachment/Date/DateTime/Collaborator/Department/Rating/Checkbox
-# 已知不支持：Phone/Money/Area/Cascade/AutoNumber/RichText/Score/Time/Signature/
-#             QRCode/Embed/Section/Remark/Formula/FormulaDate/TextCombine/OtherTableField/
-#             SubTable/Rollup/MoneyCapital/OrgRole/Location/Link
+#        Dropdown/Attachment/Date/DateTime/Collaborator/Rating/Checkbox
+# 已知不支持（创建时）：Department/Phone/Money/Area/Cascade/AutoNumber/RichText/Score/Time/
+#             Signature/QRCode/Embed/Section/Remark/Formula/FormulaDate/TextCombine/
+#             OtherTableField/SubTable/Rollup/MoneyCapital/OrgRole/Location/Link
+# NOTE: Department(27) 实测报"开放平台新建工作表不支持Department控件"，需 deferred 补加
 _CREATE_WS_SUPPORTED_TYPES = {
     "Text",          # 2  - 单行文本
     "Number",        # 6  - 数值
@@ -216,7 +217,7 @@ _CREATE_WS_SUPPORTED_TYPES = {
     "Date",          # 15 - 日期
     "DateTime",      # 16 - 日期时间
     "Collaborator",  # 26 - 成员
-    "Department",    # 27 - 部门
+    # "Department",  # 27 - 部门（API 不支持在 CreateWorksheet 中包含，走 deferred addFields）
     "Rating",        # 28 - 等级（星级）
     "Checkbox",      # 36 - 检查框
 }
@@ -466,11 +467,16 @@ def normalize_relation_plan(worksheets: List[dict], relationship_rules: List[dic
             continue
         if len(orientations) > 1:
             a, b = pair_key
-            raise ValueError(
-                f"检测到未声明 relationships 的双向 Relation 候选: {a}<->{b}。"
-                "为防止 N-N，请在 relationships 中明确声明该对表的 cardinality。"
+            # 双向候选但未在 relationships 中声明：自动选择字母序较小的一方作为多端（source），
+            # 避免 N-N 的同时不阻断流程。若需精确控制请在 relationships 中明确声明 cardinality。
+            print(
+                f"[warn] 未声明 relationships 的双向 Relation: {a}<->{b}，"
+                "自动选择方向（按字母序）。建议在 relationships 中明确声明 cardinality。",
+                file=sys.stderr,
             )
-        source, target = next(iter(orientations))
+            source, target = sorted(orientations)[0]
+        else:
+            source, target = next(iter(orientations))
         fallback_fields = candidates.get((source, target), []) or [{"field_name": f"关联{target}", "required": False}]
         for meta in fallback_fields:
             normalized.append(

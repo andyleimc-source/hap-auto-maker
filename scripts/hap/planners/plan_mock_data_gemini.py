@@ -531,11 +531,14 @@ def main() -> None:
             "skippedFields": ws_schema.get("skippedFields", []),
         })
 
+    # 分片阈值：超过此数量的工作表时启用并发分片模式（避免 AI 单次响应过长截断）
+    CHUNK_THRESHOLD = 20
     validated = None
-    # 策略：如果 provider 是 deepseek 且表较多，采用分片生成（每张表调用一次）
-    if provider == "deepseek" and len(all_worksheets_to_plan) > 1:
-        print(f"[策略] 检测到 {provider} 且工作表较多 ({len(all_worksheets_to_plan)})，开启并发分片生成模式（max_workers={args.max_workers}）...")
-        notes = [f"DeepSeek 并发分片生成模式: {datetime.now().isoformat()}"]
+    # 策略：如果工作表超过 CHUNK_THRESHOLD 张或 provider 是 deepseek，采用分片生成（每张表调用一次）
+    # NOTE: Gemini 在工作表较多（>50张）时单次响应可能超 100KB 导致截断，需分片处理
+    if len(all_worksheets_to_plan) > CHUNK_THRESHOLD or (provider == "deepseek" and len(all_worksheets_to_plan) > 1):
+        print(f"[策略] 工作表数量 {len(all_worksheets_to_plan)} > {CHUNK_THRESHOLD}，开启并发分片生成模式（max_workers={args.max_workers}）...")
+        notes = [f"并发分片生成模式 (provider={provider}): {datetime.now().isoformat()}"]
 
         def _plan_one_ws(idx_ws):
             idx, ws_to_plan = idx_ws

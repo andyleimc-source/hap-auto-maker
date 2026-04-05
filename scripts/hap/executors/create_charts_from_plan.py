@@ -24,7 +24,7 @@ from typing import Any, List
 
 import auth_retry
 
-BASE_DIR = Path(__file__).resolve().parents[2]
+BASE_DIR = Path(__file__).resolve().parents[3]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 CHART_PLAN_DIR = OUTPUT_ROOT / "chart_plans"
 CHART_CREATE_DIR = OUTPUT_ROOT / "chart_create_results"

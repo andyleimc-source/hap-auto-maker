@@ -15,6 +15,7 @@ import json
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -29,7 +30,7 @@ except ImportError:
     _HAS_VIEW_REGISTRY = False
     VIEW_REGISTRY = {}
 
-BASE_DIR = Path(__file__).resolve().parents[2]
+BASE_DIR = Path(__file__).resolve().parents[3]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 VIEW_PLAN_DIR = OUTPUT_ROOT / "view_plans"
 VIEW_CREATE_RESULT_DIR = OUTPUT_ROOT / "view_create_results"

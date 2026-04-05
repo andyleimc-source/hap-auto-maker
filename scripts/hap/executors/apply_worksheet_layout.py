@@ -22,7 +22,7 @@ from typing import Optional
 import auth_retry
 from utils import latest_file
 
-BASE_DIR = Path(__file__).resolve().parents[2]
+BASE_DIR = Path(__file__).resolve().parents[3]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 LAYOUT_PLAN_DIR = OUTPUT_ROOT / "worksheet_layout_plans"
 RESULT_DIR = OUTPUT_ROOT / "worksheet_layout_apply_results"

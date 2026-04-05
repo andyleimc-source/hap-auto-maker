@@ -28,7 +28,7 @@ from typing import Any, List
 import auth_retry
 from utils import load_json, write_json
 
-BASE_DIR = Path(__file__).resolve().parents[2]
+BASE_DIR = Path(__file__).resolve().parents[3]
 CURRENT_DIR = Path(__file__).resolve().parent
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
 PAGE_PLAN_DIR = OUTPUT_ROOT / "page_plans"
