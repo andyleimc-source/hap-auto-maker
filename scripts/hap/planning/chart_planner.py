@@ -120,7 +120,7 @@ def build_enhanced_prompt(
 
 规划原则：
 1. 每个图表必须有明确的业务分析目的
-2. 图表类型要多样化（至少使用 4 种不同 reportType）
+2. 图表类型要多样化（至少使用 6 种不同 reportType），且必须包含至少 1 个 KPI 类图表(数值图10/仪表盘14/进度图15)和至少 1 个非柱图/饼图类型(如漏斗图6/排行图16/透视表8/双轴图7)
 3. 覆盖尽可能多的工作表（不要集中在一个表上）
 4. xaxes.controlId 和 yaxisList[].controlId 必须来自上方字段列表或系统字段（ctime/utime/record_count）
 5. 数值图(10)/仪表盘(14)/进度图(15)的 xaxes.controlId 必须设为空字符串
