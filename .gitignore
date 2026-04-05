@@ -33,6 +33,7 @@ cache/
 
 # HAR 抓包文件（可能含认证信息）
 *.har
+har/
 
 # 运行数据与日志
 data/logs/
