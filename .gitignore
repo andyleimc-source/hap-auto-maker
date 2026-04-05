@@ -40,6 +40,7 @@ data/outputs/
 data/temp/
 
 # PRD & 本地开发文档 (不同步到 Git)
+ROADMAP.md
 PRD.md
 plan.md
 progress.md

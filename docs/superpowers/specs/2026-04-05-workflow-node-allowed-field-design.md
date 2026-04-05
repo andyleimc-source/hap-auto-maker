@@ -29,36 +29,38 @@
 
 | 模块 | 节点 | verified | allowed | 理由 |
 |---|---|---|---|---|
-| record_ops | `delete_record` | False | False | 风险高，需 filters 配置 |
-| record_ops | `get_record` | True | False | 只读查询，AI 无法正确配置 filters |
-| record_ops | `get_records` | False | False | 同上 |
+| record_ops | `delete_record` | False | **True** | 允许删除操作 |
+| record_ops | `get_record` | True | **True** | 允许查询单条 |
+| record_ops | `get_records` | False | False | 未验证 |
 | record_ops | `calibrate_record` | False | False | 未验证 |
 | notify | `notify` | True | **True** | 主力通知节点，稳定 |
 | notify | `sms` | False | False | 需短信签名配置 |
 | notify | `email` | False | False | 需邮件服务配置 |
 | notify | `push` | False | False | 未验证 |
-| timer | `delay_duration` | True | **True** | 稳定，简单延时 |
+| timer | `delay_duration` | True | False | 暂不开放 |
 | timer | `delay_until` | True | False | AI 难以正确配置日期 |
 | timer | `delay_field` | True | False | AI 难以正确配置字段引用 |
 | approval | `approval` | False | False | publish 报 103，需子流程 |
 | human | `fill` | False | False | 未验证 |
 | human | `copy` | True | False | 需 selectNodeId，AI 无法正确引用上游节点 |
-| flow_control | `branch` | False | False | 复杂，需 operateCondition |
-| flow_control | `branch_condition` | False | False | 同上 |
+| flow_control | `branch` | False | **True** | 允许分支网关 |
+| flow_control | `branch_condition` | False | **True** | 与 branch 成对使用 |
 | flow_control | `loop` | False | False | 自动创建子流程，复杂 |
 | flow_control | `abort` | False | False | 未验证 |
 | flow_control | `subprocess` | False | False | 未验证 |
-| compute | `calc` | True | **True** | 稳定，数值运算 |
+| compute | `calc` | True | False | 暂不开放 |
 | compute | `aggregate` | False | False | 未验证 |
 | developer | `json_parse` | False | False | 未验证 |
 | developer | `code_block` | False | False | 未验证 |
 | developer | `api_request` | False | False | 未验证 |
-| ai | `ai_text` | False | False | 未验证 |
+| ai | `ai_text` | False | **True** | 允许 AI 生成文本 |
 | ai | `ai_object` | False | False | 未验证 |
 | ai | `ai_agent` | False | False | 未验证 |
 
-**初始允许节点**（`allowed=True`）: `notify`, `delay_duration`, `calc`  
+**允许节点**（`allowed=True`）: `delete_record`, `get_record`, `notify`, `branch`, `branch_condition`, `ai_text`  
 加上在 `execute_workflow_plan.py` 中直接处理（不经过 NODE_REGISTRY build）的：`update_record`, `add_record`
+
+**允许的触发器类型**：全部保留现状——工作表事件（startEventAppType=1）、定时触发（startEventAppType=5）、按日期字段触发（startEventAppType=6）、自定义动作按钮触发（startEventAppType=8）。触发器层面无需改动。
 
 ---
 

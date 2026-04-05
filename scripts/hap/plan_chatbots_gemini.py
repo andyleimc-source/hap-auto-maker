@@ -95,7 +95,7 @@ def build_prompt(schema: dict, feedback_history: List[dict], previous_proposals:
         previous_text = json.dumps(previous_proposals, ensure_ascii=False, indent=2)
 
     return f"""
-你是明道云 HAP 对话机器人策划顾问。请基于以下应用结构，为该应用生成 1 个高质量的对话机器人方案。
+你是明道云 HAP 对话机器人策划顾问。请基于以下应用结构，为该应用规划合适数量的对话机器人方案（至少 1 个）。
 
 应用名称：{app_name}
 目标分组：{str(selected_section.get('name', '')).strip() or '默认分组'}
@@ -109,7 +109,7 @@ def build_prompt(schema: dict, feedback_history: List[dict], previous_proposals:
 {feedback_text}
 
 要求：
-1. 必须输出 1 个机器人。
+1. 根据应用复杂度规划合适数量的机器人（至少 1 个），职责各有侧重，不要重复。
 2. 机器人必须适配该应用现有工作表，不要脱离业务。
 3. 名称简洁，不要出现”助手”这种占位名。
 4. 简介要说明它主要处理什么数据、解决什么问题。
@@ -148,9 +148,9 @@ def normalize_proposals(raw: Dict[str, Any]) -> List[dict]:
             continue
         seen.add(name)
         result.append({"name": name, "description": description})
-    if len(result) < DEFAULT_CHATBOT_COUNT:
-        raise ValueError(f"Gemini 返回的有效方案少于 {DEFAULT_CHATBOT_COUNT} 个")
-    return result[:DEFAULT_CHATBOT_COUNT]
+    if len(result) < 1:
+        raise ValueError("Gemini 返回的有效方案为 0 个")
+    return result
 
 
 def save_round_snapshot(app_id: str, round_no: int, payload: dict) -> Path:

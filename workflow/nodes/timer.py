@@ -14,18 +14,21 @@ NODES = {
         "typeId": 12, "actionId": "301",
         "name": "延时一段时间",
         "verified": True,
+        "allowed": False,
         "doc": "天/时/分/秒通过 numberFieldValue/hour/minute/secondFieldValue 设置。值在根级别。",
     },
     "delay_until": {
         "typeId": 12, "actionId": "302",
         "name": "延时到指定日期",
         "verified": True,
+        "allowed": False,
         "doc": "timerNode 嵌套结构: {actionId, executeTimeType, number, unit, time}。",
     },
     "delay_field": {
         "typeId": 12, "actionId": "303",
         "name": "延时到字段时间",
         "verified": True,
+        "allowed": False,
         "doc": "timerNode 嵌套结构: {actionId, executeTimeType, number, unit, time}。",
     },
 }
