@@ -177,7 +177,8 @@ def run_pipeline_charts(
     log: Logger,
 ) -> dict:
     """调用 pipeline_charts.py 为指定 page 规划并创建统计图。"""
-    script = CURRENT_DIR / "pipeline_charts.py"
+    # pipeline_charts.py 位于 scripts/hap/ 目录（即 parents[1]），不在 executors/ 子目录
+    script = _HAP_DIR / "pipeline_charts.py"
     cmd = [
         sys.executable, str(script),
         "--app-id", app_id,
