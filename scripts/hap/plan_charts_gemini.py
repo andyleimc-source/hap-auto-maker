@@ -348,8 +348,8 @@ def validate_plan(raw: dict, worksheets_by_id: Dict[str, dict]) -> List[dict]:
     charts = raw.get("charts", [])
     if not isinstance(charts, list) or len(charts) == 0:
         raise ValueError("Gemini 未返回 charts 数组")
-    if len(charts) < 5:
-        raise ValueError(f"期望 8-12 个图表，实际只返回 {len(charts)} 个，太少了")
+    if len(charts) < 3:
+        raise ValueError(f"图表数量不足，只返回 {len(charts)} 个")
 
     validated = []
     for i, chart in enumerate(charts):
@@ -501,8 +501,8 @@ def validate_plan_relaxed(raw: dict) -> List[dict]:
     charts = raw.get("charts", [])
     if not isinstance(charts, list) or len(charts) == 0:
         raise ValueError("Gemini 未返回 charts 数组")
-    if len(charts) < 5:
-        raise ValueError(f"期望 8-12 个图表，实际只返回 {len(charts)} 个，太少了")
+    if len(charts) < 3:
+        raise ValueError(f"图表数量不足，只返回 {len(charts)} 个")
     validated = []
     for i, chart in enumerate(charts):
         if not isinstance(chart, dict):
@@ -618,7 +618,16 @@ def main() -> None:
         validate_fn = lambda raw, _: validate_plan_relaxed(raw)
     else:
         # 使用 chart_planner 增强版 prompt（含注册中心类型约束+字段分类推荐）
-        prompt = chart_planner_build_prompt(app_name, worksheets_info)
+        num_ws_for_page = len(worksheets_info)
+        if num_ws_for_page <= 1:
+            target_count = 4
+        elif num_ws_for_page <= 3:
+            target_count = 6
+        elif num_ws_for_page <= 6:
+            target_count = 8
+        else:
+            target_count = 10
+        prompt = chart_planner_build_prompt(app_name, worksheets_info, target_count=target_count)
         print(f"[chart_planner] prompt 长度={len(prompt)}，前200字: {prompt[:200]!r}")
         validate_fn = validate_plan
 

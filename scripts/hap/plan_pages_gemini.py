@@ -262,11 +262,11 @@ def build_prompt(app_id: str, app_name: str, worksheets_detail: List[dict],
     colors_str = "、".join(color_pool[:6])
     num_ws = len(worksheets_detail)
     if num_ws <= 6:
-        target_pages = 2
+        target_pages = 1
     elif num_ws <= 15:
-        target_pages = 3
+        target_pages = 2
     else:
-        target_pages = 4
+        target_pages = 3
     return f"""
 你是企业数据分析架构师。请根据下面的应用结构，为该应用规划自定义数据分析页（Page）。
 每个 Page 聚焦一个独立的业务分析主题，供经营层快速查看数据。
@@ -349,8 +349,8 @@ def validate_page_plan(raw: dict, valid_ws_ids: set) -> List[dict]:
     pages = raw.get("pages", [])
     if not isinstance(pages, list) or len(pages) == 0:
         raise ValueError("Gemini 未返回 pages 数组")
-    if not (2 <= len(pages) <= 5):
-        raise ValueError(f"期望 2-5 个 Page，实际返回 {len(pages)} 个")
+    if not (1 <= len(pages) <= 4):
+        raise ValueError(f"期望 1-4 个 Page，实际返回 {len(pages)} 个")
 
     validated = []
     for i, page in enumerate(pages):

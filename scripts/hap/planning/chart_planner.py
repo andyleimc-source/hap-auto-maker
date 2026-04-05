@@ -199,8 +199,8 @@ def validate_enhanced_plan(
     charts = raw.get("charts", [])
     if not isinstance(charts, list) or len(charts) == 0:
         raise ValueError("未返回 charts 数组")
-    if len(charts) < 5:
-        raise ValueError(f"期望 8-12 个图表，只返回 {len(charts)} 个")
+    if len(charts) < 3:
+        raise ValueError(f"图表数量不足，只返回 {len(charts)} 个")
 
     validated = []
     for i, chart in enumerate(charts):
