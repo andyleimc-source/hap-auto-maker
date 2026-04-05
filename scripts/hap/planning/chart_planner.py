@@ -169,6 +169,7 @@ def build_enhanced_prompt(
 def validate_enhanced_plan(
     raw: dict,
     worksheets_by_id: dict[str, dict],
+    min_count: int = 3,
 ) -> list[dict]:
     """增强版校验：字段存在性 + 类型兼容性。
 
@@ -179,6 +180,7 @@ def validate_enhanced_plan(
     Args:
         raw: AI 输出的原始 JSON
         worksheets_by_id: {worksheetId: {fields: [...]}}
+        min_count: 最少图表数量（增量场景传 1，批量场景默认 3）
 
     Returns:
         校验通过的 charts 列表
@@ -199,7 +201,7 @@ def validate_enhanced_plan(
     charts = raw.get("charts", [])
     if not isinstance(charts, list) or len(charts) == 0:
         raise ValueError("未返回 charts 数组")
-    if len(charts) < 3:
+    if len(charts) < min_count:
         raise ValueError(f"图表数量不足，只返回 {len(charts)} 个")
 
     validated = []
