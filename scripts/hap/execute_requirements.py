@@ -26,9 +26,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+import requests
+
 CURRENT_DIR = Path(__file__).resolve().parent
 if str(CURRENT_DIR) not in sys.path:
     sys.path.insert(0, str(CURRENT_DIR))
+
+import auth_retry
 
 from ai_utils import AI_CONFIG_PATH
 from script_locator import resolve_script
@@ -74,8 +78,70 @@ SECTIONS_CREATE_RESULT_DIR = OUTPUT_ROOT / "sections_create_results"
 GEMINI_SEMAPHORE = threading.Semaphore(3)
 
 
+AUTH_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "auth_config.py"
+EDIT_APP_INFO_URL = "https://www.mingdao.com/api/HomeApp/EditAppInfo"
+APP_V3_INFO_URL = "https://api.mingdao.com/v3/app"
+
+
 def now_ts() -> str:
     return datetime.now().strftime("%Y%m%d_%H%M%S")
+
+
+def update_app_name_from_plan(app_id: str, app_auth_json: str, plan_path: Path) -> None:
+    """读取 worksheet_plan 中 AI 起的 app_name，调用 EditAppInfo 更新应用名称。"""
+    try:
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        ai_name = str(plan.get("app_name", "")).strip()
+        if not ai_name:
+            print("  ⚠ worksheet_plan 中无 app_name，跳过应用改名")
+            return
+
+        # 读取 auth 信息
+        auth_data = json.loads(Path(app_auth_json).read_text(encoding="utf-8"))
+        rows = auth_data.get("data", [])
+        row = next((r for r in rows if str(r.get("appId", "")) == app_id), None)
+        if not row:
+            print(f"  ⚠ 在 app_auth_json 中找不到 appId={app_id}，跳过改名")
+            return
+
+        app_key = str(row.get("appKey", "")).strip()
+        sign = str(row.get("sign", "")).strip()
+        project_id = str(row.get("projectId", "")).strip()
+
+        # 获取当前应用 icon/color
+        headers = {"HAP-Appkey": app_key, "HAP-Sign": sign, "Accept": "application/json"}
+        resp = requests.get(APP_V3_INFO_URL, headers=headers, timeout=30)
+        meta = resp.json().get("data", {})
+        icon_url = str(meta.get("iconUrl", "")).strip()
+        icon = icon_url.split("/")[-1].replace(".svg", "") if icon_url else ""
+        color = str(meta.get("color", "#00bcd4")).strip() or "#00bcd4"
+
+        payload = {
+            "appId": app_id,
+            "projectId": project_id,
+            "iconColor": color,
+            "navColor": color,
+            "icon": icon,
+            "description": "",
+            "name": ai_name,
+            "shortDesc": "",
+            "pcNaviStyle": 1,
+            "displayIcon": "011",
+        }
+        resp2 = auth_retry.hap_web_post(
+            EDIT_APP_INFO_URL,
+            AUTH_CONFIG_PATH,
+            referer=f"https://www.mingdao.com/app/{app_id}",
+            json=payload,
+            timeout=30,
+        )
+        result = resp2.json()
+        if result.get("state") == 1:
+            print(f"  ✓ 应用已改名为「{ai_name}」")
+        else:
+            print(f"  ⚠ 改名失败: {result}")
+    except Exception as e:
+        print(f"  ⚠ update_app_name_from_plan 失败（不影响主流程）: {e}")
 
 
 def now_iso() -> str:
@@ -702,6 +768,9 @@ def main() -> None:
 
     if ws.get("enabled", True) and ok2a:
         context["worksheet_plan_json"] = str(plan_output)
+        # 用 AI 规划的 app_name 更新应用名称
+        if not execution_dry_run and plan_output.exists():
+            update_app_name_from_plan(app_id, app_auth_json, plan_output)
         cmd2c = [
             sys.executable, str(SCRIPT_PLAN_SECTIONS),
             "--plan-json", str(plan_output),
