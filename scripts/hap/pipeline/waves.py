@@ -67,7 +67,7 @@ def _find_auth_file_by_app_id(app_id: str, app_auth_dir: Path) -> Optional[Path]
     for f in files:
         try:
             data = load_json(f)
-        except Exception:
+        except (OSError, ValueError):
             continue
         rows = data.get("data")
         if not isinstance(rows, list):
@@ -231,8 +231,8 @@ def run_all_waves(
                     artifacts = role_data.get("artifacts", {}) if isinstance(role_data.get("artifacts"), dict) else {}
                     ctx.role_plan_json = artifacts.get("planJson")
                     ctx.role_create_result_json = artifacts.get("createResultJson")
-                except Exception:
-                    pass
+                except (OSError, ValueError, KeyError):
+                    pass  # role report 格式不完整时不影响主流程
         return ok3
 
     with ThreadPoolExecutor(max_workers=2) as pool:

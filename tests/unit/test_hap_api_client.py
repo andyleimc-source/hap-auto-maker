@@ -206,3 +206,53 @@ class TestRequest:
             client.request("POST", "/api/test", data={"customField": "hello"})
             payload = mock_req.call_args.kwargs["json"]
             assert payload["customField"] == "hello"
+
+    def test_request_retries_on_http_error(self):
+        """HTTP 错误应重试最多 max_retries 次，最终成功。"""
+        import requests as _req
+
+        client = self._make_client()
+        call_count = 0
+
+        def fake_request(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            resp = MagicMock()
+            if call_count < 3:
+                resp.raise_for_status.side_effect = _req.exceptions.HTTPError("500")
+            else:
+                resp.raise_for_status.return_value = None
+                resp.json.return_value = {"error_code": 1, "data": {"ok": True}}
+            return resp
+
+        with patch("requests.request", side_effect=fake_request):
+            with patch("time.sleep"):  # 不真实等待
+                result = client.request("POST", "/test", max_retries=2)
+        assert result == {"ok": True}
+        assert call_count == 3
+
+    def test_request_raises_after_all_retries_exhausted(self):
+        """重试耗尽后应抛出异常。"""
+        import requests as _req
+
+        client = self._make_client()
+
+        def always_fail(*args, **kwargs):
+            resp = MagicMock()
+            resp.raise_for_status.side_effect = _req.exceptions.HTTPError("500")
+            return resp
+
+        with patch("requests.request", side_effect=always_fail):
+            with patch("time.sleep"):
+                with pytest.raises(_req.exceptions.HTTPError):
+                    client.request("POST", "/test", max_retries=2)
+
+    def test_request_timeout_is_set(self):
+        """request 调用必须传 timeout 参数。"""
+        client = self._make_client()
+        mock_resp = self._mock_response({"error_code": 1, "data": {}})
+        with patch("requests.request", return_value=mock_resp) as mock_req:
+            client.request("POST", "/api/test")
+            kwargs = mock_req.call_args.kwargs
+            assert "timeout" in kwargs
+            assert kwargs["timeout"] > 0

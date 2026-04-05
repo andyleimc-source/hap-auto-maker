@@ -31,19 +31,25 @@ SPEC_DIR = BASE_DIR / "data" / "outputs" / "requirement_specs"
 
 
 def _load_org_group_ids() -> str:
+    import warnings
     try:
         from local_config import load_local_group_id
         gid = load_local_group_id()
         if gid:
             return gid
-    except Exception:
-        pass
+    except ImportError:
+        pass  # local_config 不存在是正常情况
+    except Exception as e:
+        warnings.warn(f"load_local_group_id 失败，回退到 organization_auth.json: {e}")
     org_auth = BASE_DIR / "config" / "credentials" / "organization_auth.json"
     try:
         data = json.loads(org_auth.read_text(encoding="utf-8"))
         return str(data.get("group_ids", "")).strip()
-    except Exception:
-        return ""
+    except FileNotFoundError:
+        pass  # 配置文件不存在时返回空字符串是预期行为
+    except Exception as e:
+        warnings.warn(f"读取 organization_auth.json 失败: {e}")
+    return ""
 
 
 def extract_json(text: str) -> dict:
