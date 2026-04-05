@@ -39,6 +39,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="一键执行：规划视图筛选配置 -> 应用配置")
     parser.add_argument("--auth-config", default=str(DEFAULT_AUTH_CONFIG), help="auth_config.py 路径")
     parser.add_argument("--view-create-result", default="", help="视图创建结果 JSON 路径")
+    parser.add_argument("--app-auth-json", default="", help="HAP 授权 JSON 文件路径")
     parser.add_argument("--app-ids", default="", help="可选，仅执行指定 appId（逗号分隔）")
     parser.add_argument("--worksheet-ids", default="", help="可选，仅执行指定 worksheetId（逗号分隔）")
     parser.add_argument("--view-ids", default="", help="可选，仅执行指定 viewId（逗号分隔）")
@@ -64,6 +65,8 @@ def main() -> None:
         cmd_plan.extend(["--app-ids", args.app_ids.strip()])
     if args.view_create_result.strip():
         cmd_plan.extend(["--view-create-result", str(Path(args.view_create_result).expanduser().resolve())])
+    if args.app_auth_json.strip():
+        cmd_plan.extend(["--app-auth-json", str(Path(args.app_auth_json).expanduser().resolve())])
 
     cmd_apply = [
         sys.executable,

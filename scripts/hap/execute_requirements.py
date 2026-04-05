@@ -1006,17 +1006,15 @@ def main() -> None:
             with steps_lock:
                 steps_report.append({"step_id": 7, "step_key": "view_filters", "title": "规划并应用视图筛选", "skipped": True, "reason": "disabled_by_spec", "result": {}})
             return True
-        if not ok6:
-            with steps_lock:
-                steps_report.append({"step_id": 7, "step_key": "view_filters", "title": "规划并应用视图筛选", "skipped": True, "reason": "step6_failed", "result": {}})
-            return True
         cmd7 = [
             sys.executable, str(SCRIPT_PIPELINE_TABLEVIEW_FILTERS),
             "--app-ids", app_id,
-            "--view-create-result", str(view_create_output),
             "--plan-output", str(filter_plan_output),
             "--apply-output", str(filter_apply_output),
+            "--app-auth-json", str(app_auth_json),
         ]
+        if ok6 and view_create_output.exists():
+            cmd7.extend(["--view-create-result", str(view_create_output)])
         if execution_dry_run:
             cmd7.append("--dry-run")
         ok7 = execute_step(7, "view_filters", "规划并应用视图筛选", cmd7, uses_gemini=True)
