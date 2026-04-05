@@ -80,6 +80,10 @@ def now_iso() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
+def now_ts() -> str:
+    return datetime.now().strftime("%Y%m%d_%H%M%S")
+
+
 def load_json(path: Path) -> dict:
     if not path.exists():
         raise FileNotFoundError(f"文件不存在: {path}")
