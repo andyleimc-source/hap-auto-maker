@@ -7,4 +7,18 @@ dependencies = [
     "openai>=1.0.0",
     "google-genai>=1.0.0",
     "playwright>=1.40.0",
+    "json-repair>=0.1.0",
 ]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["scripts*", "workflow*"]
+exclude = ["*.tests*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
