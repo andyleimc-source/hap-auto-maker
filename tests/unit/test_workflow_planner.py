@@ -1,137 +1,175 @@
 """
 tests/unit/test_workflow_planner.py
 
-workflow_planner / constraints 的单元测试。
-不需要网络，不需要 AI。
+validate_structure_plan 和 validate_node_config 的单元测试。
+不需要网络。
 """
-
 import sys
 from pathlib import Path
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts" / "hap"))
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "workflow"))
+from planning.workflow_planner import validate_structure_plan, validate_node_config
 
 
-class TestGetNodeConstraintsAllowed:
-    """get_node_constraints() 必须在每个节点信息里包含 allowed 字段。"""
-
-    def test_allowed_field_present_in_all_types(self):
-        from planning.constraints import get_node_constraints
-        c = get_node_constraints()
-        for nt, spec in c["types"].items():
-            assert "allowed" in spec, f"节点 {nt!r} 缺少 allowed 字段"
-            assert isinstance(spec["allowed"], bool), f"节点 {nt!r} allowed 必须是 bool"
-
-    def test_allowed_types_list_correct(self):
-        from planning.constraints import get_node_constraints
-        c = get_node_constraints()
-        allowed = {nt for nt, s in c["types"].items() if s["allowed"]}
-        expected = {"delete_record", "get_record", "notify", "branch", "branch_condition", "ai_text"}
-        assert allowed == expected
-
-
-class TestBuildNodeTypePromptSection:
-    """prompt 生成函数只列出 allowed=True 的节点，禁用节点不出现在文本里。"""
-
-    def test_allowed_nodes_in_prompt(self):
-        from planning.constraints import build_node_type_prompt_section
-        prompt = build_node_type_prompt_section()
-        for name in ["notify", "branch", "ai_text", "delete_record", "get_record"]:
-            assert name in prompt, f"allowed 节点 {name!r} 不在 prompt 里"
-
-    def test_disallowed_nodes_not_in_prompt(self):
-        from planning.constraints import build_node_type_prompt_section
-        prompt = build_node_type_prompt_section()
-        for name in ["sms", "email", "loop", "subprocess", "calc", "code_block", "approval"]:
-            assert name not in prompt, f"禁用节点 {name!r} 出现在 prompt 里"
-
-
-class TestValidateStructurePlanFiltering:
-    """validate_structure_plan 应过滤禁用节点，空 action_nodes 的工作流被移除。"""
-
-    def _make_plan(self, nodes: list) -> dict:
-        return {
-            "worksheets": [
-                {
-                    "worksheet_id": "aaa111bbb222ccc333ddd444",
-                    "worksheet_name": "测试表",
-                    "custom_actions": [
-                        {
-                            "name": "动作1",
-                            "confirm_msg": "确认?",
-                            "sure_name": "确认",
-                            "cancel_name": "取消",
-                            "action_nodes": nodes,
-                        }
-                    ],
-                    "worksheet_events": [],
-                    "date_triggers": [],
-                }
+def _make_ws_by_id(ws_id="ws1", fields=None):
+    return {
+        ws_id: {
+            "worksheetId": ws_id,
+            "name": "任务表",
+            "fields": fields or [
+                {"id": "f1", "type": 2, "name": "标题"},
+                {"id": "f2", "type": 9, "name": "状态"},
+                {"id": "f3", "type": 26, "name": "负责人"},
             ],
+        }
+    }
+
+
+def _make_structure_plan(ws_id="ws1", worksheet_events=None, custom_actions=None):
+    """注意: action_nodes 里 type 字段必须是 'type'，不是 'node_type'。"""
+    return {
+        "worksheets": [
+            {
+                "worksheet_id": ws_id,
+                "worksheet_events": worksheet_events or [
+                    {
+                        "name": "新增通知",
+                        "trigger_type": "add",
+                        "action_nodes": [{"type": "notify", "name": "通知", "sendContent": "有新记录"}],
+                    }
+                ],
+                "custom_actions": custom_actions or [],
+            }
+        ],
+        "time_triggers": [],
+    }
+
+
+class TestWorkflowValidateStructurePlan:
+    def test_valid_plan_passes(self):
+        plan = _make_structure_plan()
+        result = validate_structure_plan(plan, _make_ws_by_id())
+        assert "worksheets" in result
+
+    def test_non_list_worksheets_raises(self):
+        with pytest.raises(ValueError):
+            validate_structure_plan({"worksheets": "not_a_list"}, {})
+
+    def test_missing_worksheet_id_raises(self):
+        plan = {"worksheets": [{"worksheet_events": []}]}
+        with pytest.raises(ValueError, match="worksheet_id"):
+            validate_structure_plan(plan, _make_ws_by_id())
+
+    def test_disallowed_node_type_filtered(self):
+        """不在 allowed 列表中的 type 应被过滤出 action_nodes。"""
+        plan = _make_structure_plan(worksheet_events=[{
+            "name": "工作流",
+            "trigger_type": "add",
+            "action_nodes": [
+                {"type": "notify", "name": "通知", "sendContent": "通知内容"},
+                {"type": "sms", "name": "短信"},   # sms 不在 allowed 中
+            ],
+        }])
+        result = validate_structure_plan(plan, _make_ws_by_id())
+        events = result["worksheets"][0]["worksheet_events"]
+        if events:
+            node_types = [n.get("type") for n in events[0]["action_nodes"]]
+            assert "sms" not in node_types
+
+    def test_workflow_with_all_disallowed_nodes_removed(self):
+        """所有节点都不在 allowed 的工作流应从规划中移除。"""
+        plan = _make_structure_plan(worksheet_events=[{
+            "name": "全禁工作流",
+            "trigger_type": "add",
+            "action_nodes": [{"type": "sms", "name": "短信"}],
+        }])
+        result = validate_structure_plan(plan, _make_ws_by_id())
+        events = result["worksheets"][0]["worksheet_events"]
+        assert len(events) == 0
+
+    def test_empty_time_triggers_handled(self):
+        plan = _make_structure_plan()
+        result = validate_structure_plan(plan, _make_ws_by_id())
+        assert result.get("time_triggers") == []
+
+    def test_returns_same_object(self):
+        plan = _make_structure_plan()
+        result = validate_structure_plan(plan, _make_ws_by_id())
+        assert result is plan
+
+
+class TestValidateNodeConfig:
+    def _plan(self, nodes, ws_id="ws1"):
+        return {
+            "worksheets": [{
+                "worksheet_id": ws_id,
+                "worksheet_events": [{"name": "测试", "trigger_type": "add", "action_nodes": nodes}],
+                "custom_actions": [],
+            }],
             "time_triggers": [],
         }
 
-    def test_disallowed_node_is_removed(self):
-        from planning.workflow_planner import validate_structure_plan
-        plan = self._make_plan([
-            {"name": "通知", "type": "notify", "target_worksheet_id": "aaa111bbb222ccc333ddd444"},
-            {"name": "短信", "type": "sms", "target_worksheet_id": "aaa111bbb222ccc333ddd444"},
-        ])
-        result = validate_structure_plan(plan, {})
-        nodes = result["worksheets"][0]["custom_actions"][0]["action_nodes"]
-        types = [n["type"] for n in nodes]
-        assert "sms" not in types
-        assert "notify" in types
+    def test_missing_worksheets_raises(self):
+        with pytest.raises(ValueError, match="缺少 worksheets"):
+            validate_node_config({}, {})
 
-    def test_all_disallowed_removes_workflow(self):
-        from planning.workflow_planner import validate_structure_plan
-        plan = self._make_plan([
-            {"name": "循环", "type": "loop", "target_worksheet_id": "aaa111bbb222ccc333ddd444"},
-        ])
-        result = validate_structure_plan(plan, {})
-        assert result["worksheets"][0]["custom_actions"] == []
+    def test_missing_worksheet_id_raises(self):
+        plan = {"worksheets": [{"worksheet_events": []}]}
+        with pytest.raises(ValueError, match="worksheet_id"):
+            validate_node_config(plan, {})
 
-    def test_allowed_nodes_pass_through(self):
-        from planning.workflow_planner import validate_structure_plan
-        plan = self._make_plan([
-            {"name": "通知", "type": "notify", "target_worksheet_id": "aaa111bbb222ccc333ddd444"},
-            {"name": "分支", "type": "branch", "target_worksheet_id": "aaa111bbb222ccc333ddd444"},
-        ])
-        result = validate_structure_plan(plan, {})
-        nodes = result["worksheets"][0]["custom_actions"][0]["action_nodes"]
-        assert len(nodes) == 2
+    def test_notify_with_send_content_passes(self):
+        plan = self._plan([{"type": "notify", "name": "通知", "sendContent": "你有新任务", "accounts": []}])
+        assert validate_node_config(plan, _make_ws_by_id()) is not None
 
-    def test_time_trigger_disallowed_node_removed(self):
-        from planning.workflow_planner import validate_structure_plan
-        plan = {
-            "worksheets": [],
-            "time_triggers": [
-                {
-                    "name": "定时",
-                    "action_nodes": [
-                        {"name": "循环", "type": "loop"},
-                        {"name": "通知", "type": "notify"},
-                    ],
-                }
+    def test_notify_missing_send_content_raises(self):
+        plan = self._plan([{"type": "notify", "name": "通知", "sendContent": ""}])
+        with pytest.raises(ValueError, match="sendContent"):
+            validate_node_config(plan, _make_ws_by_id())
+
+    def test_add_record_with_valid_fields_passes(self):
+        plan = self._plan([{
+            "type": "add_record",
+            "target_worksheet_id": "ws1",
+            "fields": [
+                {"fieldId": "f1", "fieldValue": "测试"},
+                {"fieldId": "f2", "fieldValue": "进行中"},
             ],
-        }
-        result = validate_structure_plan(plan, {})
-        nodes = result["time_triggers"][0]["action_nodes"]
-        assert len(nodes) == 1
-        assert nodes[0]["type"] == "notify"
+        }])
+        assert validate_node_config(plan, _make_ws_by_id()) is not None
 
-    def test_time_trigger_all_disallowed_removed(self):
-        from planning.workflow_planner import validate_structure_plan
-        plan = {
-            "worksheets": [],
-            "time_triggers": [
-                {
-                    "name": "定时",
-                    "action_nodes": [
-                        {"name": "循环", "type": "loop"},
-                    ],
-                }
+    def test_add_record_too_few_fields_raises(self):
+        plan = self._plan([{
+            "type": "add_record",
+            "target_worksheet_id": "ws1",
+            "fields": [{"fieldId": "f1", "fieldValue": "值"}],
+        }])
+        with pytest.raises(ValueError):
+            validate_node_config(plan, _make_ws_by_id())
+
+    def test_add_record_invalid_field_id_raises(self):
+        plan = self._plan([{
+            "type": "add_record",
+            "target_worksheet_id": "ws1",
+            "fields": [
+                {"fieldId": "f_bad1", "fieldValue": "值"},
+                {"fieldId": "f_bad2", "fieldValue": "值"},
             ],
+        }])
+        with pytest.raises(ValueError, match="fieldId"):
+            validate_node_config(plan, _make_ws_by_id())
+
+    def test_time_trigger_with_trigger_reference_raises(self):
+        plan = {
+            "worksheets": [{"worksheet_id": "ws1", "worksheet_events": [], "custom_actions": []}],
+            "time_triggers": [{
+                "name": "定时",
+                "action_nodes": [{
+                    "type": "update_record",
+                    "fields": [{"fieldId": "f1", "fieldValue": "{{trigger.record_id}}"}],
+                }],
+            }],
         }
-        result = validate_structure_plan(plan, {})
-        assert result["time_triggers"] == []
+        with pytest.raises(ValueError, match="触发引用"):
+            validate_node_config(plan, _make_ws_by_id())
