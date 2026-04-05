@@ -36,8 +36,9 @@ from mock_data_common import (
 from ai_utils import load_ai_config
 from utils import now_ts, now_iso
 
-PLAN_SCRIPT = CURRENT_DIR / "plan_role_recommendations_gemini.py"
-CREATE_SCRIPT = CURRENT_DIR / "create_roles_from_recommendation.py"
+from script_locator import resolve_script
+PLAN_SCRIPT = resolve_script("plan_role_recommendations_gemini.py")
+CREATE_SCRIPT = resolve_script("create_roles_from_recommendation.py")
 APP_VIDEO_SCRIPT = CURRENT_DIR / "run_app_to_video.py"
 APP_ROLE_RUN_DIR = OUTPUT_ROOT / "app_role_runs"
 APP_ROLE_RUN_LATEST = APP_ROLE_RUN_DIR / "app_role_run_latest.json"

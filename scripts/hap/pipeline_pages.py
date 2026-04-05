@@ -76,8 +76,11 @@ def main() -> None:
     if not create_output:
         create_output = str((PAGE_CREATE_DIR / f"page_create_{app_id}_pipeline.json").resolve())
 
-    plan_script = CURRENT_DIR / "plan_pages_gemini.py"
-    create_script = CURRENT_DIR / "create_pages_from_plan.py"
+    if str(CURRENT_DIR) not in sys.path:
+        sys.path.insert(0, str(CURRENT_DIR))
+    from script_locator import resolve_script
+    plan_script = resolve_script("plan_pages_gemini.py")
+    create_script = resolve_script("create_pages_from_plan.py")
 
     print("自定义页面 + 统计图流水线启动")
     print(f"  应用 ID  : {app_id}")

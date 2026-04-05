@@ -6,6 +6,12 @@
 
 from __future__ import annotations
 
+import sys as _sys
+from pathlib import Path as _Path
+_HAP_DIR = _Path(__file__).resolve().parents[1]
+if str(_HAP_DIR) not in _sys.path:
+    _sys.path.insert(0, str(_HAP_DIR))
+
 import argparse
 import json
 import sys
@@ -13,10 +19,6 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from ai_utils import create_generation_config, get_ai_client, load_ai_config
-
-CURRENT_DIR = Path(__file__).resolve().parent
-if str(CURRENT_DIR) not in sys.path:
-    sys.path.insert(0, str(CURRENT_DIR))
 
 from chatbot_common import (
     CHATBOT_PLAN_DIR,

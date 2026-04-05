@@ -56,8 +56,11 @@ def main() -> None:
 
     auth_config = str(Path(args.auth_config).expanduser().resolve())
 
-    plan_script = CURRENT_DIR / "plan_charts_gemini.py"
-    create_script = CURRENT_DIR / "create_charts_from_plan.py"
+    if str(CURRENT_DIR) not in sys.path:
+        sys.path.insert(0, str(CURRENT_DIR))
+    from script_locator import resolve_script
+    plan_script = resolve_script("plan_charts_gemini.py")
+    create_script = resolve_script("create_charts_from_plan.py")
 
     print("统计图流水线启动")
     print(f"  应用 ID  : {args.app_id}")

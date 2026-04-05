@@ -6,6 +6,12 @@
 
 from __future__ import annotations
 
+import sys as _sys
+from pathlib import Path as _Path
+_HAP_DIR = _Path(__file__).resolve().parents[1]
+if str(_HAP_DIR) not in _sys.path:
+    _sys.path.insert(0, str(_HAP_DIR))
+
 import argparse
 import hashlib
 import json
@@ -18,10 +24,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ai_utils import AI_CONFIG_PATH, create_generation_config, get_ai_client, load_ai_config, parse_ai_json
-
-CURRENT_DIR = Path(__file__).resolve().parent
-if str(CURRENT_DIR) not in sys.path:
-    sys.path.insert(0, str(CURRENT_DIR))
 
 from mock_data_common import (
     MOCK_BUNDLE_DIR,

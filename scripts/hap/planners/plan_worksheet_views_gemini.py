@@ -10,6 +10,12 @@
 
 from __future__ import annotations
 
+import sys as _sys
+from pathlib import Path as _Path
+_HAP_DIR = _Path(__file__).resolve().parents[1]
+if str(_HAP_DIR) not in _sys.path:
+    _sys.path.insert(0, str(_HAP_DIR))
+
 import argparse
 import json
 import re
@@ -26,11 +32,6 @@ import requests
 import auth_retry
 from ai_utils import AI_CONFIG_PATH, create_generation_config, get_ai_client, load_ai_config
 from utils import now_ts, latest_file, load_json, write_json
-
-import sys as _sys
-_PLANNING_DIR = Path(__file__).resolve().parent / "planning"
-if str(_PLANNING_DIR.parent) not in _sys.path:
-    _sys.path.insert(0, str(_PLANNING_DIR.parent))
 try:
     from planning.view_planner import (
         build_view_type_prompt_section,
