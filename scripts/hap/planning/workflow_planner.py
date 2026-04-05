@@ -48,6 +48,33 @@ except ImportError:
     _SCHEMA_AVAILABLE = False
 
 
+# ─── 允许节点工具函数 ─────────────────────────────────────────────────────────────
+
+
+def _get_allowed_types() -> set[str]:
+    """从 NODE_REGISTRY 读取 allowed=True 的节点类型集合。
+    update_record / add_record 不在注册中心，始终允许。
+    """
+    constraints = get_node_constraints()
+    allowed = {nt for nt, s in constraints["types"].items() if s.get("allowed")}
+    allowed.update({"add_record", "update_record"})
+    return allowed
+
+
+def _filter_action_nodes(nodes: list, allowed_types: set[str]) -> tuple[list, list]:
+    """从 action_nodes 里过滤掉禁用节点。
+    返回 (保留节点列表, 被过滤节点类型列表)。
+    """
+    kept, dropped = [], []
+    for node in nodes:
+        node_type = node.get("type", "")
+        if node_type and node_type not in allowed_types:
+            dropped.append(node_type)
+        else:
+            kept.append(node)
+    return kept, dropped
+
+
 # ─── Phase 1: 结构规划（轻量 prompt，只决定工作流骨架）─────────────────────────
 
 
@@ -170,38 +197,46 @@ def validate_structure_plan(
     raw: dict,
     worksheets_by_id: dict[str, dict],
 ) -> dict:
-    """Phase 1 校验 — 只检查结构层面（不检查字段值）。"""
-    constraints = get_node_constraints()
-    allowed_types = set(constraints["types"].keys())
-    allowed_types.update({"add_record", "update_record"})
-    allowed_types.discard("branch")
-    allowed_types.discard("branch_condition")
+    """Phase 1 校验 — 过滤禁用节点，空 action_nodes 的工作流从 plan 里移除。"""
+    allowed_types = _get_allowed_types()
 
     worksheets = raw.get("worksheets", [])
-    if not isinstance(worksheets, list) or not worksheets:
+    if not isinstance(worksheets, list):
         raise ValueError("缺少 worksheets 数组")
 
-    for i, ws in enumerate(worksheets):
+    for ws in worksheets:
         ws_id = str(ws.get("worksheet_id", "")).strip()
         if not ws_id:
-            raise ValueError(f"worksheets[{i}] 缺少 worksheet_id")
+            raise ValueError("worksheet 缺少 worksheet_id")
 
         for section_key in ("custom_actions", "worksheet_events"):
-            for j, item in enumerate(ws.get(section_key, [])):
-                nodes = item.get("action_nodes", [])
-                for k, node in enumerate(nodes):
-                    node_type = node.get("type", "")
-                    if node_type and node_type not in allowed_types:
-                        raise ValueError(
-                            f"worksheets[{i}].{section_key}[{j}].action_nodes[{k}]: "
-                            f"type={node_type!r} 不在允许列表中"
-                        )
+            kept_items = []
+            for item in ws.get(section_key, []):
+                nodes, dropped = _filter_action_nodes(
+                    item.get("action_nodes", []), allowed_types
+                )
+                for t in dropped:
+                    print(f"[plan-filter] {section_key} '{item.get('name','')}': 节点 {t!r} 不在允许列表，已过滤", file=sys.stderr)
+                if nodes:
+                    item["action_nodes"] = nodes
+                    kept_items.append(item)
+                else:
+                    print(f"[plan-filter] {section_key} '{item.get('name','')}': 过滤后无有效节点，跳过整个工作流", file=sys.stderr)
+            ws[section_key] = kept_items
 
-    for i, tt in enumerate(raw.get("time_triggers", [])):
-        for k, node in enumerate(tt.get("action_nodes", [])):
-            node_type = node.get("type", "")
-            if node_type and node_type not in allowed_types:
-                raise ValueError(f"time_triggers[{i}].action_nodes[{k}]: type={node_type!r} 不允许")
+    kept_tt = []
+    for tt in raw.get("time_triggers", []):
+        nodes, dropped = _filter_action_nodes(
+            tt.get("action_nodes", []), allowed_types
+        )
+        for t in dropped:
+            print(f"[plan-filter] time_trigger '{tt.get('name','')}': 节点 {t!r} 不在允许列表，已过滤", file=sys.stderr)
+        if nodes:
+            tt["action_nodes"] = nodes
+            kept_tt.append(tt)
+        else:
+            print(f"[plan-filter] time_trigger '{tt.get('name','')}': 过滤后无有效节点，跳过", file=sys.stderr)
+    raw["time_triggers"] = kept_tt
 
     return raw
 
@@ -576,56 +611,59 @@ def validate_workflow_plan(
     raw: dict,
     worksheets_by_id: dict[str, dict],
 ) -> dict:
-    """校验工作流 plan。
-
-    Returns:
-        校验通过的 plan（可能有修正）
-
-    Raises:
-        ValueError: 校验失败
+    """校验工作流 plan（一体化接口，向后兼容）。
+    禁用节点被过滤，空工作流被移除。
     """
-    constraints = get_node_constraints()
-    allowed_types = set(constraints["types"].keys())
-    # add/update record 在 execute 里单独处理
-    allowed_types.update({"add_record", "update_record"})
-    # 禁用 branch
-    allowed_types.discard("branch")
-    allowed_types.discard("branch_condition")
+    allowed_types = _get_allowed_types()
 
     worksheets = raw.get("worksheets", [])
-    if not isinstance(worksheets, list) or not worksheets:
+    if not isinstance(worksheets, list):
         raise ValueError("缺少 worksheets 数组")
 
-    ws_ids_in_plan = set()
-    for i, ws in enumerate(worksheets):
+    for ws in worksheets:
         ws_id = str(ws.get("worksheet_id", "")).strip()
         if not ws_id:
-            raise ValueError(f"worksheets[{i}] 缺少 worksheet_id")
-        ws_ids_in_plan.add(ws_id)
+            raise ValueError("worksheet 缺少 worksheet_id")
 
-        # 校验 action_nodes
         for section_key in ("custom_actions", "worksheet_events"):
-            for j, item in enumerate(ws.get(section_key, [])):
-                nodes = item.get("action_nodes", [])
-                for k, node in enumerate(nodes):
-                    node_type = node.get("type", "")
-                    if node_type and node_type not in allowed_types:
-                        raise ValueError(
-                            f"worksheets[{i}].{section_key}[{j}].action_nodes[{k}]: "
-                            f"type={node_type!r} 不在允许列表中"
+            kept_items = []
+            for item in ws.get(section_key, []):
+                nodes, dropped = _filter_action_nodes(
+                    item.get("action_nodes", []), allowed_types
+                )
+                for t in dropped:
+                    print(f"[plan-filter] {section_key} '{item.get('name','')}': 节点 {t!r} 不在允许列表，已过滤", file=sys.stderr)
+                if nodes:
+                    item["action_nodes"] = nodes
+                    # 保留原有 sendContent / fields 校验
+                    for node in nodes:
+                        node_type = node.get("type", "")
+                        _validate_single_node_config(
+                            node, node_type, worksheets_by_id,
+                            f"{section_key}.{item.get('name','')}.{node.get('name','')}"
                         )
+                    kept_items.append(item)
+                else:
+                    print(f"[plan-filter] {section_key} '{item.get('name','')}': 过滤后无有效节点，跳过", file=sys.stderr)
+            ws[section_key] = kept_items
 
-    # 校验 time_triggers
-    for i, tt in enumerate(raw.get("time_triggers", [])):
-        nodes = tt.get("action_nodes", [])
-        for k, node in enumerate(nodes):
-            node_type = node.get("type", "")
-            if node_type and node_type not in allowed_types:
-                raise ValueError(f"time_triggers[{i}].action_nodes[{k}]: type={node_type!r} 不允许")
-            # 检查是否使用了 trigger 引用
-            for field in node.get("fields", []):
+    kept_tt = []
+    for tt in raw.get("time_triggers", []):
+        nodes, dropped = _filter_action_nodes(
+            tt.get("action_nodes", []), allowed_types
+        )
+        for t in dropped:
+            print(f"[plan-filter] time_trigger '{tt.get('name','')}': 节点 {t!r} 不在允许列表，已过滤", file=sys.stderr)
+        if nodes:
+            # 定时触发禁止 trigger 引用
+            for field in [f for n in nodes for f in n.get("fields", [])]:
                 fv = str(field.get("fieldValue", ""))
-                if "{{trigger." in fv:
-                    raise ValueError(f"time_triggers[{i}] 的字段值包含 {{{{trigger.xxx}}}}，定时触发禁止使用")
+                if "{{trigger." in fv or "$" in fv:
+                    raise ValueError(f"time_trigger '{tt.get('name','')}' 的字段值包含触发引用，定时触发禁止使用")
+            tt["action_nodes"] = nodes
+            kept_tt.append(tt)
+        else:
+            print(f"[plan-filter] time_trigger '{tt.get('name','')}': 过滤后无有效节点，跳过", file=sys.stderr)
+    raw["time_triggers"] = kept_tt
 
     return raw
