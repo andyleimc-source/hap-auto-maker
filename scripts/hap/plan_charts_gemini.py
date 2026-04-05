@@ -401,6 +401,17 @@ def validate_plan(raw: dict, worksheets_by_id: Dict[str, dict]) -> List[dict]:
             print(f"[跳过] 图表 {i+1}「{name}」所有 yaxis 均无效，已跳过整张图")
             continue
         chart["yaxisList"] = clean_yaxis
+
+        # 双轴图(reportType=8) 必须有 rightY 且 rightY.yaxisList 非空，否则降级为柱状图(1)
+        if report_type == 8:
+            right_y = chart.get("rightY")
+            right_y_list = right_y.get("yaxisList", []) if isinstance(right_y, dict) else []
+            if not isinstance(right_y, dict) or not right_y_list:
+                print(f"[降级] 图表 {i+1}「{name}」双轴图缺少 rightY/辅助Y轴，降级为柱状图(reportType=1)")
+                chart["reportType"] = 1
+                chart.pop("yreportType", None)
+                chart.pop("rightY", None)
+
         validated.append(chart)
     if not validated:
         raise ValueError("所有图表均未通过校验，请重新规划")

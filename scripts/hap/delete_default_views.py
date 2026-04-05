@@ -42,6 +42,7 @@ WORKSHEET_INFO_URL = f"{HAP_BASE}/v3/app/worksheets/{{worksheet_id}}"
 DELETE_VIEW_URL = "https://www.mingdao.com/api/Worksheet/DeleteWorksheetView"
 
 TARGET_VIEW_NAMES = {"全部", "视图"}
+DELETE_ALL_VIEWS = False  # 由 --all-views 参数覆盖
 
 
 # ---------- HAP auth ----------
@@ -150,6 +151,7 @@ def main() -> None:
     parser.add_argument("--refresh-auth", action="store_true", help="执行前先调用 refresh_auth 刷新 Cookie/Authorization")
     parser.add_argument("--headless", action="store_true", help="配合 --refresh-auth 使用，无头模式刷新")
     parser.add_argument("--dry-run", action="store_true", help="仅预览，不实际删除")
+    parser.add_argument("--all-views", action="store_true", help="删除所有视图（而不只是名为'全部'/'视图'的默认视图）")
     args = parser.parse_args()
 
     app_id = args.app_id.strip()
@@ -179,7 +181,11 @@ def main() -> None:
         ws_name = ws["worksheetName"]
 
         views = fetch_views(worksheet_id=ws_id, app_key=app_key, sign=sign)
-        target_views = [v for v in views if str(v.get("name", "")).strip() in TARGET_VIEW_NAMES]
+        if args.all_views:
+            # 删除所有视图（至少保留一个，防止工作表无视图）
+            target_views = views[:-1] if len(views) > 1 else []
+        else:
+            target_views = [v for v in views if str(v.get("name", "")).strip() in TARGET_VIEW_NAMES]
 
         if not target_views:
             continue
@@ -198,9 +204,13 @@ def main() -> None:
                 if ok:
                     total_deleted += 1
 
-    target_names_str = "、".join(f"「{n}」" for n in sorted(TARGET_VIEW_NAMES))
-    print(f"\n{'[预览] ' if args.dry_run else ''}共发现 {total_found} 个默认视图（{target_names_str}）"
-          + (f"，已删除 {total_deleted} 个" if not args.dry_run else ""))
+    if args.all_views:
+        print(f"\n{'[预览] ' if args.dry_run else ''}共发现 {total_found} 个视图（--all-views 模式）"
+              + (f"，已删除 {total_deleted} 个" if not args.dry_run else ""))
+    else:
+        target_names_str = "、".join(f"「{n}」" for n in sorted(TARGET_VIEW_NAMES))
+        print(f"\n{'[预览] ' if args.dry_run else ''}共发现 {total_found} 个默认视图（{target_names_str}）"
+              + (f"，已删除 {total_deleted} 个" if not args.dry_run else ""))
 
 
 if __name__ == "__main__":
