@@ -360,9 +360,13 @@ worksheetId：{worksheet_id}
         {{"controlId": "字段ID", "filterType": 1}},
         {{"controlId": "字段ID", "filterType": 2, "advancedSetting": {{"direction":"2","allowitem":"1"}}}}
       ],
-      "fastAdvancedSetting": {{"enablebtn": "1"}},
-      "fastEditAdKeys": ["enablebtn"],
-      "reason": "原因"
+      “fastAdvancedSetting”: {{“enablebtn”: “1”}},
+      “fastEditAdKeys”: [“enablebtn”],
+      “needColor”: true,
+      “colorControlId”: “单选字段ID，用于记录颜色标记”,
+      “needGroup”: true,
+      “groupControlId”: “单选字段ID，用于分组显示”,
+      “reason”: “原因”
     }}
   ]
 }}
@@ -371,12 +375,14 @@ worksheetId：{worksheet_id}
 1) 仅针对输入中的目标视图输出。
 2) controlId 必须来自字段列表。
 3) 只有 表格视图(type=0) 和 画廊视图(type=3) 允许配置 navGroup。
-4) navGroup（筛选列表）只能使用“下拉字段”（SingleSelect/MultipleSelect）。
+4) navGroup（筛选列表）只能使用”下拉字段”（SingleSelect/MultipleSelect）。
 5) 若存在多个下拉字段，优先选择业务管理意义最强的那个（如状态/类型/分类/等级/阶段等）。
 6) 仅表格/看板/画廊视图允许配置 fastFilters；日历视图不要配置。
-7) 若不需要某功能，对应 needXxx=false，数组留空。
+7) 若不需要某功能，对应 needXxx=false，数组/字段留空。
 8) fastFilters 建议 1-4 个。
 9) 输出必须为合法 JSON。
+10) 颜色(needColor): 仅 viewType=0 的表格视图支持。选一个最能代表记录状态/分类的单选字段(type=9 或 type=11)作为 colorControlId。若无合适单选字段，needColor=false，colorControlId 留空。
+11) 分组(needGroup): 仅 viewType=0 的表格视图支持。选一个有业务分类意义的单选字段(type=9 或 type=11)作为 groupControlId（可与 colorControlId 相同）。若无合适字段或分组无业务意义，needGroup=false，groupControlId 留空。
 """.strip()
 
 
@@ -419,6 +425,10 @@ def build_batch_filter_prompt(app_name: str, worksheets_data: List[dict]) -> str
           ],
           "fastAdvancedSetting": {{"enablebtn": "1"}},
           "fastEditAdKeys": ["enablebtn"],
+          "needColor": true,
+          "colorControlId": "单选字段ID，用于记录颜色标记",
+          "needGroup": true,
+          "groupControlId": "单选字段ID，用于分组显示",
           "reason": "原因"
         }}
       ]
@@ -433,9 +443,11 @@ def build_batch_filter_prompt(app_name: str, worksheets_data: List[dict]) -> str
 4) navGroup（筛选列表）只能使用"下拉字段"（isDropdown=true）。
 5) 若存在多个下拉字段，优先选择业务管理意义最强的（如状态/类型/分类/等级/阶段等）。
 6) 仅表格/看板/画廊视图允许配置 fastFilters；日历视图不要配置。
-7) 若不需要某功能，对应 needXxx=false，数组留空。
+7) 若不需要某功能，对应 needXxx=false，数组/字段留空。
 8) fastFilters 建议 1-4 个。
-9) 输出必须为合法 JSON，worksheets 数组长度必须等于 {count}。""".strip()
+9) 输出必须为合法 JSON，worksheets 数组长度必须等于 {count}。
+10) 颜色(needColor): 仅 viewType=0 的表格视图支持。选一个最能代表记录状态/分类的单选字段(type=9 或 type=11)作为 colorControlId。若无合适单选字段，needColor=false，colorControlId 留空。
+11) 分组(needGroup): 仅 viewType=0 的表格视图支持。选一个有业务分类意义的单选字段(type=9 或 type=11)作为 groupControlId（可与 colorControlId 相同）。若无合适字段或分组无业务意义，needGroup=false，groupControlId 留空。""".strip()
 
 
 def generate_with_retry(client, model: str, prompt: str, retries: int, ai_config: dict) -> Any:
@@ -598,6 +610,57 @@ def normalize_view_plan(
     fast_edit_keys = item.get("fastEditAdKeys") if isinstance(item.get("fastEditAdKeys"), list) else []
     fast_edit_keys = [str(x).strip() for x in fast_edit_keys if str(x).strip()]
 
+    # ── 颜色配置 ──
+    need_color = bool(item.get("needColor", False))
+    color_control_id = str(item.get("colorControlId", "")).strip()
+    if color_control_id and color_control_id not in field_map:
+        color_control_id = ""
+    if color_control_id:
+        f_info = field_map.get(color_control_id, {})
+        f_type = f_info.get("type")
+        if f_type not in (9, 11):
+            color_control_id = ""
+    if need_color and not color_control_id:
+        # 兜底：自动选最佳单选字段
+        for f in fields:
+            if not isinstance(f, dict):
+                continue
+            fid = str(f.get("id", "")).strip()
+            ft = f.get("type")
+            if fid and ft in (9, 11) and not bool(f.get("isSystem", False)):
+                color_control_id = fid
+                break
+    if not color_control_id:
+        need_color = False
+    if view_type != "0":
+        need_color = False
+        color_control_id = ""
+
+    # ── 分组配置 ──
+    need_group = bool(item.get("needGroup", False))
+    group_control_id = str(item.get("groupControlId", "")).strip()
+    if group_control_id and group_control_id not in field_map:
+        group_control_id = ""
+    if group_control_id:
+        f_info = field_map.get(group_control_id, {})
+        f_type = f_info.get("type")
+        if f_type not in (9, 11):
+            group_control_id = ""
+    if need_group and not group_control_id:
+        for f in fields:
+            if not isinstance(f, dict):
+                continue
+            fid = str(f.get("id", "")).strip()
+            ft = f.get("type")
+            if fid and ft in (9, 11) and not bool(f.get("isSystem", False)):
+                group_control_id = fid
+                break
+    if not group_control_id:
+        need_group = False
+    if view_type != "0":
+        need_group = False
+        group_control_id = ""
+
     return {
         "viewId": view_id,
         "viewName": str(item.get("viewName", "")).strip(),
@@ -610,6 +673,10 @@ def normalize_view_plan(
         "fastFilters": fast_filters,
         "fastAdvancedSetting": fast_adv,
         "fastEditAdKeys": fast_edit_keys,
+        "needColor": need_color,
+        "colorControlId": color_control_id,
+        "needGroup": need_group,
+        "groupControlId": group_control_id,
         "reason": reason,
     }
 
@@ -789,6 +856,10 @@ def main() -> None:
                         "fastFilters": [],
                         "fastAdvancedSetting": {"enablebtn": "0"},
                         "fastEditAdKeys": ["enablebtn"],
+                        "needColor": False,
+                        "colorControlId": "",
+                        "needGroup": False,
+                        "groupControlId": "",
                         "reason": "Gemini 未返回该视图，默认不改",
                     })
             app_out["worksheets"].append({
