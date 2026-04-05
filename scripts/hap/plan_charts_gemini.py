@@ -229,10 +229,10 @@ def extract_views_from_payload(payload: dict) -> List[dict]:
 # ---------------------------------------------------------------------------
 
 REPORT_TYPE_NAMES = {
-    1: "柱状图", 2: "折线图", 3: "饼图", 4: "环形图",
-    5: "漏斗图", 6: "雷达图", 7: "条形图", 8: "双轴图",
-    9: "散点图", 10: "数值图", 11: "区域图", 12: "进度图",
-    13: "透视表", 14: "词云图", 15: "排行图", 16: "地图", 17: "关系图",
+    1: "柱图", 2: "折线图", 3: "饼图/环形图",
+    6: "漏斗图", 7: "双轴图", 8: "透视表/雷达图",
+    9: "行政区划图", 10: "数值图", 11: "对称条形图", 12: "散点图",
+    13: "词云图", 14: "仪表盘", 15: "进度图", 16: "排行图", 17: "地图",
 }
 
 
@@ -251,8 +251,9 @@ def build_prompt(app_id: str, app_name: str, worksheets_info: List[dict]) -> str
 设计要求：
 1. 共输出 8-12 个图表，覆盖尽可能多的工作表和业务维度（时间趋势、分类分布、状态占比、数量统计、排行对比等）。
 2. 图表类型必须多样化，至少使用 5 种不同的 reportType。可选类型如下：
-   1=柱状图, 2=折线图, 3=饼图, 4=环形图, 5=漏斗图, 6=雷达图, 7=条形图（横向柱状图）,
-   8=双轴图, 9=散点图, 10=数值图（数字卡片，不需要 xaxes 维度）, 11=区域图, 12=进度图, 15=排行图
+   1=柱图, 2=折线图, 3=饼图/环形图, 6=漏斗图,
+   7=双轴图（需要 rightY 结构）, 10=数值图（数字卡片，不需要 xaxes 维度）,
+   11=对称条形图, 12=散点图, 15=进度图, 16=排行图
 3. xaxes 优先选择 _isSelect=true（controlType=9/10/11）字段用于分类图，_isDate=true（controlType=15/16）字段用于趋势图。
    也可以使用系统字段 ctime（创建时间，controlType=16）作为 X 轴时间维度。
 4. yaxisList 使用 controlId="record_count"（记录数量统计，controlType=10000000）。
@@ -261,7 +262,7 @@ def build_prompt(app_id: str, app_name: str, worksheets_info: List[dict]) -> str
 6. views 数组填入该工作表的 views 列表（若为空则输出 []）。
 7. 建议组合：2-3 个数值卡片(reportType=10) + 2-3 个柱状/条形/折线图 + 1-2 个饼图/环形图 + 1-2 个漏斗/雷达/排行/区域图。
 8. 数值图(reportType=10)：xaxes.controlId 设为 null，只需 yaxisList，适合展示关键指标总数。
-9. 双轴图(reportType=8)：需要额外添加 "yreportType": 2（第二轴为折线图），yaxisList 至少 2 个指标。
+9. 双轴图(reportType=7)：需要额外添加 "yreportType": 2（第二轴为折线图），以及 "rightY": {"yaxisList": [...]} 结构（右轴指标），yaxisList 至少 2 个指标。
 
 输出 JSON 结构（严格按此格式）：
 {{
@@ -402,8 +403,8 @@ def validate_plan(raw: dict, worksheets_by_id: Dict[str, dict]) -> List[dict]:
             continue
         chart["yaxisList"] = clean_yaxis
 
-        # 双轴图(reportType=8) 必须有 rightY 且 rightY.yaxisList 非空，否则降级为柱状图(1)
-        if report_type == 8:
+        # 双轴图(reportType=7) 必须有 rightY 且 rightY.yaxisList 非空，否则降级为柱状图(1)
+        if report_type == 7:
             right_y = chart.get("rightY")
             right_y_list = right_y.get("yaxisList", []) if isinstance(right_y, dict) else []
             if not isinstance(right_y, dict) or not right_y_list:

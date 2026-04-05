@@ -24,8 +24,10 @@ def build(report_type: int, chart: dict, app_id: str) -> dict:
         yreport_type = 1  # 默认左轴为柱图
     body["yreportType"] = yreport_type
 
-    # rightY 结构
+    # rightY 结构：AI 有时误把 rightY 直接生成成 yaxisList 列表，做兼容处理
     right_y = chart.get("rightY", {})
+    if isinstance(right_y, list):
+        right_y = {"yaxisList": right_y}
     body["rightY"] = {
         "reportType": int(right_y.get("reportType", 2)),
         "display": right_y.get("display", {
