@@ -52,17 +52,21 @@ ROW_UPDATE_URL = "/v3/app/worksheets/{worksheet_id}/rows/{row_id}"
 SUPPORTED_WRITABLE_FIELD_TYPES = {
     "Text",
     "Number",
+    "Currency",      # type=8 金额，API 接受数值
     "Date",
     "DateTime",
     "SingleSelect",
     "MultipleSelect",
+    "Dropdown",      # type=11 下拉单选，等同于 SingleSelect，有 options
     "Checkbox",
     "Rating",
     "Location",
     "PhoneNumber",
     "Email",
     "Textarea",
+    "RichText",      # type=41 富文本，API 接受纯文本或 HTML
     "Link",
+    "Region",        # type=24 地区（省市区），API 接受地区 ID 或文本
 }
 
 KNOWN_COMPLEX_FIELD_TYPES = {
@@ -75,7 +79,11 @@ KNOWN_COMPLEX_FIELD_TYPES = {
     "Lookup",
     "Formula",
     "Summary",
+    "Rollup",        # 汇总字段（只读）
     "AutoNumber",
+    "Concatenate",   # 文本组合（只读）
+    "DateFormula",   # 日期公式（只读）
+    "Signature",     # 签名字段（需特殊处理）
     "AreaCity",
     "AreaProvince",
     "AreaCounty",
@@ -94,6 +102,8 @@ KNOWN_SYSTEM_FIELD_IDS = {
     "wfrtime",
     "wfcotime",
     "wfdtime",
+    "wfstatus",    # 流程状态（工作流系统字段）
+    "wfftime",     # 剩余时间（工作流系统字段）
     "autoid",
 }
 
@@ -105,10 +115,12 @@ KNOWN_SYSTEM_FIELD_ALIASES = {
     "_updatedBy",
     "_owner",
     "_processName",
+    "_processStatus",   # 流程状态
     "_initiatedAt",
     "_nodeStartedAt",
     "_completedAt",
     "_dueAt",
+    "_remainingTime",   # 剩余时间
 }
 
 CONTROL_TYPE_MAP = {
@@ -910,7 +922,7 @@ def build_batch_rows(records: List[dict]) -> List[dict]:
 
 def to_receive_control_value(field_meta: dict, value: Any) -> Any:
     field_type = str(field_meta.get("type", "")).strip()
-    if field_type in {"SingleSelect", "MultipleSelect"}:
+    if field_type in {"SingleSelect", "MultipleSelect", "Dropdown"}:
         if isinstance(value, list):
             return json.dumps([str(item) for item in value], ensure_ascii=False)
         return json.dumps([str(value)], ensure_ascii=False)
