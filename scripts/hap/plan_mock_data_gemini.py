@@ -260,14 +260,30 @@ def validate_plan(raw: dict, snapshot: dict) -> Dict[str, Any]:
                 field_meta = allowed_fields[field_id]
                 field_type = str(field_meta.get("type", "")).strip()
                 if field_type == "SingleSelect":
-                    valid_keys = {item["key"] for item in field_meta.get("options", []) if item.get("key")}
+                    valid_keys = [item["key"] for item in field_meta.get("options", []) if item.get("key")]
+                    valid_keys_set = set(valid_keys)
                     if isinstance(value, str):
                         value = [value]
                         single_select_normalized += 1
-                    if not isinstance(value, list) or len(value) != 1 or any(str(item) not in valid_keys for item in value):
-                        continue
+                    if not isinstance(value, list) or len(value) != 1:
+                        # 格式不对：用第一个合法 key 兜底
+                        if valid_keys:
+                            value = [valid_keys[index % len(valid_keys)]]
+                        else:
+                            continue
+                    elif str(value[0]) not in valid_keys_set:
+                        # AI 用了中文 value 而非 key：尝试按 value 找到对应 key，否则随机选
+                        matched = next((item["key"] for item in field_meta.get("options", [])
+                                        if item.get("value") == str(value[0])), None)
+                        if matched:
+                            value = [matched]
+                        elif valid_keys:
+                            value = [valid_keys[index % len(valid_keys)]]
+                        else:
+                            continue
                 elif field_type == "MultipleSelect":
-                    valid_keys = {item["key"] for item in field_meta.get("options", []) if item.get("key")}
+                    valid_keys = [item["key"] for item in field_meta.get("options", []) if item.get("key")]
+                    valid_keys_set = set(valid_keys)
                     if isinstance(value, str):
                         try:
                             parsed = json.loads(value)
@@ -275,8 +291,26 @@ def validate_plan(raw: dict, snapshot: dict) -> Dict[str, Any]:
                         except (json.JSONDecodeError, ValueError):
                             value = [value]
                         multi_select_normalized += 1
-                    if not isinstance(value, list) or any(str(item) not in valid_keys for item in value):
+                    if not isinstance(value, list):
+                        if valid_keys:
+                            value = [valid_keys[index % len(valid_keys)]]
+                        else:
+                            continue
+                    # 过滤非法 key，替换为按 value 匹配的 key，找不到则丢弃该项
+                    fixed = []
+                    for item_val in value:
+                        if str(item_val) in valid_keys_set:
+                            fixed.append(str(item_val))
+                        else:
+                            matched = next((k["key"] for k in field_meta.get("options", [])
+                                            if k.get("value") == str(item_val)), None)
+                            if matched:
+                                fixed.append(matched)
+                    if not fixed and valid_keys:
+                        fixed = [valid_keys[index % len(valid_keys)]]
+                    if not fixed:
                         continue
+                    value = fixed
                 elif field_type in {"Date", "DateTime"}:
                     value = normalize_recent_datetime_value(
                         field_type,
