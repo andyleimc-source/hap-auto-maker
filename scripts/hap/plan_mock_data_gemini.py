@@ -87,11 +87,14 @@ def build_prompt(snapshot: dict) -> str:
 1. 按给定 tier/order 保持工作表造数顺序。
 2. 为每张表生成指定数量的记录。
 3. Relation 字段在本阶段一律不要输出。
-4. SingleSelect 字段值必须是包含一个 key 字符串的数组，例如 ["key1"]，不要使用 value 文案，不要使用裸字符串。
+4. SingleSelect / Dropdown 字段值必须是包含一个 key 字符串的数组，例如 ["key1"]，不要使用 value 文案，不要使用裸字符串。
 5. MultipleSelect 字段值必须是包含一个或多个 key 字符串的数组，例如 ["key1", "key2"]。绝对禁止将数组序列化为字符串后再放进外层数组，即禁止 ["[\"key1\", \"key2\"]"] 这种格式。
-6. valuesByFieldId 的 key 必须是字段 ID。
-7. 每条记录都要有一句中文 recordSummary，描述该记录的业务含义。
-8. 如果某字段不适合填值，可以不输出该字段，但请尽量保证记录语义完整。
+6. Currency（金额）字段使用数字，例如 50000。
+7. Region（地区）字段使用中文地址文本，例如 "北京/北京市/朝阳区"。
+8. RichText（富文本）字段使用纯文本字符串。
+9. valuesByFieldId 的 key 必须是字段 ID。
+10. 每条记录都要有一句中文 recordSummary，描述该记录的业务含义。
+11. ⚠️ 每个 writableField 都必须填值，禁止遗漏！只有 skippedFields 里的字段才可以不填。
 
 应用信息：
 {json.dumps(app, ensure_ascii=False, indent=2)}
@@ -120,9 +123,13 @@ def build_prompt(snapshot: dict) -> str:
           "valuesByFieldId": {{
             "文本字段ID": "文本值",
             "数字字段ID": 100,
+            "金额字段ID": 50000,
             "单选字段ID": ["optionKey1"],
+            "下拉字段ID": ["optionKey1"],
             "多选字段ID": ["optionKey1", "optionKey2"],
             "日期字段ID": "2026-03-15",
+            "地区字段ID": "广东/深圳市/南山区",
+            "富文本字段ID": "详细描述内容",
             "布尔字段ID": true
           }}
         }}
@@ -135,8 +142,9 @@ def build_prompt(snapshot: dict) -> str:
 1. worksheets 数量、worksheetId、tier、order、recordCount、reason 必须与输入一致。
 2. 每张表 records 数量必须严格等于 recordCount。
 3. valuesByFieldId 里禁止出现任何 skippedFields 对应字段。
-4. Relation / Attachment / SubTable / Collaborator / Department / OrgRole / Formula / Summary / AutoNumber 禁止出现在 valuesByFieldId。
-5. Checkbox 使用 true/false；Number 使用数字；Date 使用 yyyy-MM-dd；DateTime 使用 yyyy-MM-dd HH:mm:ss，且日期时间必须在最近 7 天内。
+4. Relation / Attachment / SubTable / Collaborator / Department / OrgRole / Formula / Summary / AutoNumber / Concatenate / DateFormula / Rollup / Signature 禁止出现在 valuesByFieldId。
+5. Checkbox 使用 true/false；Number / Currency 使用数字；Date 使用 yyyy-MM-dd；DateTime 使用 yyyy-MM-dd HH:mm:ss，且日期时间必须在最近 7 天内。
+6. ⚠️ 必须为每个 writableField 都生成合理的值，不允许遗漏任何可写字段。
 """.strip()
 
 
@@ -148,10 +156,14 @@ def build_prompt_v2(app: dict, worksheets: List[dict]) -> str:
 目标：
 1. 为每张表生成指定数量的记录。
 2. Relation 字段在本阶段一律不要输出。
-3. SingleSelect 字段值必须是包含一个 key 字符串的数组，例如 ["key1"]。
+3. SingleSelect / Dropdown 字段值必须是包含一个 key 字符串的数组，例如 ["key1"]。
 4. MultipleSelect 字段值必须是包含一个或多个 key 字符串的数组，例如 ["key1", "key2"]。
-5. valuesByFieldId 的 key 必须是字段 ID。
-6. 每条记录都要有一句中文 recordSummary。
+5. Currency（金额）字段使用数字，例如 50000。
+6. Region（地区）字段使用中文地址文本，例如 "北京/北京市/朝阳区"。
+7. RichText（富文本）字段使用纯文本字符串。
+8. valuesByFieldId 的 key 必须是字段 ID。
+9. 每条记录都要有一句中文 recordSummary。
+10. ⚠️ 每个 writableField 都必须填值，禁止遗漏！
 
 应用信息：
 {json.dumps(app, ensure_ascii=False, indent=2)}
@@ -183,7 +195,8 @@ def build_prompt_v2(app: dict, worksheets: List[dict]) -> str:
 
 约束：
 1. 每张表 records 数量必须严格等于 recordCount。
-2. Checkbox 使用 true/false；Number 使用数字；Date 使用 yyyy-MM-dd；DateTime 使用 yyyy-MM-dd HH:mm:ss，且日期必须在最近 7 天内。
+2. Checkbox 使用 true/false；Number / Currency 使用数字；Date 使用 yyyy-MM-dd；DateTime 使用 yyyy-MM-dd HH:mm:ss，且日期必须在最近 7 天内。
+3. ⚠️ 必须为每个 writableField 都生成合理的值，不允许遗漏任何可写字段。
 """.strip()
 
 
@@ -259,7 +272,7 @@ def validate_plan(raw: dict, snapshot: dict) -> Dict[str, Any]:
                     continue
                 field_meta = allowed_fields[field_id]
                 field_type = str(field_meta.get("type", "")).strip()
-                if field_type == "SingleSelect":
+                if field_type in {"SingleSelect", "Dropdown"}:
                     valid_keys = [item["key"] for item in field_meta.get("options", []) if item.get("key")]
                     valid_keys_set = set(valid_keys)
                     if isinstance(value, str):

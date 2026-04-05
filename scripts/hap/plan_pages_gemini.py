@@ -281,7 +281,23 @@ def build_prompt(app_id: str, app_name: str, worksheets_detail: List[dict],
 设计要求：
 1. 规划恰好 {target_pages} 个 Page，每个 Page 聚焦不同业务主题（选取最有价值的业务维度）。
 2. 每个 Page 的 worksheetIds 列出该 Page 需要统计分析的工作表 ID（从上面的工作表中选择）。
-3. icon 统一使用：dashboard
+3. icon 从以下候选列表中，根据每个 Page 的业务主题选择最贴切的一个：
+   - sys_dashboard（综合概览/仪表盘）
+   - sys_2_3_statistics（统计汇总/数据总览）
+   - sys_1_1_combo_chart（综合图表/多维分析）
+   - sys_2_1_bar_chart（柱状图/销售业绩/对比分析）
+   - sys_2_2_pie_chart（饼图/占比分析/分布）
+   - sys_chart-growth_finance（增长趋势/业绩走势）
+   - sys_chart-bar_finance（财务柱图/收支分析）
+   - sys_money-bag_finance（财务/资金/成本）
+   - sys_1_3_us_dollar（金额/营收/财务指标）
+   - sys_stock-market_office（市场/销售/行情）
+   - sys_chart-pie_office（市场占比/客户分布）
+   - sys_folder-chart-bar_office（报告/数据报表）
+   - sys_1_10_people（人员/HR/团队）
+   - sys_2_5_handshake（客户/合作/关系）
+   - sys_8_3_briefcase（项目/业务/工作）
+   每个 Page 选不同的 icon（尽量不重复）。
 4. iconColor 从以下选择（两个 Page 颜色不重复）：{colors_str}
 5. desc 简短说明该 Page 的业务分析价值（20 字以内）。
 6. 各 Page 名称简洁有业务含义（10 字以内）。
@@ -294,7 +310,7 @@ def build_prompt(app_id: str, app_name: str, worksheets_detail: List[dict],
   "pages": [
     {{
       "name": "Page 名称",
-      "icon": "dashboard",
+      "icon": "sys_dashboard",
       "iconColor": "#2196F3",
       "desc": "简短业务描述",
       "worksheetIds": ["工作表ID1", "工作表ID2"],
@@ -352,9 +368,20 @@ def validate_page_plan(raw: dict, valid_ws_ids: set) -> List[dict]:
             print(f"[警告] Page {i+1} 的 worksheetIds 均不在应用工作表中，已跳过: {ws_ids}")
             continue
         page["worksheetIds"] = valid_ids
-        page["icon"] = "dashboard"   # 只用已验证的图标
+        # 校验 icon：只允许候选列表中的图标，否则回退到 sys_dashboard
+        _valid_icons = {
+            "sys_dashboard", "sys_2_3_statistics", "sys_1_1_combo_chart",
+            "sys_2_1_bar_chart", "sys_2_2_pie_chart", "sys_chart-growth_finance",
+            "sys_chart-bar_finance", "sys_money-bag_finance", "sys_1_3_us_dollar",
+            "sys_stock-market_office", "sys_chart-pie_office", "sys_folder-chart-bar_office",
+            "sys_1_10_people", "sys_2_5_handshake", "sys_8_3_briefcase",
+        }
+        icon = str(page.get("icon", "")).strip()
+        if icon not in _valid_icons:
+            icon = "sys_dashboard"
+        page["icon"] = icon
         page["iconColor"] = str(page.get("iconColor", "#2196F3")).strip() or "#2196F3"
-        page["iconUrl"] = "https://fp1.mingdaoyun.cn/customIcon/dashboard.svg"
+        page["iconUrl"] = f"https://fp1.mingdaoyun.cn/customIcon/{icon}.svg"
         validated.append(page)
     return validated
 
