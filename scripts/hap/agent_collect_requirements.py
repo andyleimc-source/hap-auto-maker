@@ -24,8 +24,9 @@ CURRENT_DIR = Path(__file__).resolve().parent
 if str(CURRENT_DIR) not in sys.path:
     sys.path.insert(0, str(CURRENT_DIR))
 
+from execute_requirements import normalize_spec
 from script_locator import resolve_script
-from utils import now_ts, now_iso, load_json
+from utils import now_iso, now_ts, load_json
 
 # 启用终端行编辑（方向键左右移动等）
 try:
@@ -285,73 +286,6 @@ def build_spec_prompt(transcript: List[Dict[str, str]]) -> str:
 8) worksheets.layout.requirements 同理，从对话提取布局要求，无则填""。
 """.strip()
 
-
-
-def normalize_spec(raw: dict) -> dict:
-    spec = dict(raw) if isinstance(raw, dict) else {}
-    spec["schema_version"] = "workflow_requirement_v1"
-
-    meta = spec.get("meta") if isinstance(spec.get("meta"), dict) else {}
-    meta.setdefault("created_at", now_iso())
-    meta.setdefault("source", "terminal_gemini_chat")
-    meta.setdefault("conversation_summary", "")
-    spec["meta"] = meta
-
-    app = spec.get("app") if isinstance(spec.get("app"), dict) else {}
-    app.setdefault("target_mode", "create_new")
-    app.setdefault("name", "自动化应用")
-
-    app.setdefault("group_ids", _load_org_group_ids())
-    app.setdefault("icon_mode", "gemini_match")
-    app.setdefault("color_mode", "random")
-    # 默认主题色策略：未明确时强制 random
-    if not str(app.get("color_mode", "")).strip():
-        app["color_mode"] = "random"
-    navi = app.get("navi_style") if isinstance(app.get("navi_style"), dict) else {}
-    navi.setdefault("enabled", True)
-    navi.setdefault("pcNaviStyle", 1)
-    try:
-        navi["pcNaviStyle"] = int(navi.get("pcNaviStyle", 1))
-    except Exception:
-        navi["pcNaviStyle"] = 1
-    # 默认导航布局：左侧
-    navi["pcNaviStyle"] = 1 if not isinstance(navi.get("pcNaviStyle"), int) else navi["pcNaviStyle"]
-    app["navi_style"] = navi
-    spec["app"] = app
-
-    ws = spec.get("worksheets") if isinstance(spec.get("worksheets"), dict) else {}
-    ws.setdefault("enabled", True)
-    ws.setdefault("business_context", "通用企业管理场景")
-    ws.setdefault("requirements", "")
-    icon_update = ws.get("icon_update") if isinstance(ws.get("icon_update"), dict) else {}
-    icon_update.setdefault("enabled", True)
-    icon_update.setdefault("refresh_auth", False)
-    ws["icon_update"] = icon_update
-    layout = ws.get("layout") if isinstance(ws.get("layout"), dict) else {}
-    layout.setdefault("enabled", True)
-    layout.setdefault("requirements", "")
-    layout.setdefault("refresh_auth", False)
-    ws["layout"] = layout
-    spec["worksheets"] = ws
-
-    views = spec.get("views") if isinstance(spec.get("views"), dict) else {}
-    views.setdefault("enabled", True)
-    spec["views"] = views
-
-    view_filters = spec.get("view_filters") if isinstance(spec.get("view_filters"), dict) else {}
-    view_filters.setdefault("enabled", True)
-    spec["view_filters"] = view_filters
-
-    mock_data = spec.get("mock_data") if isinstance(spec.get("mock_data"), dict) else {}
-    mock_data.setdefault("enabled", True)
-    mock_data.setdefault("dry_run", False)
-    mock_data.setdefault("trigger_workflow", False)
-    spec["mock_data"] = mock_data
-    execution = spec.get("execution") if isinstance(spec.get("execution"), dict) else {}
-    execution.setdefault("fail_fast", True)
-    execution.setdefault("dry_run", False)
-    spec["execution"] = execution
-    return spec
 
 
 def save_spec(spec: dict, output: Optional[Path]) -> Path:

@@ -22,20 +22,12 @@ if str(HAP_DIR) not in sys.path:
     sys.path.insert(0, str(HAP_DIR))
 
 from ai_utils import AI_CONFIG_PATH, create_generation_config, get_ai_client, load_ai_config
+from execute_requirements import normalize_spec
 from script_locator import resolve_script
+from utils import now_iso, now_ts
 
 EXECUTE_SCRIPT = resolve_script("execute_requirements.py")
 SPEC_DIR = BASE_DIR / "data" / "outputs" / "requirement_specs"
-
-
-def now_iso():
-    from datetime import datetime
-    return datetime.now().astimezone().isoformat(timespec="seconds")
-
-
-def now_ts():
-    from datetime import datetime
-    return datetime.now().strftime("%Y%m%d_%H%M%S")
 
 
 def _load_org_group_ids() -> str:
@@ -75,68 +67,6 @@ def extract_json(text: str) -> dict:
         except json.JSONDecodeError:
             continue
     raise ValueError(f"AI 未返回可解析 JSON:\n{text[:500]}")
-
-
-def normalize_spec(raw: dict) -> dict:
-    spec = dict(raw) if isinstance(raw, dict) else {}
-    spec["schema_version"] = "workflow_requirement_v1"
-
-    meta = spec.get("meta") if isinstance(spec.get("meta"), dict) else {}
-    meta.setdefault("created_at", now_iso())
-    meta.setdefault("source", "claude_code_chat")
-    meta.setdefault("conversation_summary", "")
-    spec["meta"] = meta
-
-    app = spec.get("app") if isinstance(spec.get("app"), dict) else {}
-    app.setdefault("target_mode", "create_new")
-    app.setdefault("name", "自动化应用")
-    app.setdefault("group_ids", _load_org_group_ids())
-    app.setdefault("icon_mode", "ai_match")
-    app.setdefault("color_mode", "random")
-    if not str(app.get("color_mode", "")).strip():
-        app["color_mode"] = "random"
-    navi = app.get("navi_style") if isinstance(app.get("navi_style"), dict) else {}
-    navi.setdefault("enabled", True)
-    navi.setdefault("pcNaviStyle", 1)
-    try:
-        navi["pcNaviStyle"] = int(navi.get("pcNaviStyle", 1))
-    except Exception:
-        navi["pcNaviStyle"] = 1
-    app["navi_style"] = navi
-    spec["app"] = app
-
-    ws = spec.get("worksheets") if isinstance(spec.get("worksheets"), dict) else {}
-    ws.setdefault("enabled", True)
-    ws.setdefault("business_context", "通用企业管理场景")
-    ws.setdefault("requirements", "")
-    icon_update = ws.get("icon_update") if isinstance(ws.get("icon_update"), dict) else {}
-    icon_update.setdefault("enabled", True)
-    icon_update.setdefault("refresh_auth", False)
-    ws["icon_update"] = icon_update
-    layout = ws.get("layout") if isinstance(ws.get("layout"), dict) else {}
-    layout.setdefault("enabled", True)
-    layout.setdefault("requirements", "")
-    layout.setdefault("refresh_auth", False)
-    ws["layout"] = layout
-    spec["worksheets"] = ws
-
-    for key in ("views", "view_filters"):
-        section = spec.get(key) if isinstance(spec.get(key), dict) else {}
-        section.setdefault("enabled", True)
-        spec[key] = section
-
-    mock_data = spec.get("mock_data") if isinstance(spec.get("mock_data"), dict) else {}
-    mock_data.setdefault("enabled", True)
-    mock_data.setdefault("dry_run", False)
-    mock_data.setdefault("trigger_workflow", False)
-    spec["mock_data"] = mock_data
-
-    execution = spec.get("execution") if isinstance(spec.get("execution"), dict) else {}
-    execution.setdefault("fail_fast", True)
-    execution.setdefault("dry_run", False)
-    spec["execution"] = execution
-
-    return spec
 
 
 def save_spec(spec: dict, output=None) -> Path:
