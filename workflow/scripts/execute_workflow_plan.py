@@ -405,12 +405,18 @@ def add_action_nodes(
             node_id = added[0]["id"]
 
             # Step B: 保存节点配置（含字段映射）
-            # selectNodeId: 记录操作节点应引用触发节点或上游数据节点
-            # - add_record(1): 引用触发节点，从触发记录获取字段值
-            # - update_record(2): 引用触发节点
-            # - delete_record(3): 不需要
-            # - get_record(4)/get_records(5): 不需要
-            select_node_id = start_node_id if action_id in ("1", "2") else ""
+            # selectNodeId 规则（经抓包验证）：
+            # - add_record 跨表（target≠trigger）：selectNodeId=""
+            #   若传 start_node_id，前端解读为"基于多条记录逐条新增"并要求数据源，显示"节点已删除"
+            # - add_record 同表 / update_record：selectNodeId=start_node_id（引用触发节点）
+            # - delete/get/get_records：不需要 selectNodeId
+            is_cross_table_add = (action_id == "1" and target_ws != worksheet_id)
+            if is_cross_table_add:
+                select_node_id = ""
+            elif action_id in ("1", "2"):
+                select_node_id = start_node_id
+            else:
+                select_node_id = ""
             save_body = {
                 "processId":    process_id,
                 "nodeId":       node_id,
@@ -574,13 +580,29 @@ def create_date_trigger(
     trigger_plan: dict,
     publish:      bool = False,
 ) -> dict:
+    # AI 可能输出字符串单位名而非数字，需做映射
+    _UNIT_MAP = {"days": 3, "day": 3, "hours": 4, "hour": 4,
+                 "minutes": 5, "minute": 5, "months": 2, "month": 2,
+                 "years": 1, "year": 1, "weeks": 6, "week": 6}
+
+    def _safe_int(val, default: int, mapping: dict = _UNIT_MAP) -> int:
+        if isinstance(val, int):
+            return val
+        s = str(val).strip().lower()
+        if s in mapping:
+            return mapping[s]
+        try:
+            return int(s)
+        except (ValueError, TypeError):
+            return default
+
     name             = trigger_plan.get("name", "按日期字段触发")
     assign_field_id  = trigger_plan.get("assign_field_id", "ctime")
-    execute_time_type = int(trigger_plan.get("execute_time_type", 0))
-    number           = int(trigger_plan.get("number", 0))
-    unit             = int(trigger_plan.get("unit", 3))
+    execute_time_type = _safe_int(trigger_plan.get("execute_time_type", 0), 0, {})
+    number           = _safe_int(trigger_plan.get("number", 0), 1, {})
+    unit             = _safe_int(trigger_plan.get("unit", 3), 3)
     end_time         = trigger_plan.get("end_time", "08:00")
-    frequency        = int(trigger_plan.get("frequency", 1))
+    frequency        = _safe_int(trigger_plan.get("frequency", 1), 1, {})
 
     if execute_time_type == 2:
         end_time = ""
