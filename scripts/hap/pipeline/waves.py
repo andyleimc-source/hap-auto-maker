@@ -431,18 +431,16 @@ def run_all_waves(
     if _abort_if_failed():
         return ctx
 
-    # Wave 4: 并行（icon/布局/视图/造数/机器人/工作流规划/图表规划）
+    # Wave 4: 并行（icon/布局/造数/机器人/工作流规划/图表规划）
     print(
-        f"\n-- Wave 4: icon / 布局 / 视图 / 造数 / 机器人 / 工作流规划 / 规划图表页（并行） --- 总计 {time.time()-pipeline_start:.0f}s",
+        f"\n-- Wave 4: icon / 布局 / 造数 / 机器人 / 工作流规划 / 规划图表页（并行） --- 总计 {time.time()-pipeline_start:.0f}s",
         flush=True,
     )
 
     view_plan_dir: Path = dirs["view_plan_dir"]
-    view_create_result_dir: Path = dirs["view_create_result_dir"]
     tableview_filter_plan_dir: Path = dirs["tableview_filter_plan_dir"]
     tableview_filter_apply_result_dir: Path = dirs["tableview_filter_apply_result_dir"]
     output_root: Path = dirs["output_root"]
-    config_web_auth: Path = dirs["config_web_auth"]
 
     view_plan_output = (view_plan_dir / f"view_plan_{app_id}_{now_ts()}.json").resolve()
     view_create_output = (view_create_result_dir / f"view_create_result_{app_id}_{now_ts()}.json").resolve()
@@ -477,23 +475,6 @@ def run_all_waves(
             ctx.worksheet_layout_plan_json = _extract_labeled_path(layout_stdout, "输出文件")
             ctx.worksheet_layout_apply_result_json = _extract_labeled_path(layout_stdout, "结果文件")
         return ok5
-
-    def run_step_6() -> bool:
-        if not views.get("enabled", True):
-            with steps_lock:
-                steps_report.append({"step_id": 6, "step_key": "views", "title": "规划并创建视图", "skipped": True, "reason": "disabled_by_spec", "result": {}})
-            return True
-        cmd6 = [
-            sys.executable, str(scripts["views"]),
-            "--app-ids", app_id,
-            "--plan-output", str(view_plan_output),
-            "--create-output", str(view_create_output),
-        ]
-        ok6 = _exec(6, "views", "规划并创建视图", cmd6, uses_gemini=True)
-        if ok6:
-            ctx.view_plan_json = str(view_plan_output)
-            ctx.view_create_result_json = str(view_create_output)
-        return ok6
 
     def run_step_9() -> bool:
         if not mock_data.get("enabled", True):
@@ -584,17 +565,15 @@ def run_all_waves(
                     print(err, flush=True)
         return ok_14a
 
-    with ThreadPoolExecutor(max_workers=7) as pool:
+    with ThreadPoolExecutor(max_workers=6) as pool:
         f4 = pool.submit(run_step_4)
         f5 = pool.submit(run_step_5)
-        f6 = pool.submit(run_step_6)
         f9 = pool.submit(run_step_9)
         f10 = pool.submit(run_step_10)
         f11 = pool.submit(run_step_11)
         f14a = pool.submit(run_step_14a)
         f4.result()
         f5.result()
-        ok6 = f6.result()
         f9.result()
         f10.result()
         ok11 = f11.result()
@@ -625,8 +604,8 @@ def run_all_waves(
             "--apply-output", str(filter_apply_output),
             "--app-auth-json", str(app_auth_json),
         ]
-        if ok6 and view_create_output.exists():
-            cmd7.extend(["--view-create-result", str(view_create_output)])
+        if ctx.view_create_result_json and Path(ctx.view_create_result_json).exists():
+            cmd7.extend(["--view-create-result", ctx.view_create_result_json])
         if execution_dry_run:
             cmd7.append("--dry-run")
         ok7 = _exec(7, "view_filters", "规划并应用视图筛选", cmd7, uses_gemini=True)
@@ -677,23 +656,6 @@ def run_all_waves(
         title = "创建统计图表页" if ok_14a else "规划并创建统计图表页"
         _exec(14, "pages", title, cmd14, uses_gemini=not ok_14a)
 
-    # Wave 7: 删除默认视图
-    print(f"\n-- Wave 7: 删除[全部]默认视图 --- 总计 {time.time()-pipeline_start:.0f}s", flush=True)
-
-    if not delete_default_views_cfg.get("enabled", True):
-        with steps_lock:
-            steps_report.append({"step_id": 13, "step_key": "delete_default_views", "title": "删除[全部]默认视图", "skipped": True, "reason": "disabled_by_spec", "result": {}})
-    else:
-        cmd13 = [
-            sys.executable, str(scripts["delete_default_views"]),
-            "--app-id", app_id,
-            "--app-auth-json", str(app_auth_json),
-            "--auth-config", str(config_web_auth),
-        ]
-        if delete_default_views_cfg.get("refresh_auth", True):
-            cmd13.extend(["--refresh-auth", "--headless"])
-        if execution_dry_run:
-            cmd13.append("--dry-run")
-        _exec(13, "delete_default_views", "删除[全部]默认视图", cmd13, uses_gemini=False)
+    # Wave 7: 已移除（默认视图改为改造而非删除）
 
     return ctx
