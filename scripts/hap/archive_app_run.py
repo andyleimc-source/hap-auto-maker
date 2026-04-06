@@ -105,8 +105,6 @@ def collect_artifact_sources(execution_report: dict) -> Dict[str, str]:
         "tableview_filter_result_json",
         "mock_data_run_json",
         "chatbot_pipeline_result_json",
-        "workflow_plan_json",
-        "workflow_execute_result_json",
     ]
     out: Dict[str, str] = {}
     for key in keys:
@@ -309,20 +307,6 @@ def main() -> None:
         planned_view_count = int(view_summary.get("plannedViewCount", 0) or 0)
         created_view_count = int(view_summary.get("createdViewCount", 0) or 0)
 
-        # 工作流数量
-        workflow_count = 0
-        if artifact_sources.get("workflow_execute_result_json"):
-            try:
-                wf_result = load_json(Path(artifact_sources["workflow_execute_result_json"]))
-                workflow_count = (
-                    int(wf_result.get("total_workflows", 0) or 0)
-                    or len(wf_result.get("workflows", []))
-                    or len(wf_result.get("results", []))
-                    or int(wf_result.get("total", 0) or 0)
-                )
-            except Exception:
-                pass
-
         mock_data_enabled = bool(artifact_sources.get("mock_data_run_json"))
         if mock_data_enabled and isinstance(mock_data_run, dict):
             mock_data_summary = (
@@ -399,7 +383,6 @@ def main() -> None:
             print(row("应用地址", app_entry_url))
             print(row("工作表", f"{stats.get('worksheet_count', 0)} 张"))
             print(row("视图", f"{stats.get('created_view_count', 0)} 个"))
-            print(row("工作流", f"{workflow_count} 个"))
             print(row("总耗时", dur_str))
             print("└" + "─" * w + "┘")
         elif tech_log.get("error_context"):
