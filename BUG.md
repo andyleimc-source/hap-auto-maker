@@ -86,6 +86,17 @@
 
 ---
 
+## [BUG-011] 所有工作表堆积在仪表盘分组，未被正确分组
+- **状态**: resolved
+- **现象**: 应用创建后，工作表全部在"仪表盘"分组，其他分组为空，UI 显示无分组
+- **根因**: `create_sections_from_plan.py` `run_mode_two` 中 `sourceAppSectionId` 固定取"应用第一个分组"。多次重试后工作表实际分布在各种分组，但 `RemoveWorkSheetAscription` 要求 `sourceAppSectionId` 精确匹配工作表当前所在分组，不匹配时 API 返回 `state=1`（静默成功）但实际不移动
+- **修复**:
+  - `scripts/hap/executors/create_sections_from_plan.py`：新增 `get_worksheet_to_section_map()` 从 `GetApp` 实时查询每张工作表的真实分组 ID，移动时用工作表实际所在分组作为 `sourceAppSectionId`；已在目标分组则跳过（不重复调用 API）
+- **验证**: 手动将 `bede25d2` 应用"仪表盘"中堆积的 44 张工作表（第一批创建）按名称移到对应分组，31/31 移动成功，13 张聊天机器人/分析页正确留在仪表盘
+- **关联 commit**: 2c8d843
+
+---
+
 ## [BUG-010] add_record 日期字段写入 Invalid date
 - **状态**: resolved
 - **现象**: 工作流 `add_record` 节点中日期/日期时间字段显示 `Invalid date`，无法正常写入
