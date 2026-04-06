@@ -82,6 +82,15 @@ def suggest_views(classified_fields: dict[str, list[dict]], worksheet_id: str = 
             })
             break
 
+    # 画廊视图(viewType=3) — 有附件字段时推荐
+    attachments = classified_fields.get("attachment", [])
+    if attachments:
+        suggestions.append({
+            "viewType": 3, "name": "图片画廊",
+            "reason": f"有附件字段「{attachments[0]['name']}」，适合以图片卡片形式浏览",
+            "coverCid": attachments[0]["id"],
+        })
+
     # 地图视图(viewType=8) — 必须有定位字段(type=40)，仅地区字段(type=24)不够
     # 2026-04-04 抓包确认：地图视图需要 type=40 定位字段作为 viewControl
     locations = classified_fields.get("location", [])
@@ -148,13 +157,13 @@ def build_structure_prompt(
 规则：
 1) viewType 必须是整数：0(表格/列表), 1(看板), 2(层级), 3(画廊), 4(日历), 5(甘特图)
    ⚠️ 系统已自动创建名为"全部"的默认列表视图，不要再规划 viewType=0 的"全部"视图。只规划其他类型或有明确分组/筛选用途的额外视图
-2) ⚠️ 保守策略：绝大多数工作表只有 1 个列表视图（viewType=0）就够了。只有真正能大幅提升该表使用体验的情况下，才额外添加 1 个其他类型视图
-3) 看板(1)：仅适合"状态流转"是核心使用场景的表（如任务/工单/审批流程）；必须有多状态单选字段(type=9 或 type=11)；检查框/等级字段不能用
-4) 甘特图(5)：仅适合核心用途是"时间计划管理"的表（如项目/排产/合同）；必须有开始+结束两个日期字段
-5) 日历(4)：仅适合核心用途是"以日期查看"的表（如排班/预约/日程）；需要日期字段
-6) 层级(2)：仅适合有明确父子关系的表；需要自关联字段(type=29)
-7) 画廊(3)：仅适合图片是核心内容的表；需要附件字段
-8) 判断标准：先问"没有这个视图，用户用起来有明显不便吗？"——答案是"否"则只建列表视图
+2) 积极策略：每个工作表应规划 1-3 个有实际业务价值的视图。系统已内置"全部"列表，因此额外视图应优先选择非表格类型（看板/日历/画廊/甘特图/层级），让每个工作表视图组合尽量多样化
+3) 看板(1)：有单选字段（type=9/11）且数据有状态流转的表适合；必须有多状态单选字段(type=9 或 type=11)；检查框/等级字段不能用
+4) 甘特图(5)：有开始+结束两个日期字段时适合，用于时间轴展示
+5) 日历(4)：有日期字段时可以选；适合排班/预约/日程/计划类场景
+6) 层级(2)：有自关联字段(type=29)时适合，展示父子层级关系
+7) 画廊(3)：有附件字段（type=14）时推荐，适合以卡片形式浏览内容；即使图片不是核心内容，有附件字段就可以选
+8) 分组表格(viewType=0)：有单选字段时可规划"按XX分组"的额外表格视图，与默认"全部"视图形成补充
 
 ## 输出格式（严格 JSON，viewType 必须是整数）
 
@@ -273,9 +282,10 @@ def build_config_prompt(
 为每个视图补充完整配置。根据视图类型填写：
 
 - **所有视图**：displayControls（显示字段 ID 列表，选最重要的 5-8 个字段）
-- **表格(0) 含"分组"/"分类"关键词的**：advancedSetting.groupView（需 viewId 占位，用 "{{viewId}}" 表示）
+- **表格(0) 含"分组"/"分类"关键词的**：通过 postCreateUpdates 设 groupsetting（JSON 字符串数组 [{controlId, filterType:11}]），editAdKeys 包含 ["groupsetting","groupsorts","groupcustom","groupshow","groupfilters","groupopen"]。【注意：不要用 groupView，groupView 是导航筛选栏配置，与行分组无关】
 - **日历(4)**：postCreateUpdates 中设 calendarcids（开始/结束日期字段 ID）
 - **甘特图(5)**：视图顶层设 begindate（开始日期字段 ID）和 enddate（结束日期字段 ID），同时在 postCreateUpdates 中通过 editAdKeys 二次保存
+- **画廊(3)**：设置 coverCid 为附件字段 ID
 - **层级(2)**：视图顶层设 layersControlId（自关联字段 ID），postCreateUpdates 用 editAttrs=["viewControl","childType","viewType"]，viewControl 可设为 "create"（自动创建自关联字段）或具体字段 ID
 - **资源(7)**：视图顶层设 viewControl（分组字段 ID）+ advancedSetting.begindate/enddate，postCreateUpdates 二次保存
 - **地图(8)**：必须有定位字段(type=40)，视图顶层设 latlng（定位字段 ID），viewControl 指向定位字段
@@ -412,15 +422,15 @@ def build_enhanced_prompt(
 规则：
 1) viewType 必须是整数：0(表格/列表), 1(看板), 2(层级), 3(画廊), 4(日历), 5(甘特图)
    ⚠️ 系统已自动创建名为"全部"的默认列表视图，不要再规划 viewType=0 的"全部"视图。只规划其他类型或有明确分组/筛选用途的额外视图
-2) ⚠️ 保守策略：绝大多数工作表只有 1 个列表视图就够了。只有真正能大幅提升使用体验的情况才添加 1 个其他类型视图
+2) 积极策略：每个工作表应规划 1-3 个有实际业务价值的视图，类型尽量多样化（不要所有表都是同一种类型）。系统已内置"全部"列表，额外视图应优先选非表格类型
 3) displayControls 必须来自该工作表的字段 ID
-4) 看板(1)：仅适合"状态流转"是核心使用场景的表（任务/工单/审批）；必须有多状态单选字段(type=9/11)；检查框/等级不能用
-5) 甘特图(5)：仅适合核心用途是"时间计划管理"的表（项目/排产/合同）；必须有开始+结束两个日期字段
-6) 日历(4)：仅适合核心用途是"以日期查看"的表（排班/预约/日程）；需要日期字段，在 postCreateUpdates 中设 calendarcids
-7) 层级(2)：仅适合有明确父子关系的表；需要自关联字段(type=29)
-8) 画廊(3)：仅适合图片是核心内容的表；需要附件字段
-9) 表格(0) 名称含"分组"/"分类"时，在 advancedSetting 中设 groupView
-10) 判断标准：先问"没有这个视图，用户用起来有明显不便吗？"——答案是"否"则只建列表视图
+4) 看板(1)：有单选字段（type=9/11）且数据有状态流转时适合；检查框/等级字段不能用
+5) 甘特图(5)：有开始+结束两个日期字段时适合，用于时间轴展示
+6) 日历(4)：有日期字段时适合，尤其是排班/预约/日程场景；在 postCreateUpdates 中设 calendarcids
+7) 层级(2)：有自关联字段(type=29)时适合，展示父子层级关系
+8) 画廊(3)：有附件字段（type=14）时推荐；适合以卡片浏览，不要求图片是核心内容
+9) 分组表格(0)：有单选字段时可规划"按XX分组"视图；通过 postCreateUpdates 设 groupsetting（而非 groupView）
+10) 跨工作表视角：整个应用的视图组合应有多样性，避免全部工作表都只有看板或只有表格
 
 ## 输出格式（严格 JSON，viewType 必须是整数）
 

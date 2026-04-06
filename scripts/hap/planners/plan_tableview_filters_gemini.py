@@ -212,11 +212,16 @@ def fetch_worksheet_views(worksheet_id: str, app_key: str, sign: str) -> list[di
 
 
 def find_default_all_view(views: list[dict]) -> Optional[dict]:
-    """从视图列表中找到系统默认的"全部"视图（viewType=0 且 name="全部"的第一个）。"""
+    """从视图列表中找到系统默认的"全部"视图（viewType=0 且 name="全部"的第一个）。
+    兼容两种字段名：
+    - Web API：viewId / viewType
+    - V3 API：id / type（整数）
+    """
     for v in views:
         if not isinstance(v, dict):
             continue
-        vtype = v.get("viewType")
+        # 兼容 V3 API（返回 id/type）和 Web API（返回 viewId/viewType）
+        vtype = v.get("viewType") if v.get("viewType") is not None else v.get("type")
         if isinstance(vtype, str):
             try:
                 vtype = int(vtype)

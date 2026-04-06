@@ -326,17 +326,18 @@ def build_prompt(app_name: str, worksheet_name: str, worksheet_id: str, fields: 
 
 规则：
 1) 允许 viewType=0(表格),1(看板),2(层级视图),3(画廊),4(日历),5(甘特图)。
-2) 视图数量 1-5 个，必须实用，不要凑数。
+2) 视图数量 1-4 个，尽量多样化——系统已内置"全部"列表视图，额外视图应优先选非表格类型（看板/日历/画廊/甘特图），避免所有表都只有一种类型。
 3) displayControls / coverCid / viewControl 必须来自提供的字段ID；无法确定时填空或省略。
 4) 日历视图必须在 postCreateUpdates.advancedSetting 中提供 calendarcids（字符串化 JSON），格式必须为：'[{{"begin":"日期字段ID","end":"结束日期字段ID或空字符串"}}]'。begin 为开始日期字段ID（必填），end 为结束日期字段ID（无则填空字符串）。
 5) 【强制】看板视图(viewType=1)必须设置 viewControl 为一个单选字段(type=11)的ID。如果没有合适的单选字段，不要创建看板视图。
 6) 【强制】表格视图(viewType=0)如果视图名包含"按...分组"、"按...分类"、"分组"等含义，必须通过 postCreateUpdates 二次保存分组配置，格式：{{"editAttrs":["advancedSetting"],"editAdKeys":["groupsetting","groupsorts","groupcustom","groupshow","groupfilters","groupopen"],"advancedSetting":{{"groupsetting":"[{{\\\"controlId\\\":\\\"分组字段ID\\\",\\\"filterType\\\":11}}]","groupsorts":"","groupcustom":"","groupshow":"0","groupfilters":"[]","groupopen":""}}}}。groupsetting 是字符串化 JSON 数组，controlId 必须为有实际选项的单选字段(type=11)的ID。
-7) 甘特图视图（viewType=5）需要工作表含有开始日期和结束日期字段，适合项目管理、任务排期类场景。
-8) 层级视图（viewType=2）适合有上下级/父子关系的数据（如部门树、分类层级）。
-9) 若字段不支持某视图，请不要输出该视图类型。
-10) 输出必须是可解析 JSON。
-11) 【重要】每个视图必须有实际业务含义——不仅有名称，还要有对应的配置（viewControl/advancedSetting/postCreateUpdates），空配置的视图没有价值。
-12) 【格式要求】所有 advancedSetting 中的 JSON 字符串值必须是紧凑格式（无空格）。
+7) 甘特图视图（viewType=5）有开始+结束日期字段时适合，用于时间轴展示。
+8) 层级视图（viewType=2）适合有上下级/父子关系的数据；需要自关联字段(type=29)。
+9) 画廊视图（viewType=3）有附件字段（type=14）时推荐，适合以卡片形式浏览内容；设置 coverCid 为附件字段ID。
+10) 若字段不支持某视图，请不要输出该视图类型。
+11) 输出必须是可解析 JSON。
+12) 【重要】每个视图必须有实际业务含义——不仅有名称，还要有对应的配置（viewControl/advancedSetting/postCreateUpdates），空配置的视图没有价值。
+13) 【格式要求】所有 advancedSetting 中的 JSON 字符串值必须是紧凑格式（无空格）。
 """.strip()
 
 
@@ -570,17 +571,18 @@ def build_batch_prompt(app_name: str, worksheets_data: List[dict]) -> str:
 
 规则：
 1) 允许 viewType=0(表格),1(看板),2(层级视图),3(画廊),4(日历),5(甘特图)。
-2) 每个工作表视图数量 1-5 个，必须实用，不要凑数。
+2) 每个工作表视图数量 1-4 个，尽量多样化——系统已内置"全部"列表视图，额外视图应优先选非表格类型（看板/日历/画廊/甘特图），避免整个应用的视图都是同一类型。
 3) displayControls / coverCid / viewControl 必须来自对应工作表提供的字段ID；无法确定时填空或省略。
 4) 日历视图必须在 postCreateUpdates.advancedSetting 中提供 calendarcids（字符串化 JSON），格式必须为：'[{{"begin":"日期字段ID","end":"结束日期字段ID或空字符串"}}]'。begin 为开始日期字段ID（必填），end 为结束日期字段ID（无则填空字符串）。
 5) 【强制】看板视图(viewType=1)必须设置 viewControl 为一个单选字段(type=11)的ID。如果没有合适的单选字段，不要创建看板视图。
 6) 【强制】表格视图(viewType=0)如果视图名包含"按...分组"、"按...分类"、"分组"等含义，必须通过 postCreateUpdates 二次保存分组配置，格式：{{"editAttrs":["advancedSetting"],"editAdKeys":["groupsetting","groupsorts","groupcustom","groupshow","groupfilters","groupopen"],"advancedSetting":{{"groupsetting":"[{{\\\"controlId\\\":\\\"分组字段ID\\\",\\\"filterType\\\":11}}]","groupsorts":"","groupcustom":"","groupshow":"0","groupfilters":"[]","groupopen":""}}}}。groupsetting 是字符串化 JSON 数组，controlId 必须为有实际选项的单选字段(type=11)的ID。
-7) 甘特图视图（viewType=5）需要工作表含有开始日期和结束日期字段，适合项目管理、任务排期类场景。
-8) 层级视图（viewType=2）适合有上下级/父子关系的数据（如部门树、分类层级）。
-9) 若字段不支持某视图，请不要输出该视图类型。
-10) 输出必须是可解析 JSON，worksheets 数组长度必须等于 {count}。
-11) 【重要】每个视图必须有实际业务含义——不仅有名称，还要有对应的配置（viewControl/advancedSetting/postCreateUpdates），空配置的视图没有价值。
-12) 【格式要求】所有 advancedSetting 中的 JSON 字符串值必须是紧凑格式（无空格）。""".strip()
+7) 甘特图视图（viewType=5）有开始+结束日期字段时适合，用于时间轴展示。
+8) 层级视图（viewType=2）适合有上下级/父子关系的数据；需要自关联字段(type=29)。
+9) 画廊视图（viewType=3）有附件字段（type=14）时推荐；设 coverCid 为附件字段ID。
+10) 若字段不支持某视图，请不要输出该视图类型。
+11) 输出必须是可解析 JSON，worksheets 数组长度必须等于 {count}。
+12) 【重要】每个视图必须有实际业务含义——不仅有名称，还要有对应的配置（viewControl/advancedSetting/postCreateUpdates），空配置的视图没有价值。
+13) 【格式要求】所有 advancedSetting 中的 JSON 字符串值必须是紧凑格式（无空格）。""".strip()
 
 
 def _call_ai_with_retry(
