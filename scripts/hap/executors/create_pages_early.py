@@ -38,7 +38,7 @@ from ai_utils import (
     parse_ai_json,
 )
 from planning.page_planner import build_pages_prompt, validate_pages_plan
-from utils import load_json, now_ts, write_json
+from utils import load_json, log_summary, now_ts, write_json
 
 BASE_DIR = Path(__file__).resolve().parents[3]
 
@@ -373,6 +373,7 @@ def main() -> None:
             )
             page_entry["pageId"] = page_id
             print(f"    ✓ pageId={page_id}")
+            log_summary(f"✓ Page「{page_name}」已创建")
         except Exception as exc:
             print(f"    ✗ 创建失败: {exc}")
             page_entry["pageId"] = ""

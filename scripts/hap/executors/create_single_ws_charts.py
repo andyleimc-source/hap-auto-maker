@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional
 
 import auth_retry
 from ai_utils import get_ai_client, create_generation_config, parse_ai_json
+from utils import log_summary
 from charts import build_report_body, REPORT_TYPE_NAMES
 from planning.single_ws_chart_planner import (
     build_single_ws_chart_prompt,
@@ -343,6 +344,10 @@ def plan_and_create_charts(
             ok = _append_charts_to_page(page_id, page_entry, created_charts, app_id, auth_config_path)
             if ok:
                 print(f"  ✅ {worksheet_name}: {len(created_charts)} 个图表已追加到页面")
+                chart_names = [str(c.get("chartName", "")).strip() for c in created_charts if isinstance(c, dict)]
+                chart_names_str = "、".join(n for n in chart_names if n) or "无"
+                page_name = str(page_entry.get("name", "")).strip() if isinstance(page_entry, dict) else ""
+                log_summary(f"✓ Page「{page_name}」图表已创建（{len(created_charts)} 个：{chart_names_str}）")
             else:
                 print(f"  ⚠️  {worksheet_name}: 图表已创建但追加到页面失败")
         else:
