@@ -138,6 +138,25 @@
 
 ---
 
+## [BUG-014] 层级视图未被创建（AI 忽略自关联字段推荐）
+- **状态**: resolved
+- **现象**: 工作表有自关联字段（type=29，dataSource==本表ID），`suggest_views` 也推荐了层级视图，但最终创建的视图列表里没有 viewType=2（层级视图）
+- **根因**: `suggest_views` 将层级视图作为"推荐视图"文本注入 prompt，AI Phase 2 可以自行决定是否采纳。实测 AI 经常忽略推荐，转而规划其他视图类型（如看板、日历、画廊）。`normalize_views` 后处理阶段也未做强制补全
+- **修复**:
+  - `plan_worksheet_views_gemini.py`：`normalize_views` 末尾加守卫逻辑：若 `worksheet_id` 非空、检测到自关联字段（`_find_self_relation_field`）、且 AI 输出中无 viewType=2，则自动追加层级视图，并填写 `layersControlId=自关联字段ID`
+- **验证**: 手动在「知识库」工作表创建记录，通过 `update_row_relation` 设置父子关系（10条记录，2个根节点），层级知识库视图中正确展示两级层次结构
+
+---
+
+## [BUG-015] mock data 父子关系关联字段格式错误（"已删除"）
+- **状态**: resolved
+- **现象**: 创建记录时传入关联字段 `value: [{"sid": rowId}]`，关联显示"已删除"；正确格式应为 `value: [rowId字符串]`
+- **根因**: 手动测试时混淆了字段写法。`update_row_relation` 函数本身已正确使用 `[target_row_id]` 格式（字符串数组），pipeline 代码（`write_mock_data_from_plan.py`）走 `update_row_relation` 是正确的，不需要修改
+- **关键规则**: HAP V3 关联字段写入时 `value` 应为 `["rowId字符串"]`，不是 `[{"sid":"rowId"}]`；不能关联不存在的记录，必须先用 list API 确认目标 rowId 真实存在
+- **验证**: 通过 PATCH 先清空损坏关联，再用 `update_row_relation` 重新建立，10条记录全部关联成功，层级视图正确显示两级
+
+---
+
 ## [BUG-003] AI 响应超时断连
 - **状态**: resolved
 - **现象**: Step 2 卡很久后抛出 `ConnectionError` 或 `ReadTimeout`
