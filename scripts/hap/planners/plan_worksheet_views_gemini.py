@@ -341,7 +341,7 @@ def build_prompt(app_name: str, worksheet_name: str, worksheet_id: str, fields: 
 3) displayControls / coverCid / viewControl 必须来自提供的字段ID；无法确定时填空或省略。
 4) 日历视图必须在 postCreateUpdates.advancedSetting 中提供 calendarcids（字符串化 JSON），格式必须为：'[{{"begin":"日期字段ID","end":"结束日期字段ID或空字符串"}}]'。begin 为开始日期字段ID（必填），end 为结束日期字段ID（无则填空字符串）。
 5) 【强制】看板视图(viewType=1)必须设置 viewControl 为一个单选字段(type=11)的ID。如果没有合适的单选字段，不要创建看板视图。
-6) 【强制】表格视图(viewType=0)如果视图名包含"按...分组"、"按...分类"、"分组"等含义，必须通过 postCreateUpdates 二次保存分组配置，格式：{{"editAttrs":["advancedSetting"],"editAdKeys":["groupsetting","groupsorts","groupcustom","groupshow","groupfilters","groupopen"],"advancedSetting":{{"groupsetting":"[{{\\\"controlId\\\":\\\"分组字段ID\\\",\\\"filterType\\\":11}}]","groupsorts":"","groupcustom":"","groupshow":"0","groupfilters":"[]","groupopen":""}}}}。groupsetting 是字符串化 JSON 数组，controlId 必须为有实际选项的单选字段(type=11)的ID。
+6) 【强制】表格视图(viewType=0)如果视图名包含"按...分组"、"按...分类"、"分组"等含义，必须通过 postCreateUpdates 二次保存分组配置，格式：{{"editAttrs":["advancedSetting"],"editAdKeys":["groupsetting","groupsorts","groupcustom","groupshow","groupfilters","groupopen"],"advancedSetting":{{"groupsetting":"[{{\\\"controlId\\\":\\\"分组字段ID\\\",\\\"isAsc\\\":true}}]","groupsorts":"","groupcustom":"","groupshow":"0","groupfilters":"[]","groupopen":""}}}}。groupsetting 是字符串化 JSON 数组，controlId 必须为有实际选项的单选字段(type=9/11)的ID，isAsc 控制升序。
 7) 甘特图视图（viewType=5）有开始+结束日期字段时适合，用于时间轴展示。
 8) 层级视图（viewType=2）适合有上下级/父子关系的数据；需要自关联字段(type=29)。
 9) 画廊视图（viewType=3）有附件字段（type=14）时推荐，适合以卡片形式浏览内容；设置 coverCid 为附件字段ID。
@@ -454,7 +454,7 @@ def normalize_views(raw_views: Any, fields: List[dict], worksheet_id: str = "") 
                 fallback_gc = _find_single_select_field(fields)
                 if fallback_gc:
                     groupsetting_val = json.dumps(
-                        [{"controlId": fallback_gc, "filterType": 11}],
+                        [{"controlId": fallback_gc, "isAsc": True}],
                         ensure_ascii=False, separators=(",", ":")
                     )
                     if not isinstance(item.get("postCreateUpdates"), list):
@@ -611,7 +611,7 @@ def build_batch_prompt(app_name: str, worksheets_data: List[dict]) -> str:
 3) displayControls / coverCid / viewControl 必须来自对应工作表提供的字段ID；无法确定时填空或省略。
 4) 日历视图必须在 postCreateUpdates.advancedSetting 中提供 calendarcids（字符串化 JSON），格式必须为：'[{{"begin":"日期字段ID","end":"结束日期字段ID或空字符串"}}]'。begin 为开始日期字段ID（必填），end 为结束日期字段ID（无则填空字符串）。
 5) 【强制】看板视图(viewType=1)必须设置 viewControl 为一个单选字段(type=11)的ID。如果没有合适的单选字段，不要创建看板视图。
-6) 【强制】表格视图(viewType=0)如果视图名包含"按...分组"、"按...分类"、"分组"等含义，必须通过 postCreateUpdates 二次保存分组配置，格式：{{"editAttrs":["advancedSetting"],"editAdKeys":["groupsetting","groupsorts","groupcustom","groupshow","groupfilters","groupopen"],"advancedSetting":{{"groupsetting":"[{{\\\"controlId\\\":\\\"分组字段ID\\\",\\\"filterType\\\":11}}]","groupsorts":"","groupcustom":"","groupshow":"0","groupfilters":"[]","groupopen":""}}}}。groupsetting 是字符串化 JSON 数组，controlId 必须为有实际选项的单选字段(type=11)的ID。
+6) 【强制】表格视图(viewType=0)如果视图名包含"按...分组"、"按...分类"、"分组"等含义，必须通过 postCreateUpdates 二次保存分组配置，格式：{{"editAttrs":["advancedSetting"],"editAdKeys":["groupsetting","groupsorts","groupcustom","groupshow","groupfilters","groupopen"],"advancedSetting":{{"groupsetting":"[{{\\\"controlId\\\":\\\"分组字段ID\\\",\\\"isAsc\\\":true}}]","groupsorts":"","groupcustom":"","groupshow":"0","groupfilters":"[]","groupopen":""}}}}。groupsetting 是字符串化 JSON 数组，controlId 必须为有实际选项的单选字段(type=9/11)的ID，isAsc 控制升序。
 7) 甘特图视图（viewType=5）有开始+结束日期字段时适合，用于时间轴展示。
 8) 层级视图（viewType=2）适合有上下级/父子关系的数据；需要自关联字段(type=29)。
 9) 画廊视图（viewType=3）有附件字段（type=14）时推荐；设 coverCid 为附件字段ID。
