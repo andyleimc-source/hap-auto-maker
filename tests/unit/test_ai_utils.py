@@ -1,7 +1,7 @@
 """
 tests/unit/test_ai_utils.py
 
-parse_ai_json、normalize_provider、get_model_by_tier 的单元测试。
+parse_ai_json、normalize_provider 的单元测试。
 不需要网络，不需要真实 API key。
 """
 
@@ -15,7 +15,6 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts" / "hap"))
 
 from ai_utils import (
-    get_model_by_tier,
     normalize_provider,
     parse_ai_json,
 )
@@ -41,34 +40,6 @@ class TestNormalizeProvider:
     def test_unknown_raises(self):
         with pytest.raises(ValueError, match="不支持的 AI 供应商"):
             normalize_provider("openai")
-
-
-# ---------------------------------------------------------------------------
-# get_model_by_tier
-# ---------------------------------------------------------------------------
-
-
-class TestGetModelByTier:
-    def test_gemini_fast(self):
-        model = get_model_by_tier("gemini", "fast")
-        assert "gemini" in model.lower()
-
-    def test_gemini_reasoning(self):
-        model = get_model_by_tier("gemini", "reasoning")
-        assert "gemini" in model.lower()
-
-    def test_deepseek_fast(self):
-        model = get_model_by_tier("deepseek", "fast")
-        assert "deepseek" in model.lower()
-
-    def test_deepseek_reasoning(self):
-        model = get_model_by_tier("deepseek", "reasoning")
-        assert "deepseek" in model.lower()
-
-    def test_invalid_tier_falls_back_to_fast(self):
-        fast = get_model_by_tier("gemini", "fast")
-        fallback = get_model_by_tier("gemini", "turbo")  # 不存在的档位
-        assert fallback == fast
 
 
 # ---------------------------------------------------------------------------

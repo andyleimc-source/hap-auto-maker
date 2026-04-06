@@ -208,7 +208,9 @@ def get_status_group():
 # --- 步骤执行 ---
 
 def step_ai(force=True):
-    from ai_utils import AI_CONFIG_PATH, DEFAULT_DEEPSEEK_BASE_URL, load_ai_config, TIER_MODELS
+    from ai_utils import (AI_CONFIG_PATH, DEFAULT_DEEPSEEK_BASE_URL,
+                          DEFAULT_GEMINI_MODEL, DEFAULT_DEEPSEEK_MODEL,
+                          load_ai_config, list_models, normalize_provider)
     existing = {}
     try: existing = load_ai_config()
     except: pass
@@ -222,25 +224,59 @@ def step_ai(force=True):
     key_mismatch = (provider == "gemini" and existing_key.startswith("sk-")) or \
                    (provider == "deepseek" and existing_key.startswith("AIza"))
     key = ask(f"{provider.title()} API Key", default="" if (provider_changed or key_mismatch) else existing_key, required=True)
-    
-    # 根据新架构，不再让用户手动选择模型，而是展示档位映射
-    print("\n   已启用模型档位自动适配 (Tier Mapping):")
-    tiers = TIER_MODELS.get(provider, {})
-    print(f"      - 🚀 FAST (极速档):      {ljust_cjk(tiers.get('fast', 'N/A'), 20)}")
-    print(f"      - 🧠 REASONING (推理档): {ljust_cjk(tiers.get('reasoning', 'N/A'), 20)}")
-    
+
+    # 根据供应商确定默认模型和 base_url
+    default_model = DEFAULT_GEMINI_MODEL if provider == "gemini" else DEFAULT_DEEPSEEK_MODEL
+    base_url = DEFAULT_DEEPSEEK_BASE_URL if provider == "deepseek" else ""
+
+    # 拉取可用模型列表供用户选择
+    print("\n   正在从 API 拉取可用模型列表...")
+    models = list_models(provider, key, base_url)
+
+    if models:
+        # 找到默认模型在列表中的位置
+        default_idx = None
+        for i, m in enumerate(models):
+            if m == default_model:
+                default_idx = i + 1
+                break
+        print(f"\n   可用模型 ({len(models)} 个):")
+        for i, m in enumerate(models):
+            marker = " [推荐]" if m == default_model else ""
+            print(f"      {i+1}. {m}{marker}")
+        hint = f"默认: {default_model}" if default_idx else f"推荐: {default_model}"
+        model_choice = ask(
+            f"选择模型 (输入编号或模型名)",
+            default=str(default_idx) if default_idx else default_model,
+            required=True,
+            hint=hint,
+        )
+        # 解析用户输入：编号或模型名
+        if model_choice.isdigit():
+            idx = int(model_choice) - 1
+            if 0 <= idx < len(models):
+                selected_model = models[idx]
+            else:
+                print(f"   ⚠️  编号超出范围，使用默认模型: {default_model}")
+                selected_model = default_model
+        else:
+            selected_model = model_choice.strip()
+    else:
+        print("   ⚠️  无法拉取模型列表，请手动输入模型名称。")
+        old_model = existing.get("model", default_model) if not provider_changed else default_model
+        selected_model = ask("模型名称", default=old_model, required=True, hint=f"推荐: {default_model}")
+
     data = {
-        "provider": provider, 
-        "api_key": key, 
-        "base_url": DEFAULT_DEEPSEEK_BASE_URL if provider=="deepseek" else ""
+        "provider": provider,
+        "api_key": key,
+        "model": selected_model,
+        "base_url": base_url,
     }
-    # 保持兼容性，默认写入 fast 档位模型作为备选
-    data["model"] = tiers.get("fast", "")
-    
+
     AI_CONFIG_PATH.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-    if provider == "gemini": 
-        (CRED_DIR / "gemini_auth.json").write_text(json.dumps({"api_key": key, "model": data["model"]}, indent=2), encoding="utf-8")
-    print("\n   ✔ AI 平台配置已完成 (已根据厂商自动适配模型档位)。")
+    if provider == "gemini":
+        (CRED_DIR / "gemini_auth.json").write_text(json.dumps({"api_key": key, "model": selected_model}, indent=2), encoding="utf-8")
+    print(f"\n   ✔ AI 平台配置已完成 (供应商: {provider}, 模型: {selected_model})。")
 
 def step_org_auth(force=True):
     dst = CRED_DIR / "organization_auth.json"

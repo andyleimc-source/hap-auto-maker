@@ -115,10 +115,20 @@ def list_models(provider: str, api_key: str, base_url: str = "") -> list:
             models = []
             for m in client.models.list():
                 name = m.name or ""
-                # 去掉 "models/" 前缀
                 short = name.replace("models/", "") if name.startswith("models/") else name
-                if short:
-                    models.append(short)
+                if not short:
+                    continue
+                # 只保留支持 generateContent 的 gemini 系列模型
+                actions = [a.value if hasattr(a, "value") else str(a) for a in (m.supported_actions or [])]
+                if "generateContent" not in actions:
+                    continue
+                # 排除非文本生成模型（gemma、embedding、tts、image-only、robotics 等）
+                if not short.startswith("gemini-"):
+                    continue
+                skip_keywords = ("-tts", "-audio", "-robotics", "-image", "-live", "-computer-use")
+                if any(kw in short for kw in skip_keywords):
+                    continue
+                models.append(short)
             return sorted(models)
         if p == "deepseek":
             from openai import OpenAI
@@ -354,21 +364,14 @@ class _GeminiChatWrapper:
         return self._chat.send_message(message)
 
 
-def get_ai_client(config: Optional[Dict[str, str]] = None, tier: Optional[str] = None):
-    """
-    根据配置获取相应的 AI 客户端。
-    如果指定了 tier，则会根据配置的 provider 自动选择对应的推理或极速模型。
-    """
+def get_ai_client(config: Optional[Dict[str, str]] = None):
+    """根据配置获取相应的 AI 客户端。"""
     if config is None:
-        config = load_ai_config(tier=tier)
-    elif tier:
-        # 如果提供了 config 但又指定了 tier，则更新 config 中的 model
-        provider = normalize_provider(config.get("provider", "gemini"))
-        config["model"] = get_model_by_tier(provider, tier)
+        config = load_ai_config()
 
     provider = normalize_provider(config.get("provider", "gemini"))
     api_key = config.get("api_key", "")
-    model = config.get("model", "") or get_model_by_tier(provider, "fast")
+    model = config.get("model", "") or default_model_for_provider(provider)
 
     if provider == "gemini":
         from google import genai
