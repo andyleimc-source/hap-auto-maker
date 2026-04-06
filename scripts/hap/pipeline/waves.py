@@ -414,6 +414,9 @@ def run_all_waves(
                 if v_name in ("全部", "视图", ""):
                     default_view_id = str(v.get("viewId", "") or v.get("id", "")).strip()
                     break
+            # 兜底：未匹配到时取第一个视图（HAP 新建表必定有一个默认视图）
+            if not default_view_id and ws_views:
+                default_view_id = str(ws_views[0].get("viewId", "") or ws_views[0].get("id", "")).strip()
 
             with gemini_semaphore:
                 r = plan_and_create_views_for_ws(

@@ -1269,11 +1269,26 @@ def main() -> int:
 
     all_results: list[dict] = []
     total_ok = total_failed = 0
+    _date_trigger_global_count = 0  # 全局日期触发工作流计数（HAP 限制：全应用最多 2 个）
 
     for idx, ws_plan in enumerate(worksheets, 1):
         ws_name = ws_plan.get("worksheet_name", ws_plan.get("worksheet_id", "?"))
         ws_id   = ws_plan.get("worksheet_id", "")
         print(f"\n【{idx}/{len(worksheets)}】工作表：{ws_name}（{ws_id}）", file=sys.stderr)
+
+        # 全局限制：date_triggers（日期字段触发）全应用最多 2 个，超出则清空
+        _MAX_DATE_TRIGGERS = 2
+        if _date_trigger_global_count >= _MAX_DATE_TRIGGERS:
+            ws_plan = dict(ws_plan)
+            ws_plan["date_triggers"] = []
+        else:
+            remaining = _MAX_DATE_TRIGGERS - _date_trigger_global_count
+            dt = (ws_plan.get("date_triggers") or [])[:remaining]
+            if len(dt) < len(ws_plan.get("date_triggers") or []):
+                ws_plan = dict(ws_plan)
+                ws_plan["date_triggers"] = dt
+            _date_trigger_global_count += len(dt)
+
         try:
             ws_result = execute_worksheet_plan(
                 session                = session,
