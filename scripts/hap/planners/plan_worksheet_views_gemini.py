@@ -286,7 +286,7 @@ def build_prompt(app_name: str, worksheet_name: str, worksheet_id: str, fields: 
     if _HAS_VIEW_PLANNER:
         view_type_section = build_view_type_prompt_section()
         classified = classify_fields(fields)
-        suggestions = suggest_views(classified, worksheet_id)
+        suggestions = suggest_views(classified, worksheet_id, worksheet_name)
         suggestion_lines = []
         for sg in suggestions:
             suggestion_lines.append(
@@ -335,15 +335,27 @@ def build_prompt(app_name: str, worksheet_name: str, worksheet_id: str, fields: 
 }}
 
 规则：
-1) 允许 viewType=0(表格),1(看板),2(层级视图),3(画廊),4(日历),5(甘特图)。
+1) 允许 viewType=0(表格),1(看板),3(画廊),4(日历),5(甘特图)。
    ❌ viewType=0 的额外表格视图只有一种情况可以创建：有明确的分组字段（单选字段 type=9/11），能通过 groupsetting 展示分组。否则与系统内置"全部"视图无区别，禁止创建。
-2) 视图数量 1-4 个，尽量多样化——系统已内置"全部"列表视图，额外视图应优先选非表格类型（看板/日历/画廊/甘特图），避免所有表都只有一种类型。
+   ❌ viewType=2（层级视图）：已禁用，任何情况下禁止选。
+2) 视图数量 1-4 个，尽量多样化——系统已内置"全部"列表视图，额外视图应优先选非表格类型（看板/日历/画廊/甘特图）。
 3) displayControls / coverCid / viewControl 必须来自提供的字段ID；无法确定时填空或省略。
 4) 日历视图必须在 postCreateUpdates.advancedSetting 中提供 calendarcids（字符串化 JSON），格式必须为：'[{{"begin":"日期字段ID","end":"结束日期字段ID或空字符串"}}]'。begin 为开始日期字段ID（必填），end 为结束日期字段ID（无则填空字符串）。
-5) 【强制】看板视图(viewType=1)必须设置 viewControl 为一个单选字段(type=11)的ID。如果没有合适的单选字段，不要创建看板视图。
+5) 【强制】看板视图(viewType=1)：
+   - viewControl 必须设置为 type=9 或 type=11 的单选字段ID
+   - 该字段必须有「状态流转/优先级」语义：字段名包含「状态、阶段、进度、步骤、环节、审批、审核、审查、审定、优先级、紧急程度、严重程度、风险等级、紧急级别、重要程度」之一
+   - ❌ 禁止用「类型、分类、方式、来源、渠道、性别、行业、地区、部门、岗位、职位、职级」等纯分类字段作为看板列
+   - 不满足以上条件则不要创建看板视图
 6) 【强制】表格视图(viewType=0)如果视图名包含"按...分组"、"按...分类"、"分组"等含义，必须通过 postCreateUpdates 二次保存分组配置，格式：{{"editAttrs":["advancedSetting"],"editAdKeys":["groupsetting","groupsorts","groupcustom","groupshow","groupfilters","groupopen"],"advancedSetting":{{"groupsetting":"[{{\\\"controlId\\\":\\\"分组字段ID\\\",\\\"isAsc\\\":true}}]","groupsorts":"","groupcustom":"","groupshow":"0","groupfilters":"[]","groupopen":""}}}}。groupsetting 是字符串化 JSON 数组，controlId 必须为有实际选项的单选字段(type=9/11)的ID，isAsc 控制升序。
-7) 甘特图视图（viewType=5）有开始+结束日期字段时适合，用于时间轴展示。
-8) ❌ 层级视图（viewType=2）：已禁用，禁止生成，任何情况下都不允许选 viewType=2。
+7) 【强制】甘特图视图（viewType=5）：
+   - 必须有开始+结束两个日期字段
+   - 工作表必须有项目/任务语义：表名包含「项目、任务、里程碑、迭代、冲刺、需求、工单、计划、工期、排产、路线图、版本、发布」之一
+   - 不满足以上条件则不要创建甘特图
+8) 【强制】日历视图（viewType=4）：
+   - 必须有日期字段
+   - 工作表必须有排期/事件语义：表名包含「活动、日程、排期、预约、预订、排班、班次、事件、会议、培训、考勤、假期、出差、值班、计划、安排、档期、节假日」之一
+   - ❌ 台账、主数据、档案、明细、记录（流水类）表不适合日历视图
+   - 不满足以上条件则不要创建日历视图
 9) 画廊视图（viewType=3）有附件字段（type=14）时推荐，适合以卡片形式浏览内容；设置 coverCid 为附件字段ID。
 10) 若字段不支持某视图，请不要输出该视图类型。
 11) 输出必须是可解析 JSON。
@@ -585,15 +597,27 @@ def build_batch_prompt(app_name: str, worksheets_data: List[dict]) -> str:
 }}
 
 规则：
-1) 允许 viewType=0(表格),1(看板),2(层级视图),3(画廊),4(日历),5(甘特图)。
+1) 允许 viewType=0(表格),1(看板),3(画廊),4(日历),5(甘特图)。
    ❌ viewType=0 的额外表格视图只有一种情况可以创建：有明确的分组字段（单选字段 type=9/11），能通过 groupsetting 展示分组。否则与系统内置"全部"视图无区别，禁止创建。
-2) 每个工作表视图数量 1-4 个，尽量多样化——系统已内置"全部"列表视图，额外视图应优先选非表格类型（看板/日历/画廊/甘特图），避免整个应用的视图都是同一类型。
+   ❌ viewType=2（层级视图）：已禁用，任何情况下禁止选。
+2) 每个工作表视图数量 1-4 个，尽量多样化——系统已内置"全部"列表视图，额外视图应优先选非表格类型（看板/日历/画廊/甘特图）。
 3) displayControls / coverCid / viewControl 必须来自对应工作表提供的字段ID；无法确定时填空或省略。
 4) 日历视图必须在 postCreateUpdates.advancedSetting 中提供 calendarcids（字符串化 JSON），格式必须为：'[{{"begin":"日期字段ID","end":"结束日期字段ID或空字符串"}}]'。begin 为开始日期字段ID（必填），end 为结束日期字段ID（无则填空字符串）。
-5) 【强制】看板视图(viewType=1)必须设置 viewControl 为一个单选字段(type=11)的ID。如果没有合适的单选字段，不要创建看板视图。
+5) 【强制】看板视图(viewType=1)：
+   - viewControl 必须设置为 type=9 或 type=11 的单选字段ID
+   - 该字段必须有「状态流转/优先级」语义：字段名包含「状态、阶段、进度、步骤、环节、审批、审核、审查、审定、优先级、紧急程度、严重程度、风险等级、紧急级别、重要程度」之一
+   - ❌ 禁止用「类型、分类、方式、来源、渠道、性别、行业、地区、部门、岗位、职位、职级」等纯分类字段作为看板列
+   - 不满足以上条件则不要创建看板视图
 6) 【强制】表格视图(viewType=0)如果视图名包含"按...分组"、"按...分类"、"分组"等含义，必须通过 postCreateUpdates 二次保存分组配置，格式：{{"editAttrs":["advancedSetting"],"editAdKeys":["groupsetting","groupsorts","groupcustom","groupshow","groupfilters","groupopen"],"advancedSetting":{{"groupsetting":"[{{\\\"controlId\\\":\\\"分组字段ID\\\",\\\"isAsc\\\":true}}]","groupsorts":"","groupcustom":"","groupshow":"0","groupfilters":"[]","groupopen":""}}}}。groupsetting 是字符串化 JSON 数组，controlId 必须为有实际选项的单选字段(type=9/11)的ID，isAsc 控制升序。
-7) 甘特图视图（viewType=5）有开始+结束日期字段时适合，用于时间轴展示。
-8) ❌ 层级视图（viewType=2）：已禁用，禁止生成，任何情况下都不允许选 viewType=2。
+7) 【强制】甘特图视图（viewType=5）：
+   - 必须有开始+结束两个日期字段
+   - 工作表必须有项目/任务语义：表名包含「项目、任务、里程碑、迭代、冲刺、需求、工单、计划、工期、排产、路线图、版本、发布」之一
+   - 不满足以上条件则不要创建甘特图
+8) 【强制】日历视图（viewType=4）：
+   - 必须有日期字段
+   - 工作表必须有排期/事件语义：表名包含「活动、日程、排期、预约、预订、排班、班次、事件、会议、培训、考勤、假期、出差、值班、计划、安排、档期、节假日」之一
+   - ❌ 台账、主数据、档案、明细、记录（流水类）表不适合日历视图
+   - 不满足以上条件则不要创建日历视图
 9) 画廊视图（viewType=3）有附件字段（type=14）时推荐；设 coverCid 为附件字段ID。
 10) 若字段不支持某视图，请不要输出该视图类型。
 11) 输出必须是可解析 JSON，worksheets 数组长度必须等于 {count}。

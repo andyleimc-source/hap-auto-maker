@@ -35,40 +35,118 @@ def build_view_type_prompt_section() -> str:
     return "\n".join(lines)
 
 
-def suggest_views(classified_fields: dict[str, list[dict]], worksheet_id: str = "") -> list[dict]:
-    """根据字段分类推荐适合的视图类型。"""
+def suggest_views(
+    classified_fields: dict[str, list[dict]],
+    worksheet_id: str = "",
+    worksheet_name: str = "",
+) -> list[dict]:
+    """根据字段分类和工作表名语义推荐适合的视图类型。
+
+    看板：仅限「状态/流程/优先级」语义的单选字段，排除纯分类/类型字段。
+    日历：仅限排期/事件/预约语义的工作表。
+    甘特图：仅限项目/任务/计划语义的工作表 + 有开始+结束两个日期字段。
+    """
     suggestions = []
 
-    # 有单选/下拉 → 看板 + 分组表格
-    # 注意：type=36（检查框/布尔）只有两个值，不适合看板；type=28（等级）也不适合
-    # 看板适合 type=9（单选平铺）、type=11（下拉单选）
+    # ── 看板：字段名必须有「流转/优先级」语义 ──────────────────────────────────
+    # 适合看板：状态流转型 + 有序分级型
+    KANBAN_FIELD_KEYWORDS = {
+        # 状态流转
+        "状态", "阶段", "进度", "步骤", "环节",
+        # 审批/流程
+        "审批", "审核", "审查", "审定",
+        # 有序分级
+        "优先级", "紧急程度", "严重程度", "风险等级", "紧急级别",
+        "重要程度", "危急程度",
+    }
+    # 排除：纯分类/类型/方式/来源，这类字段没有流转语义
+    KANBAN_EXCLUDE_KEYWORDS = {
+        "类型", "分类", "方式", "来源", "渠道", "性别",
+        "行业", "地区", "部门", "岗位", "职位", "职级",
+    }
+
     KANBAN_SUITABLE_TYPES = {9, 11}
     selects = [f for f in classified_fields.get("select", []) if f.get("type") in KANBAN_SUITABLE_TYPES]
-    if selects:
+
+    kanban_field = None
+    for f in selects:
+        fname = f.get("name", "")
+        # 包含流转关键词
+        has_flow = any(kw in fname for kw in KANBAN_FIELD_KEYWORDS)
+        # 不含排除关键词（或含流转关键词的优先保留，如「合同状态」）
+        has_exclude = any(kw in fname for kw in KANBAN_EXCLUDE_KEYWORDS)
+        if has_flow and not has_exclude:
+            kanban_field = f
+            break
+        # 兜底：字段名直接是「状态」「阶段」「优先级」等单词（精确匹配）
+        if fname in KANBAN_FIELD_KEYWORDS:
+            kanban_field = f
+            break
+
+    if kanban_field:
         suggestions.append({
-            "viewType": 1, "name": f"按{selects[0]['name']}看板",
-            "reason": f"有单选字段「{selects[0]['name']}」，适合看板",
-            "viewControl": selects[0]["id"],
+            "viewType": 1, "name": f"按{kanban_field['name']}看板",
+            "reason": f"字段「{kanban_field['name']}」有状态流转/优先级语义，适合看板",
+            "viewControl": kanban_field["id"],
         })
         suggestions.append({
-            "viewType": 0, "name": f"按{selects[0]['name']}分组",
+            "viewType": 0, "name": f"按{kanban_field['name']}分组",
             "reason": "分组表格视图",
         })
 
-    # 有日期 → 日历 + 甘特图
+    # ── 日历：工作表名必须有排期/事件语义 ─────────────────────────────────────
+    CALENDAR_WS_KEYWORDS = {
+        # 排期/预约
+        "活动", "日程", "排期", "预约", "预订", "排班", "班次",
+        # 事件/会议
+        "事件", "会议", "培训", "考勤", "假期", "出差", "值班",
+        # 计划/安排
+        "计划", "安排", "档期", "节假日",
+    }
     dates = classified_fields.get("date", [])
-    if len(dates) >= 2:
-        suggestions.append({
-            "viewType": 5, "name": "甘特图",
-            "reason": f"有日期字段「{dates[0]['name']}」+「{dates[1]['name']}」",
-            "begindate": dates[0]["id"],
-            "enddate": dates[1]["id"],
-        })
-    if dates:
+    ws_is_calendar = any(kw in worksheet_name for kw in CALENDAR_WS_KEYWORDS)
+
+    if dates and ws_is_calendar:
         suggestions.append({
             "viewType": 4, "name": "日历视图",
-            "reason": f"有日期字段「{dates[0]['name']}」",
+            "reason": f"工作表「{worksheet_name}」有排期/事件语义，字段「{dates[0]['name']}」",
             "calendarcid": dates[0]["id"],
+        })
+
+    # ── 甘特图：工作表名有项目/任务语义 + 有开始+结束两个日期字段 ────────────
+    GANTT_WS_KEYWORDS = {
+        # 项目/任务
+        "项目", "任务", "里程碑", "迭代", "冲刺", "需求", "工单",
+        # 计划执行
+        "计划", "工期", "排产", "路线图", "roadmap", "版本", "发布",
+    }
+    ws_is_gantt = any(kw in worksheet_name for kw in GANTT_WS_KEYWORDS)
+
+    # 找开始日期和结束日期字段（语义配对）
+    BEGIN_DATE_KEYWORDS = {"开始", "启动", "立项", "计划开始", "预计开始"}
+    END_DATE_KEYWORDS = {"结束", "截止", "完成", "交付", "到期", "计划完成", "预计完成"}
+
+    begin_field = None
+    end_field = None
+    for f in dates:
+        fname = f.get("name", "")
+        if begin_field is None and any(kw in fname for kw in BEGIN_DATE_KEYWORDS):
+            begin_field = f
+        elif end_field is None and any(kw in fname for kw in END_DATE_KEYWORDS):
+            end_field = f
+
+    # 兜底：有任意两个日期字段
+    if begin_field is None and len(dates) >= 1:
+        begin_field = dates[0]
+    if end_field is None and len(dates) >= 2:
+        end_field = dates[1]
+
+    if ws_is_gantt and begin_field and end_field and begin_field["id"] != end_field["id"]:
+        suggestions.append({
+            "viewType": 5, "name": "项目甘特图",
+            "reason": f"工作表「{worksheet_name}」有项目/任务语义，字段「{begin_field['name']}」→「{end_field['name']}」",
+            "begindate": begin_field["id"],
+            "enddate": end_field["id"],
         })
 
     # 层级视图(viewType=2) 已禁用 — 前端兼容性问题，跳过
@@ -115,7 +193,7 @@ def build_structure_prompt(
         ws_name = ws.get("worksheetName", "")
         fields = ws.get("fields", [])
         classified = classify_fields(fields)
-        suggestions = suggest_views(classified, ws_id)
+        suggestions = suggest_views(classified, ws_id, ws_name)
 
         lines = [f"\n### 工作表「{ws_name}」(ID: {ws_id})"]
         for cat, label in [("select", "单选/下拉"), ("date", "日期"),
@@ -501,7 +579,7 @@ def build_enhanced_prompt(
         ws_name = ws.get("worksheetName", "")
         fields = ws.get("fields", [])
         classified = classify_fields(fields)
-        suggestions = suggest_views(classified, ws_id)
+        suggestions = suggest_views(classified, ws_id, ws_name)
 
         lines = [f"\n### 工作表「{ws_name}」(ID: {ws_id})"]
 
@@ -630,7 +708,7 @@ def build_single_ws_view_prompt(
 
     view_type_section = build_view_type_prompt_section()
     classified = classify_fields(fields)
-    suggestions = suggest_views(classified, ws_id)
+    suggestions = suggest_views(classified, ws_id, ws_name)
 
     field_lines = []
     for f in fields:
