@@ -91,6 +91,8 @@ FIELD_REGISTRY = {
     },
     "TextCombine": {
         "controlType": 32, "name": "文本组合", "category": "basic",
+        "ai_disabled": True,
+        "ai_disabled_reason": "文本组合依赖引用其他字段，AI 无法正确配置公式",
         "doc": "文本公式：多字段文本拼接，支持引用其他字段。",
         "advancedSetting": {
             "sorttype": "zh",
@@ -143,6 +145,8 @@ FIELD_REGISTRY = {
     },
     "MoneyCapital": {
         "controlType": 25, "name": "大写金额", "category": "number",
+        "ai_disabled": True,
+        "ai_disabled_reason": "大写金额为展示用衍生字段，用 Money 字段替代",
         "doc": "金额转中文大写（如：壹万元整）。",
         "advancedSetting": {
             "sorttype": "zh",
@@ -150,6 +154,8 @@ FIELD_REGISTRY = {
     },
     "Formula": {
         "controlType": 31, "name": "公式", "category": "number",
+        "ai_disabled": True,
+        "ai_disabled_reason": "公式字段需引用其他字段 ID，AI 无法正确配置",
         "doc": "数值计算公式，支持四则运算和字段引用。",
         "advancedSetting": {
             "sorttype": "zh",
@@ -164,6 +170,8 @@ FIELD_REGISTRY = {
     },
     "FormulaDate": {
         "controlType": 38, "name": "公式日期", "category": "number",
+        "ai_disabled": True,
+        "ai_disabled_reason": "公式日期字段需引用其他字段 ID，AI 无法正确配置",
         "doc": "日期计算公式（如剩余天数、在职时长）。",
         "advancedSetting": {
             "sorttype": "zh",
@@ -327,6 +335,8 @@ FIELD_REGISTRY = {
     },
     "Link": {
         "controlType": 7, "name": "链接", "category": "contact",
+        "ai_disabled": True,
+        "ai_disabled_reason": "链接字段实际使用率低，用文本字段替代",
         "doc": "URL 链接字段，支持点击跳转。",
         "advancedSetting": {
             "sorttype": "zh",
@@ -354,6 +364,8 @@ FIELD_REGISTRY = {
     },
     "Department": {
         "controlType": 27, "name": "部门", "category": "people",
+        "ai_disabled": True,
+        "ai_disabled_reason": "部门字段依赖组织架构，AI 无法配置有效默认值",
         "doc": "部门选择字段。enumDefault: 0=单选, 1=多选。",
         "advancedSetting": {
             "sorttype": "zh",
@@ -361,6 +373,8 @@ FIELD_REGISTRY = {
     },
     "OrgRole": {
         "controlType": 48, "name": "组织角色", "category": "people",
+        "ai_disabled": True,
+        "ai_disabled_reason": "组织角色依赖组织架构配置，AI 无法正确规划",
         "doc": "组织角色选择字段。",
         "advancedSetting": {
             "sorttype": "zh",
@@ -420,6 +434,8 @@ FIELD_REGISTRY = {
     },
     "OtherTableField": {
         "controlType": 30, "name": "他表字段", "category": "relation",
+        "ai_disabled": True,
+        "ai_disabled_reason": "他表字段需引用已存在的关联字段 controlId，AI 规划阶段无法获取",
         "doc": "引用关联表字段值，需先有关联字段。dataSource=关联字段 controlId。",
         "advancedSetting": {
             "sorttype": "zh",
@@ -430,6 +446,8 @@ FIELD_REGISTRY = {
     },
     "SubTable": {
         "controlType": 34, "name": "子表", "category": "relation",
+        "ai_disabled": True,
+        "ai_disabled_reason": "子表配置复杂，用独立工作表 + 关联字段替代",
         "doc": "子表（嵌入式关联表），在主记录中展示子记录列表。",
         "advancedSetting": {
             "sorttype": "zh",
@@ -470,6 +488,8 @@ FIELD_REGISTRY = {
     },
     "Cascade": {
         "controlType": 35, "name": "级联选择", "category": "relation",
+        "ai_disabled": True,
+        "ai_disabled_reason": "级联选择需要预置数据源，AI 无法配置",
         "doc": "级联多级选择（如省/市/区）。enumDefault=1。",
         "api_extra": {"enumDefault": 1},
         "advancedSetting": {
@@ -488,6 +508,8 @@ FIELD_REGISTRY = {
     },
     "Rollup": {
         "controlType": 37, "name": "汇总", "category": "relation",
+        "ai_disabled": True,
+        "ai_disabled_reason": "汇总字段需引用已存在的关联字段 controlId，AI 规划阶段无法获取",
         "doc": "汇总关联表数据（求和/计数/平均/最大/最小），需先有关联字段。",
         "advancedSetting": {
             "sorttype": "zh",
@@ -518,6 +540,8 @@ FIELD_REGISTRY = {
     },
     "Signature": {
         "controlType": 42, "name": "签名", "category": "file",
+        "ai_disabled": True,
+        "ai_disabled_reason": "签名字段为特殊交互字段，业务场景极少，禁止 AI 规划",
         "doc": "手写签名字段。",
         "advancedSetting": {
             "sorttype": "zh",
@@ -561,6 +585,8 @@ FIELD_REGISTRY = {
     # ── 高级/特殊 ──
     "QRCode": {
         "controlType": 43, "name": "二维码", "category": "advanced",
+        "ai_disabled": True,
+        "ai_disabled_reason": "二维码字段配置复杂，业务场景特殊，禁止 AI 规划",
         "doc": "条形码/二维码。enumDefault: 1=条形码, 2=二维码。",
         "advancedSetting": {
             "sorttype": "zh",
@@ -573,6 +599,8 @@ FIELD_REGISTRY = {
     },
     "Embed": {
         "controlType": 45, "name": "嵌入", "category": "advanced",
+        "ai_disabled": True,
+        "ai_disabled_reason": "嵌入字段需配置外部 URL 或图表 ID，AI 无法正确规划",
         "doc": "嵌入外部内容。enumDefault: 1=链接, 2=图表, 3=视图。",
         "advancedSetting": {
             "sorttype": "zh",
