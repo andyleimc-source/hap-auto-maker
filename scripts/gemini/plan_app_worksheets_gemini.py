@@ -25,6 +25,7 @@ from ai_utils import (
     load_ai_config,
     parse_ai_json,
 )
+from utils import log_summary
 from planning.worksheet_planner import (
     build_enhanced_prompt,
     validate_worksheet_plan,
@@ -655,6 +656,8 @@ def main() -> None:
     app_name = str(plan.get("app_name", args.app_name)).strip() or args.app_name
     summary = str(plan.get("summary", "")).strip()
 
+    ws_names = [str(w.get("name", "")).strip() for w in worksheets if isinstance(w, dict)]
+    log_summary(f"规划完成，共 {len(ws_names)} 张：{'、'.join(ws_names)}")
     print("规划完成（概览）")
     print(f"- 应用: {app_name}")
     if summary:
