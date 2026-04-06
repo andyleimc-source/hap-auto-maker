@@ -45,6 +45,8 @@ class PipelineContext:
     tableview_filter_plan_json: Optional[str] = None
     tableview_filter_apply_result_json: Optional[str] = None
     mock_data_run_json: Optional[str] = None
+    mock_data_inline_result_json: Optional[str] = None   # Wave 3.5b Phase 1 产物
+    mock_relation_apply_result_json: Optional[str] = None  # Wave 3.5b Phase 2 产物
     chatbot_pipeline_result_json: Optional[str] = None
     workflow_plan_json: Optional[str] = None
     workflow_execute_result_json: Optional[str] = None
@@ -74,6 +76,8 @@ class PipelineContext:
             "tableview_filter_plan_json": self.tableview_filter_plan_json,
             "tableview_filter_apply_result_json": self.tableview_filter_apply_result_json,
             "mock_data_run_json": self.mock_data_run_json,
+            "mock_data_inline_result_json": self.mock_data_inline_result_json,
+            "mock_relation_apply_result_json": self.mock_relation_apply_result_json,
             "chatbot_pipeline_result_json": self.chatbot_pipeline_result_json,
             "workflow_plan_json": self.workflow_plan_json,
             "workflow_execute_result_json": self.workflow_execute_result_json,
