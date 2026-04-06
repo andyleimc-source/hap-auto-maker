@@ -25,7 +25,7 @@ from typing import Dict, List, Optional, Set, Tuple
 import os
 
 import requests
-from utils import latest_file, load_json
+from utils import latest_file, load_json, log_summary
 
 BASE_DIR = Path(__file__).resolve().parents[3]
 DEFAULT_BASE_URL = "https://api.mingdao.com"
@@ -831,6 +831,18 @@ def main() -> None:
         futures = {executor.submit(_create_one_ws, ws): ws for ws in worksheets}
         for future in as_completed(futures):
             ws_name, worksheet_id, result, relation_fields, deferred_fields = future.result()
+            # 摘要：工作表名 + 字段列表
+            ws_obj = futures[future]
+            all_fields = []
+            for f in (ws_obj.get("fields", []) if isinstance(ws_obj.get("fields"), list) else []):
+                if isinstance(f, dict):
+                    fname = str(f.get("name", "") or f.get("controlName", "")).strip()
+                    ftype = str(f.get("type", "")).strip()
+                    if fname:
+                        all_fields.append(f"{fname}({ftype})" if ftype else fname)
+            log_summary(f"✓ 工作表「{ws_name}」已创建（{len(all_fields)} 个字段）")
+            if all_fields:
+                log_summary(f"  {' | '.join(all_fields)}")
             name_to_id[ws_name] = worksheet_id
             create_results.append({"name": ws_name, "worksheetId": worksheet_id, "result": result})
             relations_todo.append({
