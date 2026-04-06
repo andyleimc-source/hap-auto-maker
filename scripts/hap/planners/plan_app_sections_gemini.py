@@ -48,7 +48,7 @@ def build_prompt(app_name: str, worksheets: List[dict]) -> str:
 
 ## 任务
 
-请将上述工作表划分为 2-5 个业务分组（Section），每个分组包含功能或业务上相关的工作表。
+请将上述工作表划分为 2-9 个业务分组（Section），每个分组包含功能或业务上相关的工作表。
 
 分组原则：
 1. 第一个分组必须固定为"仪表盘"，worksheets 为空数组 []，用于放置统计页面和对话机器人

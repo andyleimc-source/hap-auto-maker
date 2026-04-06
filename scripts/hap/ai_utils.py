@@ -84,10 +84,11 @@ def get_rpd_usage(model: str = None) -> Dict:
     return {"date": today, "models": result}
 
 # 任务档位映射
+# Gemini 只允许使用 gemini-2.5-flash（费用控制，禁止 pro）
 TIER_MODELS = {
     "gemini": {
-        "reasoning": "gemini-2.5-pro",
-        "fast": "gemini-2.5-pro",
+        "reasoning": "gemini-2.5-flash",
+        "fast": "gemini-2.5-flash",
     },
     "deepseek": {
         "reasoning": "deepseek-reasoner",
@@ -172,12 +173,17 @@ def load_ai_config(config_path: Optional[Path] = None, tier: Optional[str] = Non
     if not api_key:
         raise ValueError(f"AI 配置缺少 api_key: {target_path}")
 
+    # Gemini provider 只允许使用 gemini-2.5-flash（费用控制，禁止 pro）
+    if provider == "gemini" and model != "gemini-2.5-flash":
+        print(f"  ⚠️  Gemini 模型 '{model}' 已被强制替换为 'gemini-2.5-flash'（禁止使用 pro，费用控制）")
+        model = "gemini-2.5-flash"
+
     return {
         "provider": provider,
         "api_key": api_key,
         "model": model,
         "base_url": base_url,
-        "tier": tier or ("reasoning" if "reasoner" in model or "pro" in model.lower() else "fast"),
+        "tier": tier or ("reasoning" if "reasoner" in model else "fast"),
     }
 
 
