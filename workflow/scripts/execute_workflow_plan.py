@@ -649,6 +649,13 @@ def create_date_trigger(
         start_node_id = str((pub_resp.get("data") or {}).get("startNodeId", "")).strip()
     print(f"    getProcessPublish → startNodeId={start_node_id!r}", file=sys.stderr)
 
+    action_nodes_plan, action_warnings = _sanitize_action_nodes(
+        trigger_plan.get("action_nodes", []), worksheet_id
+    )
+    for warning in action_warnings:
+        print(f"    [plan-skip] {warning}", file=sys.stderr)
+
+    action_results = []
     if start_node_id:
         # Step 4: 配置日期字段触发节点（含完整字段列表）
         trigger_controls = _fetch_worksheet_controls(session, worksheet_id)
@@ -671,7 +678,14 @@ def create_date_trigger(
             },
         )
 
-    # Step 5: 发布
+        # Step 5: 创建动作节点
+        if action_nodes_plan:
+            print(f"    [action nodes] 创建 {len(action_nodes_plan)} 个...", file=sys.stderr)
+            action_results = add_action_nodes(session, process_id, start_node_id, worksheet_id, action_nodes_plan)
+        else:
+            print(f"    [action nodes] 无有效动作节点，跳过", file=sys.stderr)
+
+    # Step 6: 发布
     published = False
     if publish and process_id:
         published = publish_process(session, process_id)
@@ -683,6 +697,8 @@ def create_date_trigger(
         "execute_time_type": execute_time_type,
         "frequency": frequency,
         "trigger_configured": bool(start_node_id),
+        "action_nodes": action_results,
+        "warnings": action_warnings,
         "publish_status": 1 if published else 0,
         "workflow_edit_url": f"https://www.mingdao.com/workflowedit/{process_id}",
     }

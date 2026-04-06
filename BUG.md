@@ -86,6 +86,16 @@
 
 ---
 
+## [BUG-009] date_trigger 工作流无动作节点（仅有触发器）
+- **状态**: resolved
+- **现象**: 日期字段触发工作流（如"患者生日祝福提醒"）创建后只有触发节点，没有任何动作节点，工作流没有业务含义
+- **根因**: `create_date_trigger` 函数只创建了工作流进程、配置了触发节点，但完全缺少调用 `add_action_nodes` 的逻辑。相比之下，`create_worksheet_trigger`、`create_time_trigger`、`create_custom_action` 均已正确调用 `add_action_nodes`，唯独 `create_date_trigger` 遗漏
+- **修复**:
+  - `workflow/scripts/execute_workflow_plan.py`：`create_date_trigger` 中补充调用 `_sanitize_action_nodes` 和 `add_action_nodes`（与其他触发类型保持一致），返回值加入 `action_nodes` 和 `warnings` 字段
+- **验证**: 向现有工作流 `69d2d8351fd8fd2ab3cc2259`（startNodeId: `69d2d8351fd8fd2ab3cc225a`）手动调用 `add_action_nodes` 添加通知节点，`flowNode/add → status=1`、`flowNode/saveNode → status=1`，节点 `69d302e71fd8fd2ab3d0cc16` 成功创建
+
+---
+
 ## [BUG-003] AI 响应超时断连
 - **状态**: resolved
 - **现象**: Step 2 卡很久后抛出 `ConnectionError` 或 `ReadTimeout`
