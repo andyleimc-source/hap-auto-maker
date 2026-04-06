@@ -1135,8 +1135,9 @@ def create_rows_batch_v3(
     }
     url = base_url.rstrip("/") + ROW_BATCH_CREATE_URL.format(worksheet_id=worksheet_id)
     data = request_json("POST", url, build_headers(app_key, sign), payload=payload)
-    # 批量接口返回 {"success": true, "data": {"ids": ["rowId1", ...]}}
-    ids = data.get("data", {}).get("ids", [])
+    # 批量接口实际返回 {"success": true, "data": {"rowIds": ["rowId1", ...]}}
+    raw_data = data.get("data", {})
+    ids = raw_data.get("rowIds") or raw_data.get("ids", [])
     if not isinstance(ids, list):
         ids = []
     return [str(rid).strip() for rid in ids if str(rid).strip()]
