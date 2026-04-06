@@ -149,6 +149,7 @@ def build_prompt(snapshot: dict) -> str:
 4. Relation / Attachment / SubTable / Collaborator / Department / OrgRole / Formula / Summary / AutoNumber / Concatenate / DateFormula / Rollup / Signature 禁止出现在 valuesByFieldId。
 5. Checkbox 使用 true/false；Number / Currency 使用数字；Date 使用 yyyy-MM-dd；DateTime 使用 yyyy-MM-dd HH:mm:ss，且日期时间必须在最近 7 天内。
 6. ⚠️ 必须为每个 writableField 都生成合理的值，不允许遗漏任何可写字段。
+7. Number 字段：禁止使用 0。字段名含"ID/编号/序号/No/号/码"等时，生成 1001-9999 范围的正整数；普通数值字段根据业务语义生成合理值。
 """.strip()
 
 
@@ -202,6 +203,7 @@ def build_prompt_v2(app: dict, worksheets: List[dict]) -> str:
 1. 每张表 records 数量必须严格等于 recordCount。
 2. Checkbox 使用 true/false；Number / Currency 使用数字；Date 使用 yyyy-MM-dd；DateTime 使用 yyyy-MM-dd HH:mm:ss，且日期必须在最近 7 天内。
 3. ⚠️ 必须为每个 writableField 都生成合理的值，不允许遗漏任何可写字段。
+4. Number 字段：禁止使用 0。字段名含"ID/编号/序号/No/号/码"等时，生成 1001-9999 范围的正整数；普通数值字段根据业务语义生成合理值。
 """.strip()
 
 
@@ -351,6 +353,23 @@ def validate_plan(raw: dict, snapshot: dict) -> Dict[str, Any]:
                         f"{worksheet_id}|{field_id}|{index}|{summary}",
                     )
                     date_recent_normalized += 1
+                elif field_type in {"Number", "Currency"}:
+                    # 对 ID/编号类 Number 字段兜底：AI 常返回 0，改为合理的正整数
+                    try:
+                        num_val = float(value) if not isinstance(value, (int, float)) else value
+                    except (TypeError, ValueError):
+                        num_val = 0
+                    if num_val == 0:
+                        field_name_lower = str(field_meta.get("name", "")).lower()
+                        id_keywords = {"id", "编号", "序号", "no", "num", "number", "code", "码", "号"}
+                        is_id_field = any(kw in field_name_lower for kw in id_keywords)
+                        if is_id_field:
+                            seed = int(hashlib.sha256(f"{worksheet_id}|{field_id}|{index}".encode()).hexdigest()[:8], 16)
+                            value = 1000 + (seed % 9000) * index
+                        else:
+                            value = num_val
+                    else:
+                        value = num_val
                 final_values[field_id] = value
             
             # 如果 AI 没填任何有效字段，强行填入标题字段
