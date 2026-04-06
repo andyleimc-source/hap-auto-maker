@@ -221,19 +221,61 @@ def _resolve_field_value(raw_value: str, start_node_id: str) -> str:
     )
 
 
+_NOW_PLACEHOLDERS = re.compile(
+    r"^\{\{(NOW|NOW_DATE|NOW_DATE_TIME|CURRENT_DATE|CURRENT_TIME|CURRENT_DATETIME)\}\}$",
+    re.IGNORECASE,
+)
+
+# HAP 工作流"系统-当前时间"节点固定参数（抓包验证）
+# 用于 add_record/update_record 的日期(15)/日期时间(16)字段
+_SYSTEM_NOW_NODE = {
+    "fieldValueId":   "nowTime",
+    "nodeId":         "5d39140d381d42d20db0c4da",
+    "nodeName":       "系统",
+    "fieldValueName": "当前时间",
+    "nodeTypeId":     100,
+    "appType":        100,
+    "actionId":       "",
+    "isSourceApp":    False,
+    "sourceType":     0,
+}
+
+
 def _build_fields(raw_fields: list, start_node_id: str) -> list:
-    """处理字段数组：替换动态引用，补全 nodeAppId。"""
+    """处理字段数组：替换动态引用，补全 nodeAppId。
+
+    特殊处理：
+    - {{trigger.FIELD_ID}} → $startNodeId-FIELD_ID$（HAP 变量格式）
+    - {{NOW}} / {{NOW_DATE}} / {{NOW_DATE_TIME}} 等 → HAP 系统节点"当前时间"格式
+      （直接传原始字符串会导致 HAP 显示 Invalid date）
+    """
     result = []
     for f in raw_fields:
-        field = {
-            "fieldId":     f.get("fieldId", ""),
-            "type":        f.get("type", 2),
-            "enumDefault": f.get("enumDefault", 0),
-            "fieldValue":  _resolve_field_value(str(f.get("fieldValue", "") or ""), start_node_id),
-            "nodeAppId":   f.get("nodeAppId", ""),
-        }
-        if field["fieldId"]:
-            result.append(field)
+        ftype = f.get("type", 2)
+        raw_val = str(f.get("fieldValue", "") or "")
+        field_id = f.get("fieldId", "")
+        if not field_id:
+            continue
+
+        if _NOW_PLACEHOLDERS.match(raw_val.strip()):
+            # 日期/时间字段用"当前时间"系统节点
+            field = {
+                "fieldId":     field_id,
+                "type":        ftype,
+                "enumDefault": f.get("enumDefault", 0),
+                "fieldValue":  "",
+                "fieldValueType": ftype,
+                **_SYSTEM_NOW_NODE,
+            }
+        else:
+            field = {
+                "fieldId":     field_id,
+                "type":        ftype,
+                "enumDefault": f.get("enumDefault", 0),
+                "fieldValue":  _resolve_field_value(raw_val, start_node_id),
+                "nodeAppId":   f.get("nodeAppId", ""),
+            }
+        result.append(field)
     return result
 
 
