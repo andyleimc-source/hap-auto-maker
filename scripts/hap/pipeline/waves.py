@@ -129,12 +129,10 @@ def run_all_waves(
     view_filters = spec["view_filters"]
     mock_data = spec["mock_data"]
     chatbots = spec["chatbots"]
-    workflows = spec["workflows"]
     delete_default_views_cfg = spec["delete_default_views"]
     pages_cfg = spec["pages"]
 
     app_auth_dir: Path = dirs["app_auth_dir"]
-    workflow_output_dir: Path = dirs["workflow_output_dir"]
     output_root: Path = dirs["output_root"]
     config_web_auth: Path = dirs["config_web_auth"]
 
@@ -642,7 +640,6 @@ def run_all_waves(
 
     view_plan_output = (view_plan_dir / f"view_plan_{app_id}_{now_ts()}.json").resolve()
     view_create_output = (view_create_result_dir / f"view_create_result_{app_id}_{now_ts()}.json").resolve()
-    workflow_plan_output = (workflow_output_dir / f"pipeline_workflows_{app_id}_{now_ts()}.json").resolve()
 
     def run_step_4() -> bool:
         if not ws["icon_update"].get("enabled", True):
@@ -726,44 +723,21 @@ def run_all_waves(
             )
         return ok10
 
-    def run_step_11() -> bool:
-        if not workflows.get("enabled", True):
-            with steps_lock:
-                steps_report.append({"step_id": 11, "step_key": "workflows_plan", "title": "规划工作流（AI）", "skipped": True, "reason": "disabled_by_spec", "result": {}})
-            return True
-        workflow_output_dir.mkdir(parents=True, exist_ok=True)
-        sem_value = getattr(gemini_semaphore, '_value', 1000)
-        cmd11 = [
-            sys.executable, str(scripts["workflows_plan"]),
-            "--relation-id", app_id,
-            "--thinking", str(workflows.get("thinking", "none")),
-            "--output", str(workflow_plan_output),
-            "--max-parallel", str(sem_value),
-        ]
-        if workflows.get("skip_analysis", False):
-            cmd11.append("--skip-analysis")
-        ok11 = _exec(11, "workflows_plan", "规划工作流（AI）", cmd11, uses_gemini=True)
-        if ok11:
-            ctx.workflow_plan_json = str(workflow_plan_output)
-        return ok11
-
-    with ThreadPoolExecutor(max_workers=5) as pool:
+    with ThreadPoolExecutor(max_workers=4) as pool:
         f4 = pool.submit(run_step_4)
         f5 = pool.submit(run_step_5)
         f9 = pool.submit(run_step_9)
         f10 = pool.submit(run_step_10)
-        f11 = pool.submit(run_step_11)
         f4.result()
         f5.result()
         f9.result()
         f10.result()
-        ok11 = f11.result()
 
     if _abort_if_failed():
         return ctx
 
-    # Wave 5: 视图筛选 + 创建工作流（并行）
-    print(f"\n-- Wave 5: 视图筛选 / 创建工作流（并行） --- 总计 {time.time()-pipeline_start:.0f}s", flush=True)
+    # Wave 5: 视图筛选
+    print(f"\n-- Wave 5: 视图筛选 --- 总计 {time.time()-pipeline_start:.0f}s", flush=True)
 
     def run_step_7() -> bool:
         if not view_filters.get("enabled", True):
@@ -788,27 +762,7 @@ def run_all_waves(
                 ctx.tableview_filter_result_json = str(latest)
         return ok7
 
-    def run_step_12() -> bool:
-        if not workflows.get("enabled", True):
-            with steps_lock:
-                steps_report.append({"step_id": 12, "step_key": "workflows_execute", "title": "创建工作流", "skipped": True, "reason": "disabled_by_spec", "result": {}})
-            return True
-        if not ok11:
-            with steps_lock:
-                steps_report.append({"step_id": 12, "step_key": "workflows_execute", "title": "创建工作流", "skipped": True, "reason": "step11_failed", "result": {}})
-            return True
-        workflow_execute_output = (workflow_output_dir / "execute_workflow_plan_latest.json").resolve()
-        cmd12 = [sys.executable, str(scripts["workflows_execute"]), "--plan-file", str(workflow_plan_output)]
-        if workflows.get("no_publish", False):
-            cmd12.append("--no-publish")
-        ok12 = _exec(12, "workflows_execute", "创建工作流", cmd12, uses_gemini=False)
-        if ok12:
-            ctx.workflow_execute_result_json = str(workflow_execute_output)
-        return ok12
-
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        pool.submit(run_step_7).result()
-        pool.submit(run_step_12).result()
+    run_step_7()
 
     # Wave 6: 清理空名称视图（SaveWorksheetView postCreateUpdates 有时会产生空名称视图作为副作用）
     if not execution_dry_run and delete_default_views_cfg.get("enabled", True):
