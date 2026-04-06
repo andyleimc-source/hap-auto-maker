@@ -627,22 +627,38 @@ def process_worksheet(
 
         # 5. 保存视图（内层并发，每个视图可能需要多个 API 调用）
         def _save_plan(plan: dict) -> int:
-            """保存单个视图的所有配置，返回成功调用次数。"""
+            """保存单个视图的所有配置，返回成功调用次数（校验 state==1）。"""
             view_id = plan["viewId"]
             view_type = plan.get("viewType", "")
             saved = 0
+
+            def _ok(resp: dict) -> bool:
+                return dry_run or (isinstance(resp, dict) and int(resp.get("state", 0) or 0) == 1)
+
             if plan.get("needNavGroup") and plan.get("navGroup") and view_type in NAV_SUPPORTED_VIEW_TYPES:
-                save_view_nav(app_id, ws_id, view_id, plan, auth_config_path, dry_run)
-                saved += 1
+                resp = save_view_nav(app_id, ws_id, view_id, plan, auth_config_path, dry_run)
+                if _ok(resp):
+                    saved += 1
+                else:
+                    print(f"    ⚠ navGroup 保存失败 ({view_id}): {resp}")
             if plan.get("needFastFilters") and plan.get("fastFilters") and view_type in FAST_SUPPORTED_VIEW_TYPES:
-                save_view_fast_filters(app_id, ws_id, view_id, plan, auth_config_path, dry_run)
-                saved += 1
+                resp = save_view_fast_filters(app_id, ws_id, view_id, plan, auth_config_path, dry_run)
+                if _ok(resp):
+                    saved += 1
+                else:
+                    print(f"    ⚠ fastFilters 保存失败 ({view_id}): {resp}")
             if plan.get("needColor") and plan.get("colorControlId") and view_type == "0":
-                save_view_color(app_id, ws_id, view_id, plan["colorControlId"], auth_config_path, dry_run)
-                saved += 1
+                resp = save_view_color(app_id, ws_id, view_id, plan["colorControlId"], auth_config_path, dry_run)
+                if _ok(resp):
+                    saved += 1
+                else:
+                    print(f"    ⚠ color 保存失败 ({view_id}): {resp}")
             if plan.get("needGroup") and plan.get("groupControlId") and view_type == "0":
-                save_view_group(app_id, ws_id, view_id, plan["groupControlId"], auth_config_path, dry_run)
-                saved += 1
+                resp = save_view_group(app_id, ws_id, view_id, plan["groupControlId"], auth_config_path, dry_run)
+                if _ok(resp):
+                    saved += 1
+                else:
+                    print(f"    ⚠ group 保存失败 ({view_id}): {resp}")
             return saved
 
         needs_save = [p for p in view_plans if p.get("needNavGroup") or p.get("needFastFilters") or p.get("needColor") or p.get("needGroup")]
