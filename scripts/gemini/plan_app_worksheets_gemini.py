@@ -28,6 +28,12 @@ from ai_utils import (
 from planning.worksheet_planner import (
     build_enhanced_prompt,
     validate_worksheet_plan,
+    build_skeleton_prompt,
+    validate_skeleton_plan,
+    repair_skeleton_plan,
+    build_fields_prompt_per_ws,
+    validate_fields_plan,
+    build_field_type_prompt_section,
 )
 
 CONFIG_PATH = AI_CONFIG_PATH
@@ -314,25 +320,304 @@ def validate_plan(plan: dict, min_worksheet_count: int = 0) -> list[str]:
     return errors
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="使用 AI 规划应用工作表结构并输出 JSON")
-    parser.add_argument("--app-name", required=True, help="应用名称")
-    parser.add_argument("--business-context", default="通用企业管理场景", help="业务背景描述")
-    parser.add_argument("--requirements", default="", help="额外要求")
-    parser.add_argument("--config", default=str(CONFIG_PATH), help="AI 配置 JSON 路径")
-    parser.add_argument("--output", default="", help="输出 JSON 文件路径")
-    parser.add_argument("--max-retries", type=int, default=MAX_PLAN_RETRIES, help="规划校验失败后的最大重试次数")
-    parser.add_argument("--max-worksheets", type=int, default=0, help="工作表数量上限（0=不限）")
-    args = parser.parse_args()
+def _ai_call(client, model_name: str, prompt: str, ai_config: dict):
+    """统一的 AI 调用 + 网络重试。"""
+    response = None
+    for net_try in range(1, NETWORK_MAX_RETRIES + 1):
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+                config=create_generation_config(
+                    ai_config,
+                    response_mime_type="application/json",
+                    temperature=0.2,
+                ),
+            )
+            break
+        except Exception as e:
+            if net_try < NETWORK_MAX_RETRIES:
+                wait = NETWORK_RETRY_DELAY * net_try
+                print(f"[网络重试 {net_try}/{NETWORK_MAX_RETRIES}] {type(e).__name__}: {e}，{wait}s 后重试...")
+                time.sleep(wait)
+            else:
+                raise
+    return response
 
-    # 显式使用 reasoning 档位
-    ai_config = load_ai_config(Path(args.config).expanduser().resolve(), tier="fast")
-    client = get_ai_client(ai_config)
-    model_name = ai_config["model"]
-    min_worksheet_count = extract_min_worksheet_count(args.requirements)
-    max_worksheet_count = args.max_worksheets
 
-    # 使用 worksheet_planner 生成增强版 prompt（含注册中心字段类型枚举）
+def plan_skeleton(
+    client,
+    model_name: str,
+    ai_config: dict,
+    app_name: str,
+    business_context: str,
+    extra_requirements: str,
+    min_worksheet_count: int,
+    max_worksheet_count: int,
+    max_retries: int = MAX_PLAN_RETRIES,
+) -> dict:
+    """Step 1: 骨架规划 — 表名+用途+核心字段+关联关系。"""
+    prompt = build_skeleton_prompt(
+        app_name=app_name,
+        business_context=business_context,
+        extra_requirements=extra_requirements,
+        min_worksheets=min_worksheet_count,
+        max_worksheets=max_worksheet_count,
+    )
+    print(f"[skeleton] prompt 长度={len(prompt)}")
+
+    plan = None
+    validation_errors: list[str] = []
+    for attempt in range(1, max(1, max_retries) + 1):
+        current_prompt = prompt
+        if validation_errors:
+            current_prompt = (
+                f"{prompt}\n\n"
+                f"上一次结果不合规，请修正以下问题后重新输出完整 JSON：\n"
+                + "\n".join(f"- {e}" for e in validation_errors)
+            )
+        response = _ai_call(client, model_name, current_prompt, ai_config)
+        raw_text = response.text or ""
+
+        # 保存原始输出
+        raw_path = WORKSHEET_PLAN_DIR / f"skeleton_raw_{datetime.now().strftime('%Y%m%d_%H%M%S')}_attempt{attempt}.json"
+        raw_path.parent.mkdir(parents=True, exist_ok=True)
+        raw_path.write_text(raw_text, encoding="utf-8")
+
+        plan = extract_json(raw_text)
+        repair_skeleton_plan(plan)
+        validation_errors = validate_skeleton_plan(plan, min_worksheets=min_worksheet_count, max_worksheets=max_worksheet_count)
+        if validation_errors:
+            print(f"[skeleton validate attempt={attempt}] {len(validation_errors)} 个错误: {validation_errors}")
+        if not validation_errors:
+            break
+        if attempt == max(1, max_retries):
+            raise ValueError("骨架规划未通过校验: " + "；".join(validation_errors))
+
+    print(f"[skeleton] 完成: {len(plan.get('worksheets', []))} 张表, {len(plan.get('relationships', []))} 条关联")
+    return plan
+
+
+def plan_fields_per_ws(
+    client,
+    model_name: str,
+    ai_config: dict,
+    ws_name: str,
+    ws_purpose: str,
+    ws_id: str,
+    existing_fields: list[dict],
+    all_worksheets_summary: list[dict],
+    max_retries: int = MAX_PLAN_RETRIES,
+) -> dict:
+    """Step 3: 逐表字段细化 — 为单张表生成完整字段。"""
+    prompt = build_fields_prompt_per_ws(
+        ws_name=ws_name,
+        ws_purpose=ws_purpose,
+        ws_id=ws_id,
+        existing_fields=existing_fields,
+        all_worksheets_summary=all_worksheets_summary,
+    )
+
+    existing_names = {str(f.get("name", "")).strip() for f in existing_fields}
+
+    plan = None
+    validation_errors: list[str] = []
+    for attempt in range(1, max(1, max_retries) + 1):
+        current_prompt = prompt
+        if validation_errors:
+            current_prompt = (
+                f"{prompt}\n\n"
+                f"上一次结果不合规，请修正以下问题后重新输出完整 JSON：\n"
+                + "\n".join(f"- {e}" for e in validation_errors)
+            )
+        response = _ai_call(client, model_name, current_prompt, ai_config)
+        raw_text = response.text or ""
+
+        plan = extract_json(raw_text)
+        validation_errors = validate_fields_plan(plan, existing_names)
+        if validation_errors:
+            print(f"[fields {ws_name} attempt={attempt}] {len(validation_errors)} 个错误: {validation_errors}")
+        if not validation_errors:
+            break
+        if attempt == max(1, max_retries):
+            print(f"[fields {ws_name}] 校验仍有错误但已用尽重试，使用最后结果: {validation_errors}", file=sys.stderr)
+
+    fields = plan.get("fields", [])
+    print(f"[fields] {ws_name}: {len(fields)} 个新字段")
+    return plan
+
+
+def skeleton_to_full_plan(skeleton: dict, fields_by_ws: dict[str, list[dict]]) -> dict:
+    """将骨架 plan + 逐表字段合并为完整的 worksheet_plan.json 格式。
+
+    输出格式与现有 build_enhanced_prompt 的输出完全一致，
+    确保下游 create_worksheets_from_plan.py 无需改动。
+    """
+    worksheets = []
+    for ws in skeleton.get("worksheets", []):
+        ws_name = str(ws.get("name", "")).strip()
+        # 核心字段
+        core_fields = []
+        for f in ws.get("core_fields", []):
+            field = {
+                "name": str(f.get("name", "")).strip(),
+                "type": str(f.get("type", "Text")).strip(),
+                "required": bool(f.get("required", False)),
+                "description": str(f.get("description", "")).strip(),
+                "relation_target": "",
+                "option_values": f.get("option_values", []) or [],
+            }
+            if f.get("unit"):
+                field["unit"] = str(f["unit"])
+            if f.get("dot") is not None and f.get("dot") != "":
+                field["dot"] = f["dot"]
+            core_fields.append(field)
+
+        # 逐表细化的字段
+        extra_fields = []
+        for f in fields_by_ws.get(ws_name, []):
+            field = {
+                "name": str(f.get("name", "")).strip(),
+                "type": str(f.get("type", "Text")).strip(),
+                "required": bool(f.get("required", False)),
+                "description": str(f.get("description", "")).strip(),
+                "relation_target": str(f.get("relation_target", "")).strip(),
+                "option_values": f.get("option_values", []) or [],
+            }
+            if f.get("unit"):
+                field["unit"] = str(f["unit"])
+            if f.get("dot") is not None and f.get("dot") != "":
+                field["dot"] = f["dot"]
+            extra_fields.append(field)
+
+        # 关联字段（从 relationships 提取，定义在 to 表）
+        relation_fields = []
+        for rel in skeleton.get("relationships", []):
+            to_ws = str(rel.get("to", "")).strip()
+            if to_ws == ws_name:
+                from_ws = str(rel.get("from", "")).strip()
+                rel_field_name = str(rel.get("field", from_ws)).strip()
+                relation_fields.append({
+                    "name": rel_field_name,
+                    "type": "Relation",
+                    "required": False,
+                    "description": str(rel.get("description", "")).strip(),
+                    "relation_target": from_ws,
+                    "option_values": [],
+                })
+
+        worksheets.append({
+            "name": ws_name,
+            "purpose": str(ws.get("purpose", "")).strip(),
+            "fields": core_fields + extra_fields + relation_fields,
+            "depends_on": ws.get("depends_on", []) or [],
+        })
+
+    return {
+        "app_name": str(skeleton.get("app_name", "")).strip(),
+        "summary": str(skeleton.get("summary", "")).strip(),
+        "worksheets": worksheets,
+        "relationships": skeleton.get("relationships", []),
+        "creation_order": skeleton.get("creation_order", []),
+        "notes": ["使用 layered 模式生成（骨架规划+逐表字段细化）"],
+    }
+
+
+def _run_layered_mode(client, model_name, ai_config, args, min_worksheet_count, max_worksheet_count) -> dict:
+    """layered 模式：骨架规划 → 逐表字段细化 → 合并为完整 plan。"""
+    import threading
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    # Step 1: 骨架规划
+    print("=" * 50)
+    print("[layered] Step 1: 骨架规划（表名+关联+核心字段）")
+    print("=" * 50)
+    skeleton = plan_skeleton(
+        client, model_name, ai_config,
+        app_name=args.app_name,
+        business_context=args.business_context,
+        extra_requirements=args.requirements,
+        min_worksheet_count=min_worksheet_count,
+        max_worksheet_count=max_worksheet_count,
+        max_retries=args.max_retries,
+    )
+
+    # 保存骨架 plan
+    WORKSHEET_PLAN_DIR.mkdir(parents=True, exist_ok=True)
+    skeleton_path = WORKSHEET_PLAN_DIR / f"skeleton_plan_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    skeleton_path.write_text(json.dumps(skeleton, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"[layered] 骨架 plan 已保存: {skeleton_path}")
+
+    # 准备全局表名列表（轻量上下文）
+    all_ws_summary = [
+        {"name": str(ws.get("name", "")).strip(), "purpose": str(ws.get("purpose", "")).strip()}
+        for ws in skeleton.get("worksheets", [])
+    ]
+
+    # Step 3: 逐表字段细化（并行）
+    print("=" * 50)
+    print(f"[layered] Step 3: 逐表字段细化（{len(all_ws_summary)} 张表，并发={args.concurrency}）")
+    print("=" * 50)
+
+    semaphore = threading.Semaphore(args.concurrency)
+    fields_by_ws: dict[str, list[dict]] = {}
+
+    def _plan_one_ws(ws: dict) -> tuple[str, list[dict]]:
+        ws_name = str(ws.get("name", "")).strip()
+        ws_purpose = str(ws.get("purpose", "")).strip()
+        # 已有字段 = 核心字段 + 关联字段
+        existing = []
+        for f in ws.get("core_fields", []):
+            existing.append({"name": str(f.get("name", "")).strip(), "type": str(f.get("type", "")).strip()})
+        # 关联字段（from relationships，定义在 to 表）
+        for rel in skeleton.get("relationships", []):
+            if str(rel.get("to", "")).strip() == ws_name:
+                from_ws = str(rel.get("from", "")).strip()
+                rel_field = str(rel.get("field", from_ws)).strip()
+                existing.append({"name": rel_field, "type": "Relation"})
+
+        with semaphore:
+            result = plan_fields_per_ws(
+                client, model_name, ai_config,
+                ws_name=ws_name,
+                ws_purpose=ws_purpose,
+                ws_id="",  # 骨架模式下还没有真实 ID，逐表细化先用空
+                existing_fields=existing,
+                all_worksheets_summary=all_ws_summary,
+                max_retries=args.max_retries,
+            )
+        return ws_name, result.get("fields", [])
+
+    with ThreadPoolExecutor(max_workers=args.concurrency) as executor:
+        futures = {
+            executor.submit(_plan_one_ws, ws): ws
+            for ws in skeleton.get("worksheets", [])
+        }
+        for future in as_completed(futures):
+            ws_name, fields = future.result()
+            fields_by_ws[ws_name] = fields
+
+    # 合并为完整 plan
+    full_plan = skeleton_to_full_plan(skeleton, fields_by_ws)
+
+    # 使用增强校验
+    repair_plan(full_plan)
+    ensure_minimum_worksheets(
+        full_plan,
+        min_worksheet_count=min_worksheet_count,
+        business_context=args.business_context,
+        extra_requirements=args.requirements,
+    )
+    validation_errors = validate_worksheet_plan(full_plan, min_worksheets=min_worksheet_count, max_worksheets=max_worksheet_count)
+    if validation_errors:
+        print(f"[layered] 合并后校验发现 {len(validation_errors)} 个错误: {validation_errors}", file=sys.stderr)
+        # 不抛异常，允许带部分错误通过（下游 create 脚本有自己的容错）
+
+    return full_plan
+
+
+def _run_single_mode(client, model_name, ai_config, args, min_worksheet_count, max_worksheet_count) -> dict:
+    """single 模式：一次性生成所有表和字段（旧方案）。"""
     prompt = build_enhanced_prompt(
         app_name=args.app_name,
         business_context=args.business_context,
@@ -340,7 +625,7 @@ def main() -> None:
         min_worksheets=min_worksheet_count,
         max_worksheets=max_worksheet_count,
     )
-    print(f"[prompt] 长度={len(prompt)}，前200字: {prompt[:200]!r}")
+    print(f"[single] prompt 长度={len(prompt)}")
 
     plan = None
     validation_errors: list[str] = []
@@ -352,29 +637,8 @@ def main() -> None:
                 f"上一次结果不合规，请严格修正以下问题后重新输出完整 JSON：\n"
                 + "\n".join(f"- {item}" for item in validation_errors)
             )
-        response = None
-        for net_try in range(1, NETWORK_MAX_RETRIES + 1):
-            try:
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=current_prompt,
-                    config=create_generation_config(
-                        ai_config,
-                        response_mime_type="application/json",
-                        temperature=0.2,
-                    ),
-                )
-                break
-            except Exception as e:
-                err_name = type(e).__name__
-                if net_try < NETWORK_MAX_RETRIES:
-                    wait = NETWORK_RETRY_DELAY * net_try
-                    print(f"[网络重试 {net_try}/{NETWORK_MAX_RETRIES}] {err_name}: {e}，{wait}s 后重试...")
-                    time.sleep(wait)
-                else:
-                    raise
+        response = _ai_call(client, model_name, current_prompt, ai_config)
         raw_text = response.text or ""
-        # 保存 AI 原始输出
         raw_path = WORKSHEET_PLAN_DIR / f"worksheet_plan_raw_{datetime.now().strftime('%Y%m%d_%H%M%S')}_attempt{attempt}.json"
         raw_path.parent.mkdir(parents=True, exist_ok=True)
         raw_path.write_text(raw_text, encoding="utf-8")
@@ -387,16 +651,46 @@ def main() -> None:
             business_context=args.business_context,
             extra_requirements=args.requirements,
         )
-        # 使用 worksheet_planner 增强校验（含注册中心字段类型检查）
         validation_errors = validate_worksheet_plan(plan, min_worksheets=min_worksheet_count, max_worksheets=max_worksheet_count)
         if validation_errors:
             print(f"[validate attempt={attempt}] 发现 {len(validation_errors)} 个错误: {validation_errors}")
         if not validation_errors:
             break
         if attempt == max(1, args.max_retries):
-            raise ValueError(
-                "工作表规划未通过校验: " + "；".join(validation_errors)
-            )
+            raise ValueError("工作表规划未通过校验: " + "；".join(validation_errors))
+    return plan
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="使用 AI 规划应用工作表结构并输出 JSON")
+    parser.add_argument("--app-name", required=True, help="应用名称")
+    parser.add_argument("--business-context", default="通用企业管理场景", help="业务背景描述")
+    parser.add_argument("--requirements", default="", help="额外要求")
+    parser.add_argument("--config", default=str(CONFIG_PATH), help="AI 配置 JSON 路径")
+    parser.add_argument("--output", default="", help="输出 JSON 文件路径")
+    parser.add_argument("--max-retries", type=int, default=MAX_PLAN_RETRIES, help="规划校验失败后的最大重试次数")
+    parser.add_argument("--max-worksheets", type=int, default=0, help="工作表数量上限（0=不限）")
+    parser.add_argument("--mode", choices=["single", "layered"], default="layered",
+                        help="规划模式：single=一次性生成, layered=骨架+逐表细化（默认）")
+    parser.add_argument("--concurrency", type=int, default=3, help="layered 模式下逐表字段细化的并发数")
+    args = parser.parse_args()
+
+    ai_config = load_ai_config(Path(args.config).expanduser().resolve(), tier="fast")
+    client = get_ai_client(ai_config)
+    model_name = ai_config["model"]
+    min_worksheet_count = extract_min_worksheet_count(args.requirements)
+    max_worksheet_count = args.max_worksheets
+
+    if args.mode == "layered":
+        plan = _run_layered_mode(
+            client, model_name, ai_config, args,
+            min_worksheet_count, max_worksheet_count,
+        )
+    else:
+        plan = _run_single_mode(
+            client, model_name, ai_config, args,
+            min_worksheet_count, max_worksheet_count,
+        )
 
     if args.output:
         output_path = Path(args.output).expanduser().resolve()
