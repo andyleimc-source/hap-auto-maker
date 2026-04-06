@@ -257,7 +257,7 @@ FIELD_SCHEMA: dict[int, dict] = {
             ],
             "advancedSetting": {
                 "sorttype": "zh",
-                "showtype": "1",    # 显示方式：0=下拉, 1=平铺（推荐）, 2=颜色块
+                "showtype": "0",    # 显示方式：0=下拉（收纳，推荐）, 1=平铺, 2=颜色块
             },
         },
         "required_for_create": ["controlName", "type", "options"],
@@ -284,6 +284,7 @@ FIELD_SCHEMA: dict[int, dict] = {
             ],
             "advancedSetting": {
                 "sorttype": "zh",
+                "checktype": "1",   # 显示方式：1=下拉（收纳，推荐）, 0=平铺
             },
         },
         "required_for_create": ["controlName", "type", "options"],

@@ -194,6 +194,11 @@ def build_field_payload(field: dict, is_first_text_title: bool) -> dict:
             payload["precision"] = payload["dot"]
     elif ftype in ("SingleSelect", "MultipleSelect", "Dropdown"):
         payload["options"] = parse_select_options_from_field(field)
+        # 收纳显示方式：单选 showtype=0（下拉），多选 checktype=1（下拉）
+        if ftype == "SingleSelect":
+            payload["advancedSetting"] = {"sorttype": "zh", "showtype": "0"}
+        elif ftype == "MultipleSelect":
+            payload["advancedSetting"] = {"sorttype": "zh", "checktype": "1"}
     elif ftype == "Collaborator":
         payload["subType"] = 0  # 单选成员
     elif ftype == "Relation":

@@ -185,7 +185,7 @@ FIELD_REGISTRY = {
         "requires_options": True,
         "advancedSetting": {
             "sorttype": "zh",
-            "showtype": "1",
+            "showtype": "0",    # 0=下拉（收纳）, 1=平铺, 2=进度
         },
         "advancedSetting_all_keys": {
             "sorttype": "排序方式",
@@ -209,6 +209,7 @@ FIELD_REGISTRY = {
         "requires_options": True,
         "advancedSetting": {
             "sorttype": "zh",
+            "checktype": "1",   # 1=下拉（收纳）, 0=平铺
         },
         "advancedSetting_all_keys": {
             "sorttype": "排序方式",
