@@ -656,18 +656,23 @@ def run_all_waves(
             with steps_lock:
                 steps_report.append({"step_id": 5, "step_key": "layout", "title": "规划并应用字段布局", "skipped": True, "reason": "disabled_by_spec", "result": {}})
             return True
-        cmd5 = [sys.executable, str(scripts["layout"]), "--app-id", app_id]
+        sem_value = getattr(gemini_semaphore, '_value', 1000)
+        cmd5 = [
+            sys.executable, str(scripts["layout"]),
+            "--app-id", app_id,
+            "--semaphore-value", str(sem_value),
+        ]
         layout_req = str(ws["layout"].get("requirements", "")).strip()
         if layout_req:
             cmd5.extend(["--requirements", layout_req])
-        if ws["layout"].get("refresh_auth", False):
-            cmd5.append("--refresh-auth")
+        if execution_dry_run:
+            cmd5.append("--dry-run")
         ok5 = _exec(5, "layout", "规划并应用字段布局", cmd5, uses_gemini=True)
         if ok5 and not execution_dry_run:
             layout_stdout = str(steps_report[-1]["result"].get("stdout", ""))
-            ctx.worksheet_layout_plan_json = _extract_labeled_path(layout_stdout, "输出文件")
-            ctx.worksheet_layout_apply_result_json = _extract_labeled_path(layout_stdout, "结果文件")
+            ctx.worksheet_layout_result_json = _extract_labeled_path(layout_stdout, "结果文件")
         return ok5
+
 
     def run_step_9() -> bool:
         # Wave 3.5b 已完成造数，跳过旧流水线

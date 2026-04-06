@@ -51,7 +51,7 @@ def _scripts() -> dict:
         "create_worksheets":   resolve_script("create_worksheets_from_plan.py"),
         "roles":               resolve_script("pipeline_app_roles.py"),
         "icon":                resolve_script("pipeline_icon.py"),
-        "layout":              resolve_script("pipeline_worksheet_layout.py"),
+        "layout":              resolve_script("pipeline_worksheet_layout_v2.py"),
         "views":               resolve_script("pipeline_views.py"),
         "view_filters":        resolve_script("pipeline_tableview_filters.py"),
         "navi":                resolve_script("update_app_navi_style.py"),
@@ -238,7 +238,7 @@ def main() -> None:
     parser.add_argument("--continue-on-error", action="store_true", help="遇错继续执行后续步骤")
     parser.add_argument("--only-steps", default="", help="仅执行指定步骤（逗号分隔）")
     parser.add_argument("--verbose", action="store_true", help="打印子脚本完整输出")
-    parser.add_argument("--gemini-concurrency", type=int, default=3, help="Gemini API 最大并发调用数（默认 3）")
+    parser.add_argument("--gemini-concurrency", type=int, default=1000, help="Gemini API 最大并发调用数（默认 1000，付费账号 RPM=2000 自然限流）")
     parser.add_argument("--app-id", default="", help="已有应用 ID，跳过创建步骤")
     args = parser.parse_args()
 
