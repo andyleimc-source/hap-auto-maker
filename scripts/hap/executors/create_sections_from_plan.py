@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import auth_retry
-from utils import now_ts, load_json, write_json
+from utils import now_ts, load_json, write_json, log_summary
 
 BASE_DIR = Path(__file__).resolve().parents[3]
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
@@ -172,6 +172,9 @@ def run_mode_one(args) -> dict:
             "appSectionId": section_id,
             "worksheets": sec.get("worksheets", []),
         })
+        ws_list = sec.get("worksheets", [])
+        ws_names_str = "、".join(str(w).strip() for w in ws_list) if ws_list else "无"
+        log_summary(f"✓ 分组「{name}」已创建（{len(ws_list)} 张表：{ws_names_str}）")
 
     # 写回 worksheet_plan
     if not args.dry_run:
