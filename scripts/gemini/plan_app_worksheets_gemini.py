@@ -616,51 +616,6 @@ def _run_layered_mode(client, model_name, ai_config, args, min_worksheet_count, 
     return full_plan
 
 
-def _run_single_mode(client, model_name, ai_config, args, min_worksheet_count, max_worksheet_count) -> dict:
-    """single 模式：一次性生成所有表和字段（旧方案）。"""
-    prompt = build_enhanced_prompt(
-        app_name=args.app_name,
-        business_context=args.business_context,
-        extra_requirements=args.requirements,
-        min_worksheets=min_worksheet_count,
-        max_worksheets=max_worksheet_count,
-    )
-    print(f"[single] prompt 长度={len(prompt)}")
-
-    plan = None
-    validation_errors: list[str] = []
-    for attempt in range(1, max(1, args.max_retries) + 1):
-        current_prompt = prompt
-        if validation_errors:
-            current_prompt = (
-                f"{prompt}\n\n"
-                f"上一次结果不合规，请严格修正以下问题后重新输出完整 JSON：\n"
-                + "\n".join(f"- {item}" for item in validation_errors)
-            )
-        response = _ai_call(client, model_name, current_prompt, ai_config)
-        raw_text = response.text or ""
-        raw_path = WORKSHEET_PLAN_DIR / f"worksheet_plan_raw_{datetime.now().strftime('%Y%m%d_%H%M%S')}_attempt{attempt}.json"
-        raw_path.parent.mkdir(parents=True, exist_ok=True)
-        raw_path.write_text(raw_text, encoding="utf-8")
-
-        plan = extract_json(raw_text)
-        repair_plan(plan)
-        ensure_minimum_worksheets(
-            plan,
-            min_worksheet_count=min_worksheet_count,
-            business_context=args.business_context,
-            extra_requirements=args.requirements,
-        )
-        validation_errors = validate_worksheet_plan(plan, min_worksheets=min_worksheet_count, max_worksheets=max_worksheet_count)
-        if validation_errors:
-            print(f"[validate attempt={attempt}] 发现 {len(validation_errors)} 个错误: {validation_errors}")
-        if not validation_errors:
-            break
-        if attempt == max(1, args.max_retries):
-            raise ValueError("工作表规划未通过校验: " + "；".join(validation_errors))
-    return plan
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description="使用 AI 规划应用工作表结构并输出 JSON")
     parser.add_argument("--app-name", required=True, help="应用名称")
@@ -670,9 +625,7 @@ def main() -> None:
     parser.add_argument("--output", default="", help="输出 JSON 文件路径")
     parser.add_argument("--max-retries", type=int, default=MAX_PLAN_RETRIES, help="规划校验失败后的最大重试次数")
     parser.add_argument("--max-worksheets", type=int, default=0, help="工作表数量上限（0=不限）")
-    parser.add_argument("--mode", choices=["single", "layered"], default="layered",
-                        help="规划模式：single=一次性生成, layered=骨架+逐表细化（默认）")
-    parser.add_argument("--concurrency", type=int, default=3, help="layered 模式下逐表字段细化的并发数")
+    parser.add_argument("--concurrency", type=int, default=3, help="逐表字段细化的并发数")
     args = parser.parse_args()
 
     ai_config = load_ai_config(Path(args.config).expanduser().resolve(), tier="fast")
@@ -681,16 +634,10 @@ def main() -> None:
     min_worksheet_count = extract_min_worksheet_count(args.requirements)
     max_worksheet_count = args.max_worksheets
 
-    if args.mode == "layered":
-        plan = _run_layered_mode(
-            client, model_name, ai_config, args,
-            min_worksheet_count, max_worksheet_count,
-        )
-    else:
-        plan = _run_single_mode(
-            client, model_name, ai_config, args,
-            min_worksheet_count, max_worksheet_count,
-        )
+    plan = _run_layered_mode(
+        client, model_name, ai_config, args,
+        min_worksheet_count, max_worksheet_count,
+    )
 
     if args.output:
         output_path = Path(args.output).expanduser().resolve()

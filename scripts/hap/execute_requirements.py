@@ -138,7 +138,6 @@ def normalize_spec(raw: dict) -> dict:
     ws.setdefault("enabled", True)
     ws.setdefault("business_context", "通用企业管理场景")
     ws.setdefault("requirements", "")
-    ws.setdefault("plan_mode", "layered")  # layered=骨架+逐表细化, single=一次性生成
     icon_update = ws.get("icon_update") if isinstance(ws.get("icon_update"), dict) else {}
     icon_update.setdefault("enabled", True)
     icon_update.setdefault("refresh_auth", False)

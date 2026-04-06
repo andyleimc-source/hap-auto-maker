@@ -21,7 +21,7 @@ if str(_HAP_DIR) not in sys.path:
 
 from pipeline.step_runner import execute_step, run_cmd
 from pipeline.context import PipelineContext
-from utils import load_json, now_ts
+from utils import load_json, write_json, now_ts
 
 
 def _extract_app_id(text: str) -> Optional[str]:
@@ -195,14 +195,12 @@ def run_all_waves(
             with steps_lock:
                 steps_report.append({"step_id": 2, "step_key": "worksheets_plan", "title": "规划工作表", "skipped": True, "reason": "disabled_by_spec", "result": {}})
             return True
-        plan_mode = str(ws.get("plan_mode", "layered")).strip()
         cmd2a = [
             sys.executable, str(scripts["plan_worksheets"]),
             "--app-name", str(app.get("name", "CRM自动化应用")),
             "--business-context", str(ws.get("business_context", "通用企业管理场景")),
             "--requirements", str(ws.get("requirements", "")),
             "--output", str(plan_output),
-            "--mode", plan_mode,
         ]
         max_ws = int(ws.get("max_worksheets", 0) or 0)
         if max_ws > 0:
@@ -351,6 +349,84 @@ def run_all_waves(
     elif not ws.get("enabled", True):
         with steps_lock:
             steps_report.append({"step_id": 2, "step_key": "worksheets_create", "title": "创建工作表", "skipped": True, "reason": "disabled_by_spec", "result": {}})
+
+    # 提前初始化 Wave 3.5 和 Wave 4 共用的目录变量
+    view_create_result_dir: Path = dirs["view_create_result_dir"]
+    config_web_auth: Path = dirs["config_web_auth"]
+
+    # Wave 3.5: 单表视图创建（每张表字段完成后立即触发）
+    if views.get("enabled", True) and worksheet_create_result_path and not execution_dry_run:
+        from planners.plan_worksheet_views_gemini import plan_and_create_views_for_ws
+        from delete_default_views import fetch_views
+        from ai_utils import AI_CONFIG_PATH as _VIEW_AI_CFG_PATH, load_ai_config as _view_load_ai, get_ai_client as _view_get_client
+
+        print(f"\n-- Wave 3.5: 逐表创建视图 --- 总计 {time.time()-pipeline_start:.0f}s", flush=True)
+
+        ws_create_data = load_json(Path(worksheet_create_result_path))
+        _name_to_id = ws_create_data.get("name_to_worksheet_id", {})
+
+        app_auth_data = load_json(Path(app_auth_json))
+        _auth_rows = app_auth_data.get("data", [])
+        _auth_row = next((r for r in _auth_rows if isinstance(r, dict) and r.get("appId") == app_id), _auth_rows[0] if _auth_rows else {})
+        _app_key = str(_auth_row.get("appKey", "")).strip()
+        _app_sign = str(_auth_row.get("sign", "")).strip()
+        _app_name_for_views = str(app.get("name", "")).strip()
+
+        _view_ai_config = _view_load_ai(_VIEW_AI_CFG_PATH, tier="fast")
+        _view_client = _view_get_client(_view_ai_config)
+        _view_model = _view_ai_config["model"]
+
+        _view_results_all = []
+        _view_lock = threading.Lock()
+
+        def _do_views_for_ws(ws_name: str, ws_id: str):
+            try:
+                ws_views = fetch_views(ws_id, _app_key, _app_sign)
+            except Exception:
+                ws_views = []
+            default_view_id = ""
+            for v in ws_views:
+                v_name = str(v.get("name", "")).strip()
+                if v_name in ("全部", "视图", ""):
+                    default_view_id = str(v.get("viewId", "") or v.get("id", "")).strip()
+                    break
+
+            with gemini_semaphore:
+                r = plan_and_create_views_for_ws(
+                    client=_view_client,
+                    model=_view_model,
+                    app_id=app_id,
+                    app_name=_app_name_for_views,
+                    worksheet_id=ws_id,
+                    worksheet_name=ws_name,
+                    default_view_id=default_view_id,
+                    auth_config_path=config_web_auth,
+                    dry_run=execution_dry_run,
+                )
+            with _view_lock:
+                _view_results_all.append(r)
+
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            futures = [pool.submit(_do_views_for_ws, wn, wi) for wn, wi in _name_to_id.items()]
+            for f in futures:
+                try:
+                    f.result()
+                except Exception as exc:
+                    print(f"  ✗ 视图任务异常: {exc}", file=sys.stderr)
+
+        view_create_result_dir.mkdir(parents=True, exist_ok=True)
+        _view_result_path = view_create_result_dir / f"view_create_result_{app_id}_{now_ts()}.json"
+        write_json(_view_result_path, {"worksheets": _view_results_all})
+        ctx.view_create_result_json = str(_view_result_path)
+        print(f"  视图创建完成: {_view_result_path}", flush=True)
+
+        with steps_lock:
+            steps_report.append({
+                "step_id": 6, "step_key": "views",
+                "title": "逐表创建视图",
+                "skipped": False,
+                "result": {"success": True, "output": str(_view_result_path)},
+            })
 
     if _abort_if_failed():
         return ctx
