@@ -730,6 +730,7 @@ def main() -> None:
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="API 基础地址")
     parser.add_argument("--dry-run", action="store_true", help="只打印计划，不发请求")
     parser.add_argument("--page-registry", default="", help="page_registry.json 路径")
+    parser.add_argument("--app-name", default="", help="应用名称（图表规划用）")
     args = parser.parse_args()
 
     # 加载 page_registry（图表回调所需）
@@ -873,58 +874,52 @@ def main() -> None:
         for future in as_completed(futures):
             future.result()  # 失败已在函数内打印警告，不中断主流程
 
-    # Phase 1.6: 为每个工作表规划并创建图表（需要 page_registry）
+    # Phase 1.6: 为每个 Page 规划并创建图表（需要 page_registry）
     if page_registry and ai_config:
-        from executors import create_single_ws_charts
-
-        # 建立 ws_name -> page_entry 映射
-        ws_name_to_page = {}
-        for page in page_registry.get("pages", []):
-            if not isinstance(page, dict):
-                continue
-            ws = page.get("worksheet_name", "")
-            if ws:
-                ws_name_to_page[ws] = page
+        from executors.create_page_charts import plan_and_create_page_charts
 
         auth_config_path = os.environ.get("AUTH_CONFIG_PATH", "")
         sem = threading.Semaphore(2)
-        chart_results = []
 
-        def _create_charts_one(item):
+        # 构建 ws_name -> ws_info 映射（聚合已创建工作表的字段）
+        ws_fields_map: dict = {}
+        for item in relations_todo:
             ws_name = item["name"]
             ws_id = item["worksheetId"]
-            page_entry = ws_name_to_page.get(ws_name)
-            if not page_entry:
-                return None
             real_fields = _fetch_real_fields(args.base_url, headers, ws_id)
-            if not real_fields:
-                print(f"  [chart] {ws_name}: 无可用字段，跳过图表")
-                return None
-            try:
-                count = create_single_ws_charts.plan_and_create_charts(
-                    worksheet_id=ws_id,
-                    worksheet_name=ws_name,
-                    fields=real_fields,
-                    page_entry=page_entry,
-                    app_id=app_id,
-                    auth_config_path=auth_config_path,
-                    ai_config=ai_config,
-                    gemini_semaphore=sem,
-                )
-                return {"name": ws_name, "charts_created": count}
-            except Exception as exc:
-                print(f"  [chart] {ws_name}: 图表创建失败 — {exc}")
-                return {"name": ws_name, "charts_created": 0, "error": str(exc)}
+            if real_fields:
+                ws_fields_map[ws_name] = {
+                    "worksheetId": ws_id,
+                    "worksheetName": ws_name,
+                    "fields": real_fields,
+                    "views": [],
+                }
 
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            futures = [executor.submit(_create_charts_one, item) for item in relations_todo]
-            for future in as_completed(futures):
-                r = future.result()
-                if r is not None:
-                    chart_results.append(r)
+        # 构建 worksheets_by_id（validate_plan 需要）
+        worksheets_by_id = {
+            info["worksheetId"]: info
+            for info in ws_fields_map.values()
+        }
 
-        total_charts = sum(r.get("charts_created", 0) for r in chart_results)
-        print(f"  ✔ Phase 1.6 图表: {len(chart_results)}/{len(relations_todo)} 工作表共生成 {total_charts} 个图表")
+        # 逐 Page 规划+创建图表（串行，避免并发写同一 Page 冲突）
+        pages = page_registry.get("pages", [])
+        total_charts = 0
+        for page_entry in pages:
+            if not isinstance(page_entry, dict):
+                continue
+            page_result = plan_and_create_page_charts(
+                page_entry=page_entry,
+                ws_fields_map=ws_fields_map,
+                app_id=app_id,
+                app_name=getattr(args, "app_name", "") or "",
+                auth_config_path=auth_config_path,
+                ai_config=ai_config,
+                gemini_semaphore=sem,
+                worksheets_by_id=worksheets_by_id,
+            )
+            total_charts += page_result.get("charts_created", 0)
+
+        print(f"  ✔ Phase 1.6 图表: {len(pages)} 个 Page 共生成 {total_charts} 个图表")
 
     # Phase 2: 并发回填关联字段
     relation_results = []
