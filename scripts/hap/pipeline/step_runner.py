@@ -14,7 +14,7 @@ _HAP_DIR = Path(__file__).resolve().parents[1]
 if str(_HAP_DIR) not in sys.path:
     sys.path.insert(0, str(_HAP_DIR))
 
-from utils import now_iso
+from utils import now_iso, SUMMARY_PREFIX
 
 
 def run_cmd(cmd: List[str], dry_run: bool, verbose: bool) -> Dict[str, Any]:
@@ -47,6 +47,9 @@ def run_cmd(cmd: List[str], dry_run: bool, verbose: bool) -> Dict[str, Any]:
             bucket.append(line)
             if verbose:
                 print(line, end="", flush=True)
+            elif line.startswith(SUMMARY_PREFIX):
+                clean = line[len(SUMMARY_PREFIX):]
+                print(f"    {clean}", end="", flush=True)
 
     def heartbeat(process):
         while process.poll() is None:

@@ -52,3 +52,10 @@ def write_json_with_latest(
     latest_path = (output_dir / latest_name).resolve()
     write_json(latest_path, payload)
     return output_path
+
+
+SUMMARY_PREFIX = "[SUMMARY] "
+
+def log_summary(msg: str) -> None:
+    """输出带 [SUMMARY] 前缀的摘要行，供 step_runner 在非 verbose 模式下透传。"""
+    print(f"{SUMMARY_PREFIX}{msg}", flush=True)
