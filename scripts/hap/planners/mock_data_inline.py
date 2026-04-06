@@ -78,7 +78,14 @@ def build_mock_prompt(
         f for f in ws_schema.get("writableFields", [])
         if f.get("type") != "Relation"
     ]
-    ai_fields, faker_field_names = _split_faker_fields(all_writable)
+    # 有 options 的选择类字段（SingleSelect/Dropdown/MultiSelect）必须走 AI，
+    # faker 不知道实际选项内容，无法生成有业务含义的合法值
+    _OPTION_TYPES = {"SingleSelect", "Dropdown", "MultiSelect"}
+    ai_only = [f for f in all_writable if f.get("type") in _OPTION_TYPES and f.get("options")]
+    ai_only_ids = {f["fieldId"] for f in ai_only}
+    rest = [f for f in all_writable if f["fieldId"] not in ai_only_ids]
+    ai_fields_rest, faker_field_names = _split_faker_fields(rest)
+    ai_fields = ai_only + ai_fields_rest
 
     faker_note = ""
     if faker_field_names:
