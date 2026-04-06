@@ -679,7 +679,7 @@ _TYPE_NAME_MAP = {
     "Dropdown": 11, "Attachment": 14, "Date": 15, "DateTime": 16,
     "Collaborator": 26, "Department": 27, "Rating": 28, "Checkbox": 36,
     "Phone": 3, "Money": 8, "Email": 5, "Area": 24, "RichText": 41,
-    "AutoNumber": 33, "Formula": 31, "Score": 28,
+    "AutoNumber": 33, "Formula": 31, "Score": 47, "Remark": 49,
 }
 
 
@@ -858,21 +858,27 @@ def main() -> None:
                 "deferred_fields": deferred_fields,
             })
 
-    # Phase 1.5: 并发回填 deferred 字段（AutoNumber 等开放平台不支持在创建时包含的字段）
+    # Phase 1.5: 并发回填 deferred 字段（开放平台不支持在创建时包含的字段）
+    # 注意：逐字段发送，避免单个不支持的类型导致整批失败
     def _add_deferred_one(item):
+        import sys as _sys
         ws_name = item["name"]
         ws_id = item["worksheetId"]
         deferred = item.get("deferred_fields", [])
         if not deferred:
             return None
         url = args.base_url.rstrip("/") + EDIT_WS_ENDPOINT.format(worksheet_id=ws_id)
-        payload = {"addFields": deferred}
-        resp = requests.post(url, headers=headers, json=payload, timeout=30)
-        data = resp.json()
-        if not data.get("success"):
-            print(f"[warn] 补加 deferred 字段失败 [{ws_name}]: {data}", file=__import__('sys').stderr)
-            return {"name": ws_name, "worksheetId": ws_id, "success": False, "error": data}
-        return {"name": ws_name, "worksheetId": ws_id, "deferred_count": len(deferred), "success": True}
+        ok_count = 0
+        for field in deferred:
+            payload = {"addFields": [field]}
+            resp = requests.post(url, headers=headers, json=payload, timeout=30)
+            data = resp.json()
+            if data.get("success"):
+                ok_count += 1
+            else:
+                fname = field.get("controlName") or field.get("name") or str(field.get("type", "?"))
+                print(f"[warn] 补加 deferred 字段失败 [{ws_name}]「{fname}」: {data}", file=_sys.stderr)
+        return {"name": ws_name, "worksheetId": ws_id, "deferred_count": ok_count, "success": ok_count > 0}
 
     with ThreadPoolExecutor(max_workers=16) as executor:
         futures = [executor.submit(_add_deferred_one, item) for item in relations_todo]
