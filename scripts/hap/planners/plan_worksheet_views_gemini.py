@@ -537,6 +537,30 @@ def normalize_views(raw_views: Any, fields: List[dict], worksheet_id: str = "") 
         )
         if len(out) >= 8:
             break
+
+    # 强制补全：如果工作表有自关联字段但 AI 没有规划层级视图，自动注入一个
+    if worksheet_id:
+        has_hierarchy = any(v.get("viewType") == "2" for v in out)
+        if not has_hierarchy:
+            rel_fid = _find_self_relation_field(fields, worksheet_id)
+            if rel_fid:
+                print(f"    ⚠ 工作表 {worksheet_id} 有自关联字段 {rel_fid}，AI 未规划层级视图，自动注入")
+                fallback_display = out[0]["displayControls"] if out else default_display_controls(fields)
+                out.append({
+                    "name": "层级视图",
+                    "viewType": "2",
+                    "reason": "工作表含自关联字段，自动生成层级视图",
+                    "displayControls": fallback_display,
+                    "coverCid": "",
+                    "viewControl": "",
+                    "advancedSetting": {},
+                    "postCreateUpdates": [{
+                        "editAttrs": ["childType", "layersControlId"],
+                        "childType": 0,
+                        "layersControlId": rel_fid,
+                    }],
+                })
+
     return out
 
 
