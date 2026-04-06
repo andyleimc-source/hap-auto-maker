@@ -439,6 +439,8 @@ def _validate_single_node_config(
             raise ValueError(f"{path}: fields 不是数组")
         if node_type == "add_record" and len(fields) < 2:
             raise ValueError(f"{path}: add_record 至少需要 2 个字段")
+        if node_type == "update_record" and len(fields) < 1:
+            raise ValueError(f"{path}: update_record 至少需要 1 个字段")
 
         target_ws_id = str(node.get("target_worksheet_id", "")).strip()
         if target_ws_id and target_ws_id in worksheets_by_id:
