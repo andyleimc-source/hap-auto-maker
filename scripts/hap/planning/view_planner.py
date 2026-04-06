@@ -328,6 +328,128 @@ calendarcids 格式（JSON 紧凑字符串）：
 }}"""
 
 
+def build_config_prompt_single_ws(
+    app_name: str,
+    structure_plan_for_ws: dict,
+    ws_data: dict,
+) -> str:
+    """Phase 2 单表模式 — 只为一张工作表生成视图配置。
+
+    Args:
+        app_name: 应用名称
+        structure_plan_for_ws: 该表的视图结构 {worksheetId, worksheetName, views: [...]}
+        ws_data: 该表的 {worksheetId, worksheetName, fields: [...]}
+    """
+    ws_id = ws_data.get("worksheetId", "")
+    ws_name = ws_data.get("worksheetName", "")
+    fields = ws_data.get("fields", [])
+    classified = classify_fields(fields)
+
+    # 字段详情
+    field_lines = [f"### 工作表「{ws_name}」(ID: {ws_id})"]
+    for cat, label in [("select", "单选/下拉"), ("date", "日期"),
+                       ("text", "文本"), ("number", "数值"),
+                       ("user", "成员"), ("relation", "关联"),
+                       ("attachment", "附件")]:
+        cat_fields = classified.get(cat, [])
+        if cat_fields:
+            for f in cat_fields:
+                field_lines.append(f"  {f['id']}  type={f['type']}  {f['name']}")
+    field_detail = "\n".join(field_lines)
+
+    # 视图结构摘要
+    plan_lines = [f"## 工作表「{ws_name}」(ID: {ws_id})"]
+    for view in structure_plan_for_ws.get("views", []):
+        vc = view.get("viewControl", "")
+        vc_str = f" viewControl={vc}" if vc else ""
+        plan_lines.append(
+            f"  - viewType={view.get('viewType', '')} \"{view.get('name', '')}\"{vc_str}"
+        )
+    plan_summary = "\n".join(plan_lines)
+
+    return f"""你是一名视图配置专家，正在为「{app_name}」的工作表「{ws_name}」的视图填写具体配置。
+
+## 已规划的视图结构
+{plan_summary}
+
+## 完整字段参考
+{field_detail}
+
+## 任务
+
+为该工作表的每个视图补充完整配置。根据视图类型填写：
+
+- **所有视图**：displayControls（显示字段 ID 列表，选最重要的 5-8 个字段）
+- **表格(0) 含"分组"/"分类"关键词的**：通过 postCreateUpdates 设 groupsetting（JSON 字符串数组 [{{controlId, filterType:11}}]），editAdKeys 包含 ["groupsetting","groupsorts","groupcustom","groupshow","groupfilters","groupopen"]。【注意：不要用 groupView，groupView 是导航筛选栏配置，与行分组无关】
+- **日历(4)**：postCreateUpdates 中设 calendarcids（开始/结束日期字段 ID）
+- **甘特图(5)**：视图顶层设 begindate（开始日期字段 ID）和 enddate（结束日期字段 ID），同时在 postCreateUpdates 中通过 editAdKeys 二次保存
+- **画廊(3)**：设置 coverCid 为附件字段 ID
+- **层级(2)**：视图顶层设 layersControlId（自关联字段 ID），postCreateUpdates 用 editAttrs=["viewControl","childType","viewType"]，viewControl 可设为 "create"（自动创建自关联字段）或具体字段 ID
+- **资源(7)**：视图顶层设 viewControl（分组字段 ID）+ advancedSetting.begindate/enddate，postCreateUpdates 二次保存
+- **地图(8)**：必须有定位字段(type=40)，视图顶层设 latlng（定位字段 ID），viewControl 指向定位字段
+
+## 配置格式说明
+
+groupView 格式（JSON 紧凑字符串）：
+  '{{"viewId":"{{viewId}}","groupFilters":[{{"controlId":"<单选字段ID>","values":[],"dataType":<字段type>,"spliceType":1,"filterType":2,"dateRange":0,"minValue":"","maxValue":"","isGroup":true}}],"navShow":true}}'
+
+calendarcids 格式（JSON 紧凑字符串）：
+  '[{{"begin":"<日期字段ID>","end":"<结束日期字段ID或空>"}}]'
+
+## 输出 JSON 格式
+
+{{
+  "worksheetId": "{ws_id}",
+  "worksheetName": "{ws_name}",
+  "views": [
+    {{
+      "name": "视图名",
+      "viewType": "0",
+      "displayControls": ["字段ID1", "字段ID2"],
+      "coverCid": "",
+      "viewControl": "",
+      "advancedSetting": {{}},
+      "postCreateUpdates": [
+        {{
+          "editAttrs": ["advancedSetting"],
+          "editAdKeys": ["calendarcids"],
+          "advancedSetting": {{"calendarcids": "[...]"}}
+        }}
+      ]
+    }}
+  ]
+}}"""
+
+
+def validate_config_plan_single_ws(
+    raw: dict,
+    ws_data: dict,
+) -> dict:
+    """Phase 2 单表校验 — 检查 displayControls、advancedSetting 的字段引用。"""
+    views = raw.get("views", [])
+    if not isinstance(views, list):
+        raise ValueError("缺少 views 数组")
+
+    field_ids = {
+        str(f.get("id", "") or f.get("controlId", "")).strip()
+        for f in ws_data.get("fields", [])
+        if str(f.get("id", "") or f.get("controlId", "")).strip()
+    }
+
+    for j, view in enumerate(views):
+        # 校验 displayControls
+        dc = view.get("displayControls", [])
+        if isinstance(dc, list):
+            view["displayControls"] = [x for x in dc if str(x).strip() in field_ids]
+
+        # 校验 viewControl
+        vc = str(view.get("viewControl", "")).strip()
+        if vc and vc not in field_ids:
+            view["viewControl"] = ""
+
+    return raw
+
+
 def validate_config_plan(
     raw: dict,
     worksheets_by_id: dict[str, dict],

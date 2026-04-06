@@ -40,6 +40,8 @@ try:
         validate_structure_plan as _vp_validate_structure_plan,
         build_config_prompt as _vp_build_config_prompt,
         validate_config_plan as _vp_validate_config_plan,
+        build_config_prompt_single_ws as _vp_build_config_prompt_single_ws,
+        validate_config_plan_single_ws as _vp_validate_config_plan_single_ws,
     )
     from planning.constraints import classify_fields
     from ai_utils import parse_ai_json as _parse_ai_json
@@ -659,12 +661,14 @@ def plan_views_two_phase(
     app_name: str,
     ws_with_fields: List[tuple],
 ) -> List[dict]:
-    """两阶段视图规划：Phase 1 规划结构，Phase 2 补全配置细节。
+    """两阶段视图规划：Phase 1 规划结构，Phase 2 逐表补全配置细节。
 
-    Phase 1: build_structure_prompt → AI → validate_structure_plan
-    Phase 2: build_config_prompt → AI → validate_config_plan
+    Phase 1: build_structure_prompt → AI → validate_structure_plan（一次调用，所有表）
+    Phase 2: build_config_prompt_single_ws → AI → validate（逐表并行，Semaphore=3）
     返回 [{worksheetId, worksheetName, fields, views}]，兼容 create_views_from_plan.py。
     """
+    import threading
+
     ws_data = [
         {
             "worksheetId": ws["workSheetId"],
@@ -675,8 +679,8 @@ def plan_views_two_phase(
     ]
     worksheets_by_id = {item["worksheetId"]: item for item in ws_data}
 
-    # ── Phase 1: 结构规划 ────────────────────────────────────────────────────────
-    print(f"\n[view two-phase] Phase 1: 结构规划（{app_name}）", file=_sys.stderr)
+    # ── Phase 1: 结构规划（一次调用，所有表） ────────────────────────────────────
+    print(f"\n[view two-phase] Phase 1: 结构规划（{app_name}，{len(ws_data)} 个表）", file=_sys.stderr)
     p1_prompt = _vp_build_structure_prompt(app_name, ws_data)
     print(
         f"[view] Phase1 prompt 长度: {len(p1_prompt)}, 前200字: {p1_prompt[:200]}",
@@ -708,53 +712,87 @@ def plan_views_two_phase(
                 break
             print(f"[view:p1 retry {val_attempt}] {exc}", file=_sys.stderr)
 
-    # ── Phase 2: 配置补全 ────────────────────────────────────────────────────────
-    print(f"\n[view two-phase] Phase 2: 配置补全（{app_name}）", file=_sys.stderr)
-    p2_prompt = _vp_build_config_prompt(app_name, p1_raw, ws_data)
-    print(
-        f"[view] Phase2 prompt 长度: {len(p2_prompt)}, 前200字: {p2_prompt[:200]}",
-        file=_sys.stderr,
-    )
+    # 按 worksheetId 索引 Phase1 结果
+    p1_ws_map: Dict[str, dict] = {}
+    for ws_item in p1_raw.get("worksheets", []):
+        if isinstance(ws_item, dict):
+            ws_id = str(ws_item.get("worksheetId", "")).strip()
+            if ws_id:
+                p1_ws_map[ws_id] = ws_item
 
-    p2_raw: dict = {}
-    last_p2_error: Optional[str] = None
-    for val_attempt in range(1, 4):
-        try:
-            prompt_with_ctx = p2_prompt
-            if last_p2_error:
-                prompt_with_ctx = (
-                    p2_prompt
-                    + f"\n\n# 上次输出校验失败（第 {val_attempt - 1} 次）\n错误：{last_p2_error}\n请修正后重新输出。"
-                )
-            raw_text = _call_ai_with_retry(client, model, prompt_with_ctx, label="view:p2")
-            print(f"[view:p2] 响应长度 {len(raw_text)} 字符", file=_sys.stderr)
-            p2_raw = _parse_ai_json(raw_text)
-            _vp_validate_config_plan(p2_raw, worksheets_by_id)
-            break
-        except Exception as exc:
-            last_p2_error = str(exc)
-            if val_attempt >= 3:
-                print(
-                    f"[view two-phase] Phase 2 校验警告（已重试 {val_attempt} 次），使用当前输出: {exc}",
-                    file=_sys.stderr,
-                )
-                break
-            print(f"[view:p2 retry {val_attempt}] {exc}", file=_sys.stderr)
+    # ── Phase 2: 逐表配置补全（并行，Semaphore=3）────────────────────────────────
+    print(f"\n[view two-phase] Phase 2: 逐表配置补全（{app_name}，并发=3）", file=_sys.stderr)
 
-    # 如果 Phase 2 输出无效，降级为 Phase 1 结构结果
-    ws_views_map: Dict[str, List] = {}
-    result_raw = p2_raw if p2_raw.get("worksheets") else p1_raw
-    for ws_item in result_raw.get("worksheets", []):
-        if not isinstance(ws_item, dict):
-            continue
-        ws_id = str(ws_item.get("worksheetId", "")).strip()
-        if ws_id:
-            ws_views_map[ws_id] = ws_item.get("views", [])
+    semaphore = threading.Semaphore(3)
+    p2_results: Dict[str, dict] = {}  # ws_id → {worksheetId, worksheetName, views}
+    p2_lock = threading.Lock()
 
+    def _phase2_single(ws_id: str, ws_name: str, ws_item_data: dict):
+        """对单张工作表执行 Phase2 配置补全。"""
+        structure_for_ws = p1_ws_map.get(ws_id, {"worksheetId": ws_id, "worksheetName": ws_name, "views": []})
+
+        if not structure_for_ws.get("views"):
+            print(f"  [view:p2] 工作表「{ws_name}」Phase1 无视图，跳过 Phase2", file=_sys.stderr)
+            with p2_lock:
+                p2_results[ws_id] = {"worksheetId": ws_id, "worksheetName": ws_name, "views": []}
+            return
+
+        with semaphore:
+            p2_prompt = _vp_build_config_prompt_single_ws(app_name, structure_for_ws, ws_item_data)
+            print(
+                f"  [view:p2] 工作表「{ws_name}」prompt 长度: {len(p2_prompt)}",
+                file=_sys.stderr,
+            )
+
+            p2_ws_raw: dict = {}
+            last_p2_error: Optional[str] = None
+            for val_attempt in range(1, 4):
+                try:
+                    prompt_with_ctx = p2_prompt
+                    if last_p2_error:
+                        prompt_with_ctx = (
+                            p2_prompt
+                            + f"\n\n# 上次输出校验失败（第 {val_attempt - 1} 次）\n错误：{last_p2_error}\n请修正后重新输出。"
+                        )
+                    raw_text = _call_ai_with_retry(
+                        client, model, prompt_with_ctx,
+                        label=f"view:p2:{ws_name}",
+                    )
+                    print(f"  [view:p2] 工作表「{ws_name}」响应长度 {len(raw_text)} 字符", file=_sys.stderr)
+                    p2_ws_raw = _parse_ai_json(raw_text)
+                    _vp_validate_config_plan_single_ws(p2_ws_raw, ws_item_data)
+                    break
+                except Exception as exc:
+                    last_p2_error = str(exc)
+                    if val_attempt >= 3:
+                        print(
+                            f"  [view:p2] 工作表「{ws_name}」校验警告（已重试 {val_attempt} 次），使用当前输出: {exc}",
+                            file=_sys.stderr,
+                        )
+                        break
+                    print(f"  [view:p2 retry {val_attempt}] 工作表「{ws_name}」: {exc}", file=_sys.stderr)
+
+            with p2_lock:
+                p2_results[ws_id] = p2_ws_raw if p2_ws_raw.get("views") else structure_for_ws
+
+    # 启动并行线程
+    threads = []
+    for wd in ws_data:
+        ws_id = wd["worksheetId"]
+        ws_name = wd["worksheetName"]
+        t = threading.Thread(target=_phase2_single, args=(ws_id, ws_name, wd), daemon=True)
+        threads.append(t)
+        t.start()
+
+    for t in threads:
+        t.join()
+
+    # ── 合并结果 ────────────────────────────────────────────────────────────────
     results = []
     for ws, fields in ws_with_fields:
         ws_id = ws["workSheetId"]
-        views_raw = ws_views_map.get(ws_id, [])
+        p2_ws = p2_results.get(ws_id, {})
+        views_raw = p2_ws.get("views", [])
         views = normalize_views(views_raw, fields, ws_id)
         results.append({
             "worksheetId": ws_id,
