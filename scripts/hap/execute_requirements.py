@@ -62,6 +62,7 @@ def _scripts() -> dict:
         "delete_default_views": resolve_script("delete_default_views.py"),
         "pages":               resolve_script("pipeline_pages.py"),
         "plan_pages":          resolve_script("plan_pages_gemini.py"),
+        "create_pages_early":  resolve_script("create_pages_early.py"),
         "plan_sections":       resolve_script("plan_app_sections_gemini.py"),
         "create_sections":     resolve_script("create_sections_from_plan.py"),
     }
