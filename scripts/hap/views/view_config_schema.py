@@ -108,36 +108,45 @@ VIEW_SCHEMA = {
                 "listbtns": "[]",
             },
         },
-        # 创建成功后的二次更新（需要 viewId）
+        # 创建成功后的二次更新
         "post_create": {
-            # groupView 需要 viewId，只有创建后才能配置
-            "groupView": {
+            # groupsetting：表格视图行分组（把记录按字段值分组显示），通过二次保存写入
+            # 注意：groupView 是看板/导航筛选栏配置，与行分组完全无关，不要混用
+            "groupsetting": {
                 "editAttrs": ["advancedSetting"],
-                "editAdKeys": ["groupView"],
-                "description": "分组视图配置。viewId 必须填当前视图的真实 ID",
-                "format": (
-                    '{"viewId":"<viewId>",'
-                    '"groupFilters":[{"controlId":"<fieldId>","values":[],'
-                    '"dataType":<fieldType>,"spliceType":1,"filterType":2,'
-                    '"dateRange":0,"minValue":"","maxValue":"","isGroup":true}],'
-                    '"navShow":true}'
-                ),
+                "editAdKeys": ["groupsetting", "groupsorts", "groupcustom", "groupshow", "groupfilters", "groupopen"],
+                "description": "表格视图行分组配置（按字段值把记录分组显示）",
+                "advancedSetting": {
+                    "groupsetting": '[{"controlId":"<fieldId>","filterType":11}]',
+                    "groupsorts": "",
+                    "groupcustom": "",
+                    "groupshow": "0",
+                    "groupfilters": "[]",
+                    "groupopen": "",
+                },
                 "notes": [
-                    "controlId 必须是单选(type=9/11)或多选(type=10)字段 ID",
-                    "dataType 对应字段的 type 值",
-                    "viewId 必须填当前视图的真实 ID（创建后才知道）",
-                    "JSON 必须使用紧凑格式（无空格），separators=(',',':')",
+                    "groupsetting 是 JSON 字符串数组，controlId 为分组字段 ID（推荐单选 type=11）",
+                    "filterType=11 表示按选项分组",
+                    "groupshow: '0'=全部, '1'=筛选, '2'=自定义",
+                    "不需要 viewId，创建后立即可二次保存",
+                    "【重要】此配置与 navGroup/groupView（导航筛选栏）完全不同，不要混用",
                 ],
             }
         },
         # advancedSetting 全部可用键说明
         "advanced_setting_keys": {
-            "groupView": {
+            # 行分组：把记录按字段值分组显示（正确配置）
+            "groupsetting": {
                 "type": "string",
-                "desc": "分组视图配置，JSON 字符串（紧凑格式）。需 viewId=当前视图真实ID",
-                "example": '{"viewId":"abc123","groupFilters":[{"controlId":"fid","values":[],"dataType":11,"spliceType":1,"filterType":2,"dateRange":0,"minValue":"","maxValue":"","isGroup":true}],"navShow":true}',
+                "desc": "行分组配置，JSON 字符串数组。格式：[{controlId, filterType}]",
+                "example": '[{"controlId":"fieldId123","filterType":11}]',
                 "requires_post_create": True,
             },
+            "groupsorts": {"type": "string", "default": "", "desc": "分组排序，JSON 字符串"},
+            "groupcustom": {"type": "string", "default": "", "desc": "自定义分组"},
+            "groupshow": {"type": "string", "default": "0", "desc": "分组显示：'0'=全部, '1'=筛选, '2'=自定义"},
+            "groupfilters": {"type": "string", "default": "[]", "desc": "分组筛选条件 JSON 数组"},
+            "groupopen": {"type": "string", "default": "", "desc": "分组展开"},
             "enablerules": {"type": "string", "default": "1", "desc": "启用颜色规则"},
             "coverstyle": {"type": "string", "default": '{"position":"1","style":3}', "desc": "封面样式"},
             "navempty": {"type": "string", "default": "1", "desc": "显示空分组"},
@@ -603,24 +612,35 @@ VIEW_SCHEMA = {
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
-# groupView JSON 格式说明（BUG 修复记录）
+# 表格视图行分组配置说明（2026-04-06 HAR 抓包验证）
 # ──────────────────────────────────────────────────────────────────────────────
-GROUP_VIEW_FORMAT_NOTES = """
-groupView 格式要求（2026-04-03 实测确认）：
+GROUP_SETTING_FORMAT_NOTES = """
+表格视图行分组配置（groupsetting）——2026-04-06 HAR 抓包实测确认：
 
-1. groupView 必须是 JSON 字符串（不是 dict），作为 advancedSetting 的值
-2. JSON 必须使用紧凑格式（无空格），即 separators=(',',':')
-   正确：{"viewId":"abc","groupFilters":[...],"navShow":true}
-   错误：{"viewId": "abc", "groupFilters": [...], "navShow": true}
-3. viewId 必须填当前视图的真实 ID（创建后才能知道，需二次保存）
-4. groupFilters[].dataType 必须与字段的 type 一致（通常 11=下拉单选）
-5. 通过 editAttrs=["advancedSetting"] + editAdKeys=["groupView"] 二次保存
+【正确配置】
+- 字段名：advancedSetting.groupsetting（JSON 字符串数组）
+- 格式：[{"controlId":"<fieldId>","filterType":11}]
+- 通过 editAttrs=["advancedSetting"] + editAdKeys=["groupsetting","groupsorts","groupcustom","groupshow","groupfilters","groupopen"] 二次保存
+- 无需 viewId，创建后立即可配置
 
-已知 BUG（已修复）：
-- create_views_from_plan.py 的 build_update_payload 中 groupView 用了非紧凑格式
-  修复：json.dumps(gv_obj, ensure_ascii=False, separators=(',',':'))
-- normalize_advanced_setting 中对 groupView 字符串再次 json.dumps 会导致双重转义
-  修复：对已是紧凑字符串的 groupView 跳过再次序列化
+【常见错误（已修复）】
+- 错误：用 groupView 配置行分组 → groupView 是看板/导航筛选栏配置，不是行分组
+- groupView 格式：{"viewId":"...","groupFilters":[...],"navShow":true} 这是 navGroup，与行分组无关
+- 历史版本（2026-04-03 之前）用 groupView 导致分组设置无效
+
+【实测保存请求体】
+{
+  "editAttrs": ["advancedSetting"],
+  "editAdKeys": ["groupsetting","groupsorts","groupcustom","groupshow","groupfilters","groupopen"],
+  "advancedSetting": {
+    "groupsetting": "[{\\"controlId\\":\\"<fieldId>\\",\\"filterType\\":11}]",
+    "groupsorts": "",
+    "groupcustom": "",
+    "groupshow": "0",
+    "groupfilters": "[]",
+    "groupopen": ""
+  }
+}
 """
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -632,9 +652,11 @@ API_OBSERVED_DATA = {
     "views": [
         # viewType 0 — 基础表格
         {"viewType": 0, "name": "全部", "advancedSetting": {"navempty": "1", "enablerules": "1", "detailbtns": "[]", "listbtns": "[]"}},
-        # viewType 0 — 分组表格（含 groupView）
+        # viewType 0 — 分组表格（正确配置：groupsetting，2026-04-06 HAR 验证）
+        # 注意：旧版本错误用了 groupView，已修复。groupView 是 navGroup 配置，与行分组无关。
         {"viewType": 0, "name": "按状态分组", "advancedSetting": {
-            "groupView": '{"viewId":"69cf752851170beafcdb8683","groupFilters":[{"controlId":"69cf74f0f9434db36c6e0827","values":[],"dataType":11,"spliceType":1,"filterType":2,"dateRange":0,"minValue":"","maxValue":"","isGroup":true}],"navShow":true}',
+            "groupsetting": '[{"controlId":"69cf74f0f9434db36c6e0827","filterType":11}]',
+            "groupsorts": "", "groupcustom": "", "groupshow": "0", "groupfilters": "[]", "groupopen": "",
             "navempty": "1", "enablerules": "1", "detailbtns": "[]", "listbtns": "[]",
         }},
         # viewType 1 — 看板

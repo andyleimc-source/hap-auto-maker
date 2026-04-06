@@ -330,18 +330,18 @@ def build_prompt(app_name: str, worksheet_name: str, worksheet_id: str, fields: 
 3) displayControls / coverCid / viewControl 必须来自提供的字段ID；无法确定时填空或省略。
 4) 日历视图必须在 postCreateUpdates.advancedSetting 中提供 calendarcids（字符串化 JSON），格式必须为：'[{{"begin":"日期字段ID","end":"结束日期字段ID或空字符串"}}]'。begin 为开始日期字段ID（必填），end 为结束日期字段ID（无则填空字符串）。
 5) 【强制】看板视图(viewType=1)必须设置 viewControl 为一个单选字段(type=11)的ID。如果没有合适的单选字段，不要创建看板视图。
-6) 【强制】表格视图(viewType=0)如果视图名包含"按...分组"、"按...分类"、"分组"等含义，必须在 advancedSetting 中提供 groupView（JSON字符串，必须紧凑无空格），格式：'{{"viewId":"","groupFilters":[{{"controlId":"分组字段ID","values":[],"dataType":11,"spliceType":1,"filterType":2,"dateRange":0,"minValue":"","maxValue":"","isGroup":true}}],"navShow":true}}'。controlId 必须为单选字段(type=11)或多选字段(type=10)的ID。viewId 填空字符串（系统自动补全）。
+6) 【强制】表格视图(viewType=0)如果视图名包含"按...分组"、"按...分类"、"分组"等含义，必须通过 postCreateUpdates 二次保存分组配置，格式：{{"editAttrs":["advancedSetting"],"editAdKeys":["groupsetting","groupsorts","groupcustom","groupshow","groupfilters","groupopen"],"advancedSetting":{{"groupsetting":"[{{\\\"controlId\\\":\\\"分组字段ID\\\",\\\"filterType\\\":11}}]","groupsorts":"","groupcustom":"","groupshow":"0","groupfilters":"[]","groupopen":""}}}}。groupsetting 是字符串化 JSON 数组，controlId 必须为有实际选项的单选字段(type=11)的ID。
 7) 甘特图视图（viewType=5）需要工作表含有开始日期和结束日期字段，适合项目管理、任务排期类场景。
 8) 层级视图（viewType=2）适合有上下级/父子关系的数据（如部门树、分类层级）。
 9) 若字段不支持某视图，请不要输出该视图类型。
 10) 输出必须是可解析 JSON。
 11) 【重要】每个视图必须有实际业务含义——不仅有名称，还要有对应的配置（viewControl/advancedSetting/postCreateUpdates），空配置的视图没有价值。
-12) 【格式要求】所有 advancedSetting 中的 JSON 字符串值必须是紧凑格式（无空格），例如 groupView 中键值之间不加空格。
+12) 【格式要求】所有 advancedSetting 中的 JSON 字符串值必须是紧凑格式（无空格）。
 """.strip()
 
 
 def _find_single_select_field(fields: List[dict]) -> str:
-    """从字段列表中找第一个非系统单选字段 ID，用于自动补全 viewControl/groupView。"""
+    """从字段列表中找第一个非系统单选字段 ID，用于自动补全 viewControl/groupsetting。"""
     for f in fields:
         if bool(f.get("isSystem", False)):
             continue
@@ -429,45 +429,37 @@ def normalize_views(raw_views: Any, fields: List[dict], worksheet_id: str = "") 
                 view_control = fallback_vc
                 print(f"    ⚠ 看板视图「{name}」缺少 viewControl，自动补全为 {fallback_vc}")
 
-        # 自动补全：表格视图名暗示分组但缺 groupView 配置
+        # 自动补全：表格视图名暗示分组但缺 groupsetting 配置
+        # 注意：表格视图行分组使用 advancedSetting.groupsetting（JSON字符串数组），
+        # 而非 groupView（groupView 是看板等视图的导航分组，不适用于表格行分组）。
         if view_type == "0" and _is_grouping_view_name(name):
-            group_view = advanced_setting.get("groupView", "")
-            if not group_view:
+            # 检查 postCreateUpdates 中是否已有 groupsetting
+            has_group_update = any(
+                isinstance(upd, dict) and "groupsetting" in (upd.get("editAdKeys") or [])
+                for upd in (item.get("postCreateUpdates") or [])
+            )
+            if not has_group_update:
                 fallback_gc = _find_single_select_field(fields)
                 if fallback_gc:
-                    group_view_obj = {
-                        "viewId": "",
-                        "groupFilters": [{
-                            "controlId": fallback_gc,
-                            "values": [],
-                            "dataType": 11,
-                            "spliceType": 1,
-                            "filterType": 2,
-                            "dateRange": 0,
-                            "minValue": "",
-                            "maxValue": "",
-                            "isGroup": True,
-                        }],
-                        "navShow": True,
-                    }
-                    # 必须使用紧凑格式（无空格），否则明道云前端无法识别分组配置
-                    advanced_setting["groupView"] = json.dumps(group_view_obj, ensure_ascii=False, separators=(",", ":"))
-                    print(f"    ⚠ 分组视图「{name}」缺少 groupView，自动补全为字段 {fallback_gc}")
-            # 确保分组配置通过 postCreateUpdates 二次保存
-            if advanced_setting.get("groupView"):
-                has_group_update = False
-                for upd in (item.get("postCreateUpdates") or []):
-                    if isinstance(upd, dict) and "groupView" in (upd.get("editAdKeys") or []):
-                        has_group_update = True
-                        break
-                if not has_group_update:
+                    groupsetting_val = json.dumps(
+                        [{"controlId": fallback_gc, "filterType": 11}],
+                        ensure_ascii=False, separators=(",", ":")
+                    )
                     if not isinstance(item.get("postCreateUpdates"), list):
                         item["postCreateUpdates"] = []
                     item["postCreateUpdates"].append({
                         "editAttrs": ["advancedSetting"],
-                        "editAdKeys": ["groupView"],
-                        "advancedSetting": {"groupView": advanced_setting["groupView"]},
+                        "editAdKeys": ["groupsetting", "groupsorts", "groupcustom", "groupshow", "groupfilters", "groupopen"],
+                        "advancedSetting": {
+                            "groupsetting": groupsetting_val,
+                            "groupsorts": "",
+                            "groupcustom": "",
+                            "groupshow": "0",
+                            "groupfilters": "[]",
+                            "groupopen": "",
+                        },
                     })
+                    print(f"    ⚠ 分组视图「{name}」缺少 groupsetting，自动补全为字段 {fallback_gc}")
 
         # 自动补全：甘特图缺 begindate/enddate 时自动匹配日期字段
         if view_type == "5":
@@ -582,13 +574,13 @@ def build_batch_prompt(app_name: str, worksheets_data: List[dict]) -> str:
 3) displayControls / coverCid / viewControl 必须来自对应工作表提供的字段ID；无法确定时填空或省略。
 4) 日历视图必须在 postCreateUpdates.advancedSetting 中提供 calendarcids（字符串化 JSON），格式必须为：'[{{"begin":"日期字段ID","end":"结束日期字段ID或空字符串"}}]'。begin 为开始日期字段ID（必填），end 为结束日期字段ID（无则填空字符串）。
 5) 【强制】看板视图(viewType=1)必须设置 viewControl 为一个单选字段(type=11)的ID。如果没有合适的单选字段，不要创建看板视图。
-6) 【强制】表格视图(viewType=0)如果视图名包含"按...分组"、"按...分类"、"分组"等含义，必须在 advancedSetting 中提供 groupView（JSON字符串，必须紧凑无空格），格式：'{{"viewId":"","groupFilters":[{{"controlId":"分组字段ID","values":[],"dataType":11,"spliceType":1,"filterType":2,"dateRange":0,"minValue":"","maxValue":"","isGroup":true}}],"navShow":true}}'。controlId 必须为单选字段(type=11)或多选字段(type=10)的ID。viewId 填空字符串（系统自动补全）。
+6) 【强制】表格视图(viewType=0)如果视图名包含"按...分组"、"按...分类"、"分组"等含义，必须通过 postCreateUpdates 二次保存分组配置，格式：{{"editAttrs":["advancedSetting"],"editAdKeys":["groupsetting","groupsorts","groupcustom","groupshow","groupfilters","groupopen"],"advancedSetting":{{"groupsetting":"[{{\\\"controlId\\\":\\\"分组字段ID\\\",\\\"filterType\\\":11}}]","groupsorts":"","groupcustom":"","groupshow":"0","groupfilters":"[]","groupopen":""}}}}。groupsetting 是字符串化 JSON 数组，controlId 必须为有实际选项的单选字段(type=11)的ID。
 7) 甘特图视图（viewType=5）需要工作表含有开始日期和结束日期字段，适合项目管理、任务排期类场景。
 8) 层级视图（viewType=2）适合有上下级/父子关系的数据（如部门树、分类层级）。
 9) 若字段不支持某视图，请不要输出该视图类型。
 10) 输出必须是可解析 JSON，worksheets 数组长度必须等于 {count}。
 11) 【重要】每个视图必须有实际业务含义——不仅有名称，还要有对应的配置（viewControl/advancedSetting/postCreateUpdates），空配置的视图没有价值。
-12) 【格式要求】所有 advancedSetting 中的 JSON 字符串值必须是紧凑格式（无空格），例如 groupView 中键值之间不加空格。""".strip()
+12) 【格式要求】所有 advancedSetting 中的 JSON 字符串值必须是紧凑格式（无空格）。""".strip()
 
 
 def _call_ai_with_retry(

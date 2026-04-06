@@ -75,9 +75,9 @@ def normalize_advanced_setting(view_type: str, value: Any) -> dict:
     out = {}
     for k, v in raw.items():
         if k == "groupView":
-            # groupView 必须是紧凑 JSON 字符串（无空格）。
-            # 若 AI 传来的是 dict，直接序列化为紧凑格式；
-            # 若已是字符串，先 parse 再用紧凑格式重新序列化，避免带空格的旧格式。
+            # groupView 是 navGroup（左侧导航筛选栏）配置，不是表格行分组。
+            # 表格视图行分组应使用 groupsetting，见 view_config_schema.py。
+            # 这里保留序列化逻辑以兼容可能真正需要 groupView 的场景（如分组看板）。
             if isinstance(v, dict):
                 out["groupView"] = json.dumps(v, ensure_ascii=False, separators=(",", ":"))
             elif isinstance(v, str) and v.strip():
@@ -85,7 +85,7 @@ def normalize_advanced_setting(view_type: str, value: Any) -> dict:
                     gv_obj = json.loads(v)
                     out["groupView"] = json.dumps(gv_obj, ensure_ascii=False, separators=(",", ":"))
                 except Exception:
-                    out["groupView"] = v  # 保持原始值（解析失败时）
+                    out["groupView"] = v
             else:
                 out["groupView"] = str(v) if v else ""
         elif isinstance(v, (dict, list)):
