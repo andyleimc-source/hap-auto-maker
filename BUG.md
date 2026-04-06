@@ -71,6 +71,21 @@
 
 ---
 
+## [BUG-008] 工作流通知节点变量未被识别（显示红色原始文本）
+- **状态**: resolved
+- **现象**: 通知节点内容中的变量显示为红色高亮的原始文本 `{{trigger.xxx}}`，未渲染为绿色 pill 标签
+- **根因**: 两层缺陷叠加
+  1. **变量格式错误**：HAP 通知节点变量格式必须是 `$startNodeId-fieldId$`，但代码直接把 AI 规划师输出的 `{{trigger.FIELD_ID}}` 原样写入 API，HAP 无法识别
+  2. **sendContent 被 content 覆盖**：`execute_workflow_plan.py` 第 522 行（原）在注入时重新读 `node_plan.get("content")` 覆盖了 `sendContent`，第一个 bug 掩盖了第二个
+- **根因来源**: HAR 抓包（`har/工作流/工作流-通知节点-插入变量.har`），确认前端 saveNode 请求 sendContent 格式为 `$69d3018696aa9cc0d301ad2e-69d2d1b1f93dfe2427d4ca16$`
+- **修复**:
+  - `workflow/scripts/execute_workflow_plan.py`：注入 `save_body[sendContent]` 前调用 `_resolve_field_value(plan_content, start_node_id)`，与 update_record 字段值处理保持一致
+  - `_resolve_field_value` 函数注释更新，明确适用范围包含 sendContent/content
+- **验证**: 创建测试工作流「TEST-修复验证-通知变量」（processId: 69d3018696aa9cc0d301ad2d），通知节点 sendContent 写入 `$startNodeId-fieldId$` 格式，HAP 编辑器正确渲染为绿色变量 pill
+- **关联 commit**: 0c38d24
+
+---
+
 ## [BUG-003] AI 响应超时断连
 - **状态**: resolved
 - **现象**: Step 2 卡很久后抛出 `ConnectionError` 或 `ReadTimeout`

@@ -204,6 +204,13 @@ def _resolve_field_value(raw_value: str, start_node_id: str) -> str:
     """
     将 {{trigger.FIELD_ID}} 替换为 $startNodeId-FIELD_ID$，支持多个占位符。
     时间触发类工作流的字段值不应包含占位符，但也不会报错——只是替换后无意义。
+
+    HAP 变量格式说明（抓包验证 2026-04-06）：
+      AI 规划师输出：{{trigger.69d2d1b1f93dfe2427d4ca16}}
+      HAP API 实际格式：$startNodeId-fieldId$
+      例：$69d3018696aa9cc0d301ad2e-69d2d1b1f93dfe2427d4ca16$
+
+    适用范围：update_record 字段值、notify/copy/push 的 sendContent、sms/email 的 content。
     """
     if not isinstance(raw_value, str):
         return str(raw_value) if raw_value is not None else ""
