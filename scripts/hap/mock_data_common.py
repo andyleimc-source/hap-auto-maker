@@ -815,6 +815,14 @@ def build_schema_snapshot(base_url: str, app: dict) -> dict:
                 )
             else:
                 writable_fields.append(field)
+        # 识别自关联字段（type=Relation，dataSource == 自身 worksheetId）
+        # 用于层级视图造数：生成有父子关系的记录
+        self_relation_field = next(
+            (f for f in simplified_fields
+             if f.get("type") == "Relation"
+             and str(f.get("dataSource", "")).strip() == ref["worksheetId"]),
+            None,
+        )
         worksheets.append(
             {
                 "worksheetId": ref["worksheetId"],
@@ -825,6 +833,8 @@ def build_schema_snapshot(base_url: str, app: dict) -> dict:
                 "writableFields": writable_fields,
                 "skippedFields": skipped_fields,
                 "detailSource": detail_source,
+                "selfRelationFieldId": self_relation_field["fieldId"] if self_relation_field else None,
+                "selfRelationFieldName": self_relation_field["name"] if self_relation_field else None,
             }
         )
 

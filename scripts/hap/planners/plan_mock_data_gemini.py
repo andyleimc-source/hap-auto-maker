@@ -407,6 +407,8 @@ def validate_plan(raw: dict, snapshot: dict) -> Dict[str, Any]:
                 "fieldMetas": schema_ws.get("fields", []),
                 "writableFieldMetas": schema_ws.get("writableFields", []),
                 "records": normalized_records,
+                "selfRelationFieldId": schema_ws.get("selfRelationFieldId") or None,
+                "selfRelationFieldName": schema_ws.get("selfRelationFieldName") or None,
             }
         )
         diagnostics.append(
@@ -460,6 +462,8 @@ def validate_plan(raw: dict, snapshot: dict) -> Dict[str, Any]:
             "fieldMetas": sws.get("fields", []),
             "writableFieldMetas": sws.get("writableFields", []),
             "records": normalized_records,
+            "selfRelationFieldId": sws.get("selfRelationFieldId") or None,
+            "selfRelationFieldName": sws.get("selfRelationFieldName") or None,
         })
 
     normalized_plan_items.sort(key=lambda item: (item["order"], item["worksheetName"]))

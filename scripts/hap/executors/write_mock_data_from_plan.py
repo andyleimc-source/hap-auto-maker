@@ -36,6 +36,7 @@ from mock_data_common import (
     make_output_path,
     resolve_json_input,
     summarize_write_result,
+    update_row_relation,
     write_json_with_latest,
 )
 
@@ -268,6 +269,43 @@ def main() -> None:
         )
         if created_records:
             created_records_by_ws[str(worksheet["worksheetId"])] = created_records
+
+        # 自关联层级关系：写完本表后，把后半部分记录的父字段指向前半部分记录
+        # 条件：bundle 中标记了 selfRelationFieldId，且至少写入了 3 条记录
+        self_rel_field_id = str(worksheet.get("selfRelationFieldId", "") or "").strip()
+        if self_rel_field_id and len(created_records) >= 3 and not args.dry_run:
+            account_id, authorization, cookie = web_auth
+            # 前 1/3 作为根节点（不设父），后 2/3 设父（循环引用前 1/3）
+            root_count = max(1, len(created_records) // 3)
+            child_records = created_records[root_count:]
+            root_records = created_records[:root_count]
+            print(f"  [层级] 为 [{worksheet['worksheetName']}] 设置父子关系：{root_count} 个根节点，{len(child_records)} 个子记录...", end="", flush=True)
+            patch_ok = 0
+            for i, child in enumerate(child_records):
+                parent = root_records[i % len(root_records)]
+                child_row_id = str(child.get("rowId", "")).strip()
+                parent_row_id = str(parent.get("rowId", "")).strip()
+                if not child_row_id or not parent_row_id:
+                    continue
+                try:
+                    update_row_relation(
+                        base_url=args.base_url,
+                        app_key=app["appKey"],
+                        sign=app["sign"],
+                        worksheet_id=worksheet["worksheetId"],
+                        row_id=child_row_id,
+                        field_id=self_rel_field_id,
+                        target_row_id=parent_row_id,
+                        trigger_workflow=False,
+                    )
+                    patch_ok += 1
+                except Exception as exc:
+                    print(f"\n  [层级] patch 失败: child={child_row_id} parent={parent_row_id} err={exc}")
+            print(f"完成 ({patch_ok}/{len(child_records)})")
+            append_log(log_path, "hierarchy_patch", worksheetId=worksheet["worksheetId"],
+                       selfRelFieldId=self_rel_field_id, rootCount=root_count,
+                       childCount=len(child_records), patchOk=patch_ok)
+
         if error_message:
             break
 
