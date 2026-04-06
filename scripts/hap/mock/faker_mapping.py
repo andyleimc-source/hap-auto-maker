@@ -43,17 +43,14 @@ _EXACT_NAME_GENERATORS: dict[str, callable] = {
     "网址": lambda: faker.url(),
     "网站": lambda: faker.url(),
     "链接": lambda: faker.url(),
-    "描述": lambda: faker.paragraph(nb_sentences=2),
-    "说明": lambda: faker.paragraph(nb_sentences=2),
-    "备注": lambda: faker.paragraph(nb_sentences=2),
-    "详情": lambda: faker.paragraph(nb_sentences=2),
+    # 描述/说明/备注/详情 由 AI 生成（需要业务含义）
 }
 
 # ============================================================
 # 2. 字段名模糊匹配规则（contains 关键词 → 生成器）
 # ============================================================
 _FUZZY_NAME_RULES: list[tuple[list[str], callable]] = [
-    (["日期", "时间"], lambda: faker.date_between(start_date="-1y", end_date="today").isoformat()),
+    # 日期/时间类字段由 AI 生成，不走 faker（需要业务含义）
     (["金额", "费用", "价格", "单价", "总价", "成本"], lambda: round(random.uniform(100, 99999), 2)),
     (["数量", "个数", "人数", "次数"], lambda: random.randint(1, 1000)),
     (["比例", "占比", "百分比", "进度", "完成率"], lambda: round(random.uniform(0, 100), 1)),
@@ -69,17 +66,13 @@ _OPTION_FIELD_TYPES = {"SingleSelect", "MultipleSelect", "Dropdown"}
 # 4. 字段类型兜底映射
 # ============================================================
 _TYPE_GENERATORS: dict[str, callable] = {
-    "Text": lambda: faker.sentence(),
-    "Number": lambda: round(random.uniform(1, 10000), 2),
+    # Text / RichText / Number / Date / DateTime 由 AI 生成（需要业务含义）
     "Money": lambda: round(random.uniform(100, 99999), 2),
     "Currency": lambda: round(random.uniform(100, 99999), 2),
-    "Date": lambda: faker.date_between(start_date="-1y", end_date="today").isoformat(),
-    "DateTime": lambda: faker.date_time_between(start_date="-1y", end_date="now").strftime("%Y-%m-%d %H:%M"),
     "Phone": lambda: faker.phone_number(),
     "Email": lambda: faker.email(),
     "Checkbox": lambda: random.choice([True, False]),
     "Rating": lambda: random.randint(1, 5),
-    "RichText": lambda: faker.paragraph(nb_sentences=3),
 }
 
 # 这些字段类型 Faker 无法处理（需要真实 ID）
