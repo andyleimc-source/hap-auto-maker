@@ -190,7 +190,7 @@ def main():
             print("错误：请提供 --requirements 需求描述文本，或 --spec-json 已有 spec 路径。", file=sys.stderr)
             sys.exit(1)
 
-        ai_config = load_ai_config(Path(args.config).expanduser().resolve(), tier="fast")
+        ai_config = load_ai_config(Path(args.config).expanduser().resolve())
         spec = generate_spec(requirements, ai_config)
         output_path = Path(args.output).expanduser().resolve() if args.output else None
         spec_path = save_spec(spec, output=output_path)

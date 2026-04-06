@@ -251,8 +251,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    # 加载 AI 配置仅用于日志记录
-    ai_config = load_ai_config(tier="fast")
+    ai_config = load_ai_config()
     model_name = ai_config["model"]
 
     apps = discover_authorized_apps(base_url=args.base_url)

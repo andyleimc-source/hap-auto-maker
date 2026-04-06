@@ -95,8 +95,7 @@ def main() -> None:
     parser.add_argument("--output", default="", help="输出 JSON 文件路径")
     args = parser.parse_args()
 
-    # 显式使用 fast 档位
-    ai_config = load_ai_config(Path(args.config).expanduser().resolve(), tier="fast")
+    ai_config = load_ai_config(Path(args.config).expanduser().resolve())
     client = get_ai_client(ai_config)
     model_name = ai_config["model"]
 

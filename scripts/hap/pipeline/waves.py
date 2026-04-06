@@ -1,7 +1,7 @@
 """
 pipeline/waves.py
 
-Wave 1-7 编排逻辑，从 execute_requirements.py 提取。
+Wave 1-6 编排逻辑，从 execute_requirements.py 提取。
 对外暴露 run_all_waves()。
 """
 from __future__ import annotations
@@ -19,7 +19,7 @@ _HAP_DIR = Path(__file__).resolve().parents[1]
 if str(_HAP_DIR) not in sys.path:
     sys.path.insert(0, str(_HAP_DIR))
 
-from pipeline.step_runner import execute_step, run_cmd
+from pipeline.step_runner import execute_step
 from pipeline.context import PipelineContext
 from utils import load_json, write_json, now_ts
 
@@ -294,6 +294,24 @@ def run_all_waves(
             cmd8.append("--refresh-auth")
         _exec(8, "navi", "设置应用导航风格", cmd8, uses_gemini=False)
 
+    # Wave 2.5b: 提前创建统计分析 Pages
+    page_registry_output: Optional[str] = None
+    if pages_cfg.get("enabled", True) and ok2a:
+        page_registry_path = (output_root / "page_registries" / f"page_registry_{app_id}_{now_ts()}.json").resolve()
+        cmd_pages_early = [
+            sys.executable, str(scripts["create_pages_early"]),
+            "--app-id", app_id,
+            "--worksheet-plan-json", str(plan_output),
+            "--auth-config", str(config_web_auth),
+            "--output", str(page_registry_path),
+        ]
+        if execution_dry_run:
+            cmd_pages_early.append("--dry-run")
+        ok_pages_early = _exec(14, "pages_early", "提前创建统计分析 Pages", cmd_pages_early, uses_gemini=True)
+        if ok_pages_early and not execution_dry_run:
+            page_registry_output = str(page_registry_path)
+            ctx.page_registry_json = page_registry_output
+
     if _abort_if_failed():
         return ctx
 
@@ -324,6 +342,11 @@ def run_all_waves(
             "--plan-json", str(plan_output),
             "--app-auth-json", str(app_auth_json),
         ]
+        if page_registry_output:
+            cmd2b.extend(["--page-registry", page_registry_output])
+        import os
+        if page_registry_output:
+            os.environ["AUTH_CONFIG_PATH"] = str(config_web_auth)
         ok2b = _exec(2, "worksheets_create", "创建工作表", cmd2b, uses_gemini=False)
         if ok2b and not execution_dry_run:
             worksheet_create_result_path = _extract_saved_path(
@@ -372,7 +395,7 @@ def run_all_waves(
         _app_sign = str(_auth_row.get("sign", "")).strip()
         _app_name_for_views = str(app.get("name", "")).strip()
 
-        _view_ai_config = _view_load_ai(_VIEW_AI_CFG_PATH, tier="fast")
+        _view_ai_config = _view_load_ai(_VIEW_AI_CFG_PATH)
         _view_client = _view_get_client(_view_ai_config)
         _view_model = _view_ai_config["model"]
 
@@ -464,7 +487,7 @@ def run_all_waves(
 
     # Wave 4: 并行（icon/布局/造数/机器人/工作流规划/图表规划）
     print(
-        f"\n-- Wave 4: icon / 布局 / 造数 / 机器人 / 工作流规划 / 规划图表页（并行） --- 总计 {time.time()-pipeline_start:.0f}s",
+        f"\n-- Wave 4: icon / 布局 / 造数 / 机器人 / 工作流规划（并行） --- 总计 {time.time()-pipeline_start:.0f}s",
         flush=True,
     )
 
@@ -476,8 +499,6 @@ def run_all_waves(
     view_plan_output = (view_plan_dir / f"view_plan_{app_id}_{now_ts()}.json").resolve()
     view_create_output = (view_create_result_dir / f"view_create_result_{app_id}_{now_ts()}.json").resolve()
     workflow_plan_output = (workflow_output_dir / f"pipeline_workflows_{app_id}_{now_ts()}.json").resolve()
-    page_plan_output = (output_root / "page_plans" / f"page_plan_{app_id}_pipeline.json").resolve()
-    ok_14a = False
 
     def run_step_4() -> bool:
         if not ws["icon_update"].get("enabled", True):
@@ -564,51 +585,17 @@ def run_all_waves(
             ctx.workflow_plan_json = str(workflow_plan_output)
         return ok11
 
-    def run_step_14a() -> bool:
-        nonlocal ok_14a
-        if not pages_cfg.get("enabled", True):
-            ok_14a = False
-            return True
-        cmd14a = [
-            sys.executable, str(scripts["plan_pages"]),
-            "--app-id", app_id,
-            "--auth-config", str(config_web_auth),
-            "--output", str(page_plan_output),
-        ]
-        elapsed_total = time.time() - pipeline_start
-        print(f"  ▶ Step 14a/ 14  规划统计图表页（AI）  [{elapsed_total:.0f}s]", flush=True)
-        step_start = time.time()
-        with gemini_semaphore:
-            result = run_cmd(cmd14a, dry_run=execution_dry_run, verbose=verbose)
-        ok_14a = int(result.get("returncode", 1)) == 0
-        duration = time.time() - step_start
-        elapsed_total = time.time() - pipeline_start
-        status = "✓" if ok_14a else "✗"
-        print(f"  {status} Step 14a/ 14  规划统计图表页（AI）  ({duration:.0f}s, 总计 {elapsed_total:.0f}s)", flush=True)
-        if not ok_14a:
-            err = str(result.get("stderr", "") or "").strip()
-            if err:
-                if len(err) > 900:
-                    print(err[:300], flush=True)
-                    print("  ...(省略中间内容)...", flush=True)
-                    print(err[-600:], flush=True)
-                else:
-                    print(err, flush=True)
-        return ok_14a
-
-    with ThreadPoolExecutor(max_workers=6) as pool:
+    with ThreadPoolExecutor(max_workers=5) as pool:
         f4 = pool.submit(run_step_4)
         f5 = pool.submit(run_step_5)
         f9 = pool.submit(run_step_9)
         f10 = pool.submit(run_step_10)
         f11 = pool.submit(run_step_11)
-        f14a = pool.submit(run_step_14a)
         f4.result()
         f5.result()
         f9.result()
         f10.result()
         ok11 = f11.result()
-        f14a.result()
 
     if _abort_if_failed():
         return ctx
@@ -667,26 +654,6 @@ def run_all_waves(
         pool.submit(run_step_7).result()
         pool.submit(run_step_12).result()
 
-    # Wave 6: 统计图表 Pages
-    print(f"\n-- Wave 6: 统计图表 Pages --- 总计 {time.time()-pipeline_start:.0f}s", flush=True)
-
-    if not pages_cfg.get("enabled", True):
-        with steps_lock:
-            steps_report.append({"step_id": 14, "step_key": "pages", "title": "创建统计图表页", "skipped": True, "reason": "disabled_by_spec", "result": {}})
-    else:
-        cmd14 = [
-            sys.executable, str(scripts["pages"]),
-            "--app-id", app_id,
-            "--auth-config", str(config_web_auth),
-            "--plan-output", str(page_plan_output),
-        ]
-        if ok_14a:
-            cmd14.append("--skip-plan")
-        if execution_dry_run:
-            cmd14.append("--dry-run")
-        title = "创建统计图表页" if ok_14a else "规划并创建统计图表页"
-        _exec(14, "pages", title, cmd14, uses_gemini=not ok_14a)
-
-    # Wave 7: 已移除（默认视图改为改造而非删除）
+    # Wave 6: 已移除（默认视图改为改造而非删除）
 
     return ctx

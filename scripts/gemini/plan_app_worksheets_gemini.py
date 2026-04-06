@@ -628,7 +628,7 @@ def main() -> None:
     parser.add_argument("--concurrency", type=int, default=3, help="逐表字段细化的并发数")
     args = parser.parse_args()
 
-    ai_config = load_ai_config(Path(args.config).expanduser().resolve(), tier="fast")
+    ai_config = load_ai_config(Path(args.config).expanduser().resolve())
     client = get_ai_client(ai_config)
     model_name = ai_config["model"]
     min_worksheet_count = extract_min_worksheet_count(args.requirements)

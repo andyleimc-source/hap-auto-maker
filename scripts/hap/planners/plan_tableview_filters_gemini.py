@@ -687,8 +687,7 @@ def main() -> None:
     parser.add_argument("--gemini-retries", type=int, default=DEFAULT_GEMINI_RETRIES, help="AI 请求失败时的重试次数")
     args = parser.parse_args()
 
-    # 显式使用 fast 档位
-    ai_config = load_ai_config(Path(args.config).expanduser().resolve(), tier="fast")
+    ai_config = load_ai_config(Path(args.config).expanduser().resolve())
     client = get_ai_client(ai_config)
     model_name = ai_config["model"]
     auth_config_path = Path(args.auth_config).expanduser().resolve()

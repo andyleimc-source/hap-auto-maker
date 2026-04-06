@@ -1117,8 +1117,7 @@ def main() -> None:
     args = parser.parse_args()
 
     global CURRENT_AI_CONFIG
-    # 显式使用 fast 档位
-    CURRENT_AI_CONFIG = load_ai_config(Path(args.config).expanduser().resolve(), tier="fast")
+    CURRENT_AI_CONFIG = load_ai_config(Path(args.config).expanduser().resolve())
     client = get_ai_client(CURRENT_AI_CONFIG)
     model_name = CURRENT_AI_CONFIG["model"]
     auth_config_path = Path(args.auth_config).expanduser().resolve()

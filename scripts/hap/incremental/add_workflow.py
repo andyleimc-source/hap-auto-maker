@@ -220,7 +220,7 @@ def add_workflow_for_worksheet(
         {"plan": {...}, "result": {...}}
     """
     if ai_config is None:
-        ai_config = load_ai_config(tier="fast")
+        ai_config = load_ai_config()
 
     print(f"\n[add_workflow] 加载应用上下文 app_id={app_id}...")
     ctx = load_app_context(app_id=app_id, app_auth_json=app_auth_json)
@@ -274,7 +274,7 @@ def add_workflows_for_all(
 ) -> dict:
     """为应用所有工作表批量规划+创建工作流。"""
     if ai_config is None:
-        ai_config = load_ai_config(tier="fast")
+        ai_config = load_ai_config()
 
     print(f"\n[add_workflow] 加载应用上下文 app_id={app_id}...")
     ctx = load_app_context(app_id=app_id, app_auth_json=app_auth_json)

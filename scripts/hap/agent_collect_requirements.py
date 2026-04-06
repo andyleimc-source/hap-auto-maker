@@ -321,8 +321,7 @@ def main() -> None:
     parser.add_argument("--continue-on-error", action="store_true", help="「开始运行」自动执行时，执行器遇错继续")
     args = parser.parse_args()
 
-    # 显式使用 fast 档位
-    ai_config = load_ai_config(Path(args.config).expanduser().resolve(), tier="fast")
+    ai_config = load_ai_config(Path(args.config).expanduser().resolve())
     client = get_ai_client(ai_config)
     model_name = ai_config["model"]
 

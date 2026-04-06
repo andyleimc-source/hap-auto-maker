@@ -604,8 +604,7 @@ def main() -> None:
     app_id = str(snapshot.get("app", {}).get("appId", "")).strip()
     log_path = make_log_path("plan_mock_data", app_id)
 
-    # 显式使用 fast 档位
-    ai_config = load_ai_config(Path(args.config).expanduser().resolve(), tier="fast")
+    ai_config = load_ai_config(Path(args.config).expanduser().resolve())
     client = get_ai_client(ai_config)
     model_name = ai_config["model"]
     provider = ai_config.get("provider", "gemini")

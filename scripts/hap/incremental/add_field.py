@@ -304,7 +304,7 @@ def add_field(
         {"field": {...}, "recommended": {...}}
     """
     if ai_config is None:
-        ai_config = load_ai_config(tier="fast")
+        ai_config = load_ai_config()
 
     print(f"\n[add_field] 加载上下文 app_id={app_id}...")
     ctx = load_app_context(app_id=app_id, app_auth_json=app_auth_json, with_field_details=False)

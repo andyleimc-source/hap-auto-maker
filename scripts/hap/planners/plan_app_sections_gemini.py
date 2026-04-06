@@ -148,7 +148,7 @@ def main() -> None:
             ]
         }
     else:
-        ai_config = load_ai_config(AI_CONFIG_PATH, tier="fast")
+        ai_config = load_ai_config(AI_CONFIG_PATH)
         client = get_ai_client(ai_config)
         prompt = build_prompt(app_name, worksheets)
 

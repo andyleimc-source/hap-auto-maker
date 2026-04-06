@@ -329,7 +329,7 @@ def main() -> None:
 
     # Step 3: AI 规划 Pages
     print(f"[3/4] AI 规划 Pages...")
-    ai_config = load_ai_config(tier="fast")
+    ai_config = load_ai_config()
     print(f"  模型: {ai_config['model']}")
     planned_pages = plan_pages_with_ai(app_name, worksheet_names, ai_config)
     print(f"  规划了 {len(planned_pages)} 个 Page:")

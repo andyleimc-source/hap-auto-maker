@@ -642,7 +642,7 @@ def modify_workflow(
         {"plan": {...}, "result": {...}, "workflow_detail": {...}}
     """
     if ai_config is None:
-        ai_config = load_ai_config(tier="fast")
+        ai_config = load_ai_config()
     if auth_config_path is None:
         auth_config_path = AUTH_CONFIG_PATH
 

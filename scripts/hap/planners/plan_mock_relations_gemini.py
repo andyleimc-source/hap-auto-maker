@@ -285,7 +285,7 @@ def main() -> None:
     write_result_path = resolve_json_input(str(args.write_result_json), [MOCK_WRITE_RESULT_DIR])
     snapshot = load_json(schema_path)
     write_result = load_json(write_result_path)
-    ai_config = load_ai_config(tier="fast")
+    ai_config = load_ai_config()
     client = get_ai_client(ai_config)
 
     base_prompt = build_prompt(snapshot, write_result)

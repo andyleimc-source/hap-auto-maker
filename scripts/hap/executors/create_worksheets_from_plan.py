@@ -738,7 +738,7 @@ def main() -> None:
     if args.page_registry and Path(args.page_registry).exists():
         page_registry = load_json(Path(args.page_registry))
         from ai_utils import load_ai_config
-        ai_config = load_ai_config(tier="fast")
+        ai_config = load_ai_config()
         pages = page_registry.get("pages", [])
         print(f"[page-registry] 已加载 {len(pages)} 个页面")
 

@@ -938,7 +938,7 @@ def main() -> int:
 
     # 3. AI 配置
     try:
-        ai_config = load_ai_config(tier="fast")
+        ai_config = load_ai_config()
     except Exception as exc:
         print(f"Error: 获取 AI 配置失败：{exc}", file=sys.stderr)
         persist(script_name, None, args=log_args, error=str(exc), started_at=started_at)

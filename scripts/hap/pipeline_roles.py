@@ -87,8 +87,7 @@ def main() -> None:
     parser.add_argument("--no-skip-existing", dest="skip_existing", action="store_false", help="创建时不跳过已有角色")
     args = parser.parse_args()
 
-    # 加载 AI 配置 (极速档)
-    ai_config = load_ai_config(tier="fast")
+    ai_config = load_ai_config()
     model_name = ai_config["model"]
 
     apps = discover_authorized_apps(base_url=args.base_url)

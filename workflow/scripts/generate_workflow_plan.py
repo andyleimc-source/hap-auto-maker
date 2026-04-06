@@ -309,8 +309,7 @@ _DATE_TRIGGER_HINT:
 
 
 def call_ai(prompt: str, config_path: str) -> dict:
-    # 结构化 JSON 输出，使用极速档
-    ai_config = load_ai_config(Path(config_path).expanduser().resolve(), tier="fast")
+    ai_config = load_ai_config(Path(config_path).expanduser().resolve())
     client = get_ai_client(ai_config)
     model_name = ai_config["model"]
 

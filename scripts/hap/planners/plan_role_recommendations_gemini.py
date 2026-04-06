@@ -208,9 +208,8 @@ def main() -> None:
     parser.add_argument("--max-retries", type=int, default=3, help="AI 重试次数")
     args = parser.parse_args()
 
-    # 结构化 JSON 输出，使用极速档
     config_path = Path(args.config).expanduser().resolve() if args.config else None
-    ai_config = load_ai_config(config_path, tier="fast")
+    ai_config = load_ai_config(config_path)
     client = get_ai_client(ai_config)
     model_name = ai_config["model"]
 
@@ -259,7 +258,7 @@ def main() -> None:
             },
         )
 
-    ai_config = load_ai_config(config_path, tier="fast")
+    ai_config = load_ai_config(config_path)
     client = get_ai_client(ai_config)
     prompt = build_prompt(str(app_meta.get("name", "")).strip() or app["appName"], selected_worksheet_names)
     if args.prompt_output:

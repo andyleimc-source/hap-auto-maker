@@ -577,8 +577,7 @@ def main() -> None:
     parser.add_argument("--output", default="", help="修复计划输出路径")
     args = parser.parse_args()
 
-    # 加载 AI 配置 (推理档)
-    ai_config = load_ai_config(tier="fast")
+    ai_config = load_ai_config()
     client = get_ai_client(ai_config)
     model_name = ai_config["model"]
 

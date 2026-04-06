@@ -337,7 +337,7 @@ def modify_view(
         {"result": {...}, "plan": {...}, "current_view": {...}}
     """
     if ai_config is None:
-        ai_config = load_ai_config(tier="fast")
+        ai_config = load_ai_config()
     if auth_config_path is None:
         auth_config_path = AUTH_CONFIG_PATH
 
