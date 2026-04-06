@@ -247,6 +247,38 @@ def get_default_section_id(app_id: str) -> str:
     return ""
 
 
+def get_worksheet_to_section_map(app_id: str) -> Dict[str, str]:
+    """
+    获取应用中每张工作表实际所在的分组 ID 映射。
+    返回：{worksheetId: appSectionId}
+
+    注意：不能假设所有新建工作表都在"第一个分组"，因为：
+    1. 多次重试可能产生多批工作表，分布在不同分组
+    2. 工作表实际所在分组可能与 plan 中的 appSectionId 不一致
+    必须从 GetApp 实时查询每张表的真实位置。
+    """
+    ws_to_section: Dict[str, str] = {}
+    try:
+        resp = auth_retry.hap_web_post(
+            "https://www.mingdao.com/api/HomeApp/GetApp",
+            AUTH_CONFIG_PATH,
+            referer=referer(app_id),
+            json={"appId": app_id, "getSection": True},
+            timeout=30,
+        )
+        data = resp.json()
+        sections = data.get("data", {}).get("sections", [])
+        for sec in sections:
+            sec_id = str(sec.get("appSectionId", "")).strip()
+            for ws in sec.get("workSheetInfo", []):
+                ws_id = str(ws.get("workSheetId", "")).strip()
+                if ws_id and sec_id:
+                    ws_to_section[ws_id] = sec_id
+    except Exception as e:
+        print(f"  ⚠ 获取工作表分组映射失败: {e}")
+    return ws_to_section
+
+
 def run_mode_two(args, sections_create_result: dict) -> List[dict]:
     """读取工作表创建结果，将工作表批量移入对应分组。返回移动结果列表。"""
     ws_create_path = Path(args.ws_create_result).expanduser().resolve()
@@ -261,11 +293,19 @@ def run_mode_two(args, sections_create_result: dict) -> List[dict]:
         print("  ⚠ 没有工作表→分组映射，跳过移动")
         return []
 
-    # 获取默认分组 ID（作为 sourceAppSectionId）
-    source_section_id = get_default_section_id(args.app_id) if not args.dry_run else "dry-run-default-section"
-    if not source_section_id and not args.dry_run:
-        print("  ⚠ 无法获取默认分组 ID，跳过移动")
-        return []
+    # 获取每张工作表实际所在分组（不能假设都在"第一个分组"）
+    # 修复：原代码用 get_default_section_id 作为 sourceAppSectionId，但多次重试后
+    # 工作表可能分布在任意分组，导致 RemoveWorkSheetAscription 找不到源工作表而静默失败
+    ws_actual_section: Dict[str, str] = {}
+    if not args.dry_run:
+        ws_actual_section = get_worksheet_to_section_map(args.app_id)
+        if not ws_actual_section:
+            # 降级：用第一个分组兜底（原逻辑）
+            fallback_id = get_default_section_id(args.app_id)
+            print(f"  ⚠ 无法获取工作表实际分组，降级为默认分组 {fallback_id}")
+            ws_actual_section = {}
+        else:
+            print(f"  ✓ 查询到 {len(ws_actual_section)} 张工作表的实际分组位置")
 
     # 按 plan 顺序分组工作表（保持分组内排序与规划一致）
     ws_by_name = {ws["workSheetName"]: ws for ws in worksheets}
@@ -289,17 +329,26 @@ def run_mode_two(args, sections_create_result: dict) -> List[dict]:
 
     move_results = []
     for target_section_id, ws_list in target_to_worksheets.items():
-        # 跳过已在目标分组的（source == target）
-        if source_section_id == target_section_id:
-            continue
         # API 每次只能移动一张表，必须逐张调用
         ok_names = []
         fail_names = []
         for ws in ws_list:
+            ws_id = ws.get("workSheetId", "")
+            # 每张工作表用其实际所在分组作为 sourceAppSectionId
+            actual_source = ws_actual_section.get(ws_id, "") if ws_actual_section else ""
+            if not actual_source and not args.dry_run:
+                # 找不到实际分组，跳过（工作表可能不存在）
+                print(f"  ⚠ 找不到「{ws['workSheetName']}」(id={ws_id}) 的实际分组，跳过")
+                fail_names.append(ws["workSheetName"])
+                continue
+            # 已在目标分组，无需移动
+            if actual_source == target_section_id:
+                ok_names.append(ws["workSheetName"])
+                continue
             payload = {
                 "sourceAppId": args.app_id,
                 "resultAppId": args.app_id,
-                "sourceAppSectionId": source_section_id,
+                "sourceAppSectionId": actual_source if actual_source else target_section_id,
                 "ResultAppSectionId": target_section_id,
                 "workSheetsInfo": [ws],
             }
@@ -310,7 +359,7 @@ def run_mode_two(args, sections_create_result: dict) -> List[dict]:
                 fail_names.append(ws["workSheetName"])
                 print(f"  ✗ 移动失败「{ws['workSheetName']}」(section={target_section_id}): {resp}")
         if ok_names:
-            print(f"  ✓ 移动 {len(ok_names)} 张到分组 {target_section_id}: {ok_names}")
+            print(f"  ✓ 移动/已在 {len(ok_names)} 张到分组 {target_section_id}: {ok_names}")
         move_results.append({
             "targetSectionId": target_section_id,
             "worksheets": ok_names,
