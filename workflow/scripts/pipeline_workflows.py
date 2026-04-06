@@ -443,7 +443,7 @@ def _build_global_skeleton_prompt(
 - custom_actions：从 {num_trigger} 个触发表中选 {num_ca_ws} 个，每个 {ca_per_ws} 个
 - worksheet_events：每个触发表 {ev_per_ws} 个
 - time_triggers：全应用共 {num_tt} 个
-- date_triggers：有日期字段的表各 1 个（Phase 1 阶段细化）
+- date_triggers：全应用最多 2 个，仅分配给有日期字段的最重要的 2 张表（Phase 1 阶段细化）
 
 ## 输出 JSON 格式（严格 JSON，无注释）
 
@@ -559,6 +559,7 @@ def _build_per_table_prompt(
     skeleton_entry: dict,    # Phase 0 骨架中该表的部分
     cross_table_ws: list[dict],  # 跨表目标表的 [{id, name, fields}]
     time_triggers: list[dict] | None,  # 分配给该表的 time_triggers（如有）
+    allow_date_triggers: bool = True,  # 全应用最多 2 个 date_triggers，超出则不分配
 ) -> str:
     """构建 Phase 1 逐表 prompt。只含本表 + 跨表目标表的字段。"""
 
@@ -595,7 +596,7 @@ def _build_per_table_prompt(
 
     # date_triggers 部分
     dt_section = ""
-    if date_fields:
+    if date_fields and allow_date_triggers:
         dt_desc = ", ".join(f'"{f["name"]}"(id={f["id"]}, type={f["type"]})' for f in date_fields)
         dt_section = f"""
 ## 日期字段（可用于 date_triggers）
@@ -604,7 +605,7 @@ def _build_per_table_prompt(
 请为该表规划 1 个 date_triggers（日期到期提醒类工作流），assign_field_id 使用上述日期字段 ID。
 """
     else:
-        dt_section = "\n该表没有日期字段，date_triggers 为空数组 []。\n"
+        dt_section = "\n该表没有日期字段或已达全应用 date_triggers 上限（2 个），date_triggers 为空数组 []。\n"
 
     return f"""你是一名工作流配置专家，正在为工作表「{ws_info['name']}」填充工作流节点的具体配置。
 
@@ -662,11 +663,12 @@ def plan_single_worksheet(
     ai_config: dict,
     thinking: str,
     run_ts: str,
+    allow_date_triggers: bool = True,
 ) -> dict:
     """Phase 1：为单张表规划完整工作流配置。含重试。"""
     ws_name = ws_info["name"]
     ws_id = ws_info["id"]
-    prompt = _build_per_table_prompt(ws_info, skeleton_entry, cross_table_ws, time_triggers)
+    prompt = _build_per_table_prompt(ws_info, skeleton_entry, cross_table_ws, time_triggers, allow_date_triggers)
     label = f"phase-1_{ws_id[:8]}"
     _log_prompt(label, prompt)
 
@@ -709,7 +711,20 @@ def plan_all_worksheets(
     # 简单策略：分配给第一个表处理
     tt_assigned_to: str = trigger_ws_with_fields[0]["id"] if trigger_ws_with_fields else ""
 
+    # 预先标记哪些表允许生成 date_triggers（全应用最多 2 个）
+    # 取前 2 张有日期字段（type=15/16）的表
+    _MAX_DATE_TRIGGER_TABLES = 2
+    _dt_allowed_ids: set[str] = set()
+    for _ws in trigger_ws_with_fields:
+        if len(_dt_allowed_ids) >= _MAX_DATE_TRIGGER_TABLES:
+            break
+        _has_date = any(f["type"] in (15, 16) for f in _ws.get("fields", []))
+        if _has_date:
+            _dt_allowed_ids.add(_ws["id"])
+
     print(f"\n[phase-1] 逐表并行规划（{len(trigger_ws_with_fields)} 个表，max_parallel={max_parallel}）",
+          file=sys.stderr)
+    print(f"[phase-1] date_triggers 分配给：{[w['name'] for w in trigger_ws_with_fields if w['id'] in _dt_allowed_ids]}",
           file=sys.stderr)
 
     results: list[dict] = []
@@ -744,7 +759,8 @@ def plan_all_worksheets(
         tt = skeleton_tt if ws_id == tt_assigned_to else None
 
         return plan_single_worksheet(
-            ws_info, skel, cross_table_list, tt, ai_config, thinking, run_ts
+            ws_info, skel, cross_table_list, tt, ai_config, thinking, run_ts,
+            allow_date_triggers=(ws_id in _dt_allowed_ids),
         )
 
     with ThreadPoolExecutor(max_workers=max_parallel) as pool:

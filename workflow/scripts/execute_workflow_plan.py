@@ -1276,7 +1276,8 @@ def main() -> int:
         ws_id   = ws_plan.get("worksheet_id", "")
         print(f"\n【{idx}/{len(worksheets)}】工作表：{ws_name}（{ws_id}）", file=sys.stderr)
 
-        # 全局限制：date_triggers（日期字段触发）全应用最多 2 个，超出则清空
+        # 兜底保险：规划层（pipeline_workflows.py）已限制全应用最多 2 个 date_triggers，
+        # 此处再做一次执行层校验，防止规划层输出异常时超限。
         _MAX_DATE_TRIGGERS = 2
         if _date_trigger_global_count >= _MAX_DATE_TRIGGERS:
             ws_plan = dict(ws_plan)
