@@ -629,9 +629,9 @@ def run_all_waves(
                 },
             })
 
-    # Wave 4: 并行（icon/布局/造数/机器人/工作流规划/图表规划）
+    # Wave 4: 并行（icon/布局/造数/机器人/图表规划）
     print(
-        f"\n-- Wave 4: icon / 布局 / 造数 / 机器人 / 工作流规划（并行） --- 总计 {time.time()-pipeline_start:.0f}s",
+        f"\n-- Wave 4: icon / 布局 / 造数 / 机器人 / 图表规划（并行） --- 总计 {time.time()-pipeline_start:.0f}s",
         flush=True,
     )
 

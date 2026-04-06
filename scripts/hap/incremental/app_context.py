@@ -7,7 +7,6 @@ app_context.py — 根据 app_id 获取完整应用上下文。
   - 从 app_authorizations/ 目录加载指定 app_id 的授权
   - 调用 V3 API 获取所有工作表列表
   - 并发获取每个工作表的字段详情
-  - 可选地获取工作流列表
 
 用法（CLI）：
     python3 app_context.py --app-id <appId>
@@ -16,7 +15,7 @@ app_context.py — 根据 app_id 获取完整应用上下文。
 用法（Python）：
     from incremental.app_context import load_app_context
     ctx = load_app_context(app_id="xxx")
-    # ctx = {"app_id": "...", "worksheets": [...], "workflows": [...]}
+    # ctx = {"app_id": "...", "worksheets": [...]}
 """
 
 from __future__ import annotations
