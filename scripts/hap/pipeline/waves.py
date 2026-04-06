@@ -810,6 +810,37 @@ def run_all_waves(
         pool.submit(run_step_7).result()
         pool.submit(run_step_12).result()
 
-    # Wave 6: 已移除（默认视图改为改造而非删除）
+    # Wave 6: 清理空名称视图（SaveWorksheetView postCreateUpdates 有时会产生空名称视图作为副作用）
+    if not execution_dry_run and delete_default_views_cfg.get("enabled", True):
+        print(f"\n-- Wave 6: 清理空名称视图 --- 总计 {time.time()-pipeline_start:.0f}s", flush=True)
+        try:
+            from delete_default_views import (
+                fetch_worksheets as _ddv_fetch_worksheets,
+                fetch_views as _ddv_fetch_views,
+                delete_view as _ddv_delete_view,
+            )
+            # 取 appKey/sign
+            _ddv_auth = load_json(Path(app_auth_json))
+            _ddv_rows = _ddv_auth.get("data", [])
+            _ddv_row = next((r for r in _ddv_rows if isinstance(r, dict) and r.get("appId") == app_id), _ddv_rows[0] if _ddv_rows else {})
+            _ddv_key = str(_ddv_row.get("appKey", "")).strip()
+            _ddv_sign = str(_ddv_row.get("sign", "")).strip()
+
+            _ddv_worksheets = _ddv_fetch_worksheets(_ddv_key, _ddv_sign)
+            _ddv_deleted = 0
+            for _ddv_ws in _ddv_worksheets:
+                _ddv_views = _ddv_fetch_views(_ddv_ws["worksheetId"], _ddv_key, _ddv_sign)
+                for _ddv_v in _ddv_views:
+                    _ddv_name = str(_ddv_v.get("name", "")).strip()
+                    if _ddv_name in ("视图", ""):
+                        _ddv_vid = str(_ddv_v.get("viewId", "") or _ddv_v.get("id", "")).strip()
+                        if _ddv_vid:
+                            ok = _ddv_delete_view(app_id, _ddv_ws["worksheetId"], _ddv_vid, config_web_auth)
+                            if ok:
+                                _ddv_deleted += 1
+                                print(f"  ✓ 清理空名称视图：{_ddv_ws['worksheetName']} → {_ddv_vid}", flush=True)
+            print(f"  Wave 6 完成：共清理 {_ddv_deleted} 个空名称视图", flush=True)
+        except Exception as _ddv_exc:
+            print(f"  ⚠ Wave 6 清理空名称视图失败（非致命）: {_ddv_exc}", flush=True)
 
     return ctx
