@@ -673,7 +673,7 @@ def build_single_ws_view_prompt(
 ## 任务
 
 1. **改造默认视图**：系统已有一个名为"全部"的默认表格视图（viewId: {default_view_id}），请将它改造成有业务含义的视图——改名并加配置（如分组、显示字段等）
-2. **规划新视图**：额外规划 1-3 个有业务价值的视图（看板/日历/甘特图/画廊等）
+2. **规划新视图**：额外规划 1-3 个有业务价值的视图（看板/日历/甘特图/画廊等），**必须至少 1 个非表格视图（viewType≠0）**，不同工作表应有差异化的视图组合
 
 ## 输出格式（严格 JSON）
 
@@ -705,12 +705,13 @@ def build_single_ws_view_prompt(
 1) 默认视图改造必须有实际业务含义——至少改名 + 设 displayControls，如有单选字段(type=9/11)则加 groupsetting 分组
 2) displayControls 选 5-8 个最重要的字段 ID
 3) 看板(viewType=1)：必须有单选字段(type=9/11)作为 viewControl
-4) 日历(viewType=4)：postCreateUpdates 中设 calendarcids
+4) 日历(viewType=4)：postCreateUpdates 中设 calendarcids；只要有任意日期字段（type=15/16）即可创建
 5) 甘特图(viewType=5)：需要开始+结束两个日期字段
 6) 层级(viewType=2)：需要自关联字段(type=29)
-7) 画廊(viewType=3)：有附件字段(type=14)时推荐，设 coverCid
+7) 画廊(viewType=3)：有附件字段(type=14)时推荐，设 coverCid；无附件时也可用于卡片浏览
 8) 所有 advancedSetting 中的 JSON 字符串值必须是紧凑格式（无空格）
-9) 不要创建与默认视图改造后功能重复的视图"""
+9) 不要创建与默认视图改造后功能重复的视图
+10) **new_views 中 viewType 必须多样化，禁止全部为表格(0)或全部为看板(1)；优先选择与字段最匹配的类型**"""
 
 
 def validate_single_ws_view_plan(

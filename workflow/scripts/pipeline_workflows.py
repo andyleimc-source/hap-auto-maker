@@ -316,13 +316,14 @@ def _call_ai_json(prompt: str, ai_config: dict, thinking: str, label: str, run_t
 def _calc_workflow_params(num_ws: int) -> dict:
     """根据工作表数量动态计算工作流数量参数，总数不超过 _MAX_TOTAL_WORKFLOWS。"""
     if num_ws <= 3:
-        ca_per_ws, ev_per_ws, num_tt = 1, 1, 1
+        ca_per_ws, ev_per_ws, num_tt = 2, 1, 1  # 小应用提升到 2，确保 3-6 个自定义动作
     elif num_ws <= 6:
         ca_per_ws, ev_per_ws, num_tt = 2, 1, 1
     else:
         ca_per_ws, ev_per_ws, num_tt = 2, 1, 2
 
-    num_ca_ws = num_ws if num_ws <= 3 else math.ceil(num_ws / 2)
+    # 覆盖更多工作表：从 ceil(n/2) 提升到 ceil(n*0.7)，确保 3-6 个 custom_actions
+    num_ca_ws = num_ws if num_ws <= 3 else min(num_ws, max(3, math.ceil(num_ws * 0.7)))
     total = num_ca_ws * ca_per_ws + ev_per_ws * num_ws + num_tt
     while total > _MAX_TOTAL_WORKFLOWS and ca_per_ws > 1:
         ca_per_ws -= 1
