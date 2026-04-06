@@ -331,10 +331,7 @@ def _sanitize_action_nodes(action_nodes: list, trigger_worksheet_id: str) -> tup
 
         node_type = str(node.get("type", "update_record")).strip() or "update_record"
         _ALLOWED_NODE_TYPES = {
-            "add_record", "update_record", "delete_record",
-            "get_record", "get_records",
-            "branch", "copy", "notify", "delay_duration", "delay_until",
-            "calc", "aggregate", "approval", "ai_text",
+            "add_record", "update_record",
         }
         if node_type not in _ALLOWED_NODE_TYPES:
             warnings.append(f"动作{index} 类型非法({node_type})，已跳过")
@@ -1218,7 +1215,7 @@ def main() -> int:
     app_id        = plan.get("app_id", "")
     app_name      = plan.get("app_name", "未知应用")
     worksheets    = plan.get("worksheets", [])
-    time_triggers = plan.get("time_triggers", [])
+    time_triggers = []  # 定时触发已禁用
 
     if not app_id:
         persist(script_name, None, args=log_args, error="missing app_id in plan", started_at=started_at)

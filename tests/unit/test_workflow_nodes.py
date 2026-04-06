@@ -234,5 +234,5 @@ class TestAllowedValues:
     def test_allowed_node_set(self):
         from nodes import NODE_REGISTRY
         allowed = {nt for nt, s in NODE_REGISTRY.items() if s.get("allowed")}
-        expected = {"delete_record", "get_record", "notify", "branch", "branch_condition", "ai_text"}
+        expected = set()  # 所有节点均已禁用，只有硬编码的 add_record/update_record 允许
         assert allowed == expected, f"allowed 节点集合不符: got={allowed}, want={expected}"

@@ -17,14 +17,14 @@ NODES = {
         "typeId": 6, "actionId": "3", "appType": 1,
         "name": "删除记录", "needs_worksheet": True,
         "verified": False,
-        "allowed": True,
+        "allowed": False,
         "doc": "需要 filters 指定删除条件。",
     },
     "get_record": {
         "typeId": 6, "actionId": "4", "appType": 1,
         "name": "获取单条数据", "needs_worksheet": True,
         "verified": True,
-        "allowed": True,
+        "allowed": False,
         "doc": "需要 filters + sorts。实测可 publish。",
     },
     "get_records": {

@@ -14,7 +14,7 @@ NODES = {
         "typeId": 31, "actionId": "531", "appType": 46,
         "name": "AI 生成文本",
         "verified": False,
-        "allowed": True,
+        "allowed": False,
         "doc": "需要 appId=''。不需要 isException。",
     },
     "ai_object": {

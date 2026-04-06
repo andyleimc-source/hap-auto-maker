@@ -15,14 +15,14 @@ NODES = {
         "typeId": 1,
         "name": "分支",
         "verified": False,
-        "allowed": True,
+        "allowed": False,
         "doc": "gatewayType: 1=互斥, 2=并行。需配置 operateCondition 才能 publish。",
     },
     "branch_condition": {
         "typeId": 2,
         "name": "分支条件",
         "verified": False,
-        "allowed": True,
+        "allowed": False,
         "doc": "operateCondition 为条件规则列表，空数组=所有数据通过。",
     },
     "loop": {

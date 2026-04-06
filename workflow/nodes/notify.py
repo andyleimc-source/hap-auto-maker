@@ -14,7 +14,7 @@ NODES = {
         "typeId": 27,
         "name": "发送站内通知",
         "verified": True,
-        "allowed": True,
+        "allowed": False,
         "doc": "用 sendContent（非 content）。accounts 必填。",
     },
     "sms": {

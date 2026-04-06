@@ -97,28 +97,15 @@ def build_node_type_prompt_section() -> str:
     """生成 AI prompt 中的节点类型说明段落（只列 allowed=True 的节点）。"""
     c = get_node_constraints()
 
-    lines = ["可用的工作流节点类型（仅列出支持自动配置的节点）："]
+    lines = ["可用的工作流节点类型（仅支持以下两种）："]
     lines.append("")
     lines.append("📌 数据操作节点（需要 target_worksheet_id + fields）：")
     lines.append("  - update_record — 更新记录（1~3 个字段）")
-    lines.append("  - add_record — 新增记录（需所有可操作字段）")
-    lines.append("  - delete_record — 删除记录（fields 为空，需 filters 指定条件）")
-    lines.append("  - get_record — 获取单条数据（需 filters + sorts）")
-    lines.append("")
-    lines.append("📌 通知节点（需要 sendContent，不是 content）：")
-    lines.append("  - notify — 发送站内通知 ✓")
-    lines.append("")
-    lines.append("📌 流程控制节点：")
-    lines.append("  - branch — 分支网关（gatewayType: 1=互斥, 2=并行）")
-    lines.append("  - branch_condition — 分支条件（operateCondition 为条件规则列表）")
-    lines.append("")
-    lines.append("📌 AI 节点：")
-    lines.append("  - ai_text — AI 生成文本")
+    lines.append("  - add_record — 新增记录（1~3 个可操作字段）")
     lines.append("")
     lines.append("关键规则：")
     lines.append("  - 单选字段(type=9/11) fieldValue 必须用完整 UUID key，不能截断")
-    lines.append("  - 通知节点的内容字段是 sendContent（不是 content）")
-    lines.append("  - 每个工作流 3~5 个节点，至少 1 个跨表")
+    lines.append("  - 每个工作流 2~3 个节点，至少 1 个跨表")
     return "\n".join(lines)
 
 

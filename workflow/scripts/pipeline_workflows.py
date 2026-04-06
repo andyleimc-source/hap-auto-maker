@@ -316,23 +316,23 @@ def _call_ai_json(prompt: str, ai_config: dict, thinking: str, label: str, run_t
 def _calc_workflow_params(num_ws: int) -> dict:
     """根据工作表数量动态计算工作流数量参数，总数不超过 _MAX_TOTAL_WORKFLOWS。"""
     if num_ws <= 3:
-        ca_per_ws, ev_per_ws, num_tt = 2, 1, 1  # 小应用提升到 2，确保 3-6 个自定义动作
+        ca_per_ws, ev_per_ws = 2, 1  # 小应用提升到 2，确保 3-6 个自定义动作
     elif num_ws <= 6:
-        ca_per_ws, ev_per_ws, num_tt = 2, 1, 1
+        ca_per_ws, ev_per_ws = 2, 1
     else:
-        ca_per_ws, ev_per_ws, num_tt = 2, 1, 2
+        ca_per_ws, ev_per_ws = 2, 1
 
     # 覆盖更多工作表：从 ceil(n/2) 提升到 ceil(n*0.7)，确保 3-6 个 custom_actions
     num_ca_ws = num_ws if num_ws <= 3 else min(num_ws, max(3, math.ceil(num_ws * 0.7)))
-    total = num_ca_ws * ca_per_ws + ev_per_ws * num_ws + num_tt
+    total = num_ca_ws * ca_per_ws + ev_per_ws * num_ws
     while total > _MAX_TOTAL_WORKFLOWS and ca_per_ws > 1:
         ca_per_ws -= 1
-        total = num_ca_ws * ca_per_ws + ev_per_ws * num_ws + num_tt
+        total = num_ca_ws * ca_per_ws + ev_per_ws * num_ws
     while total > _MAX_TOTAL_WORKFLOWS and num_ca_ws > 1:
         num_ca_ws -= 1
-        total = num_ca_ws * ca_per_ws + ev_per_ws * num_ws + num_tt
+        total = num_ca_ws * ca_per_ws + ev_per_ws * num_ws
 
-    return {"ca_per_ws": ca_per_ws, "ev_per_ws": ev_per_ws, "num_tt": num_tt, "num_ca_ws": num_ca_ws}
+    return {"ca_per_ws": ca_per_ws, "ev_per_ws": ev_per_ws, "num_ca_ws": num_ca_ws}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -419,7 +419,6 @@ def _build_global_skeleton_prompt(
 
     ca_per_ws = params["ca_per_ws"]
     ev_per_ws = params["ev_per_ws"]
-    num_tt = params["num_tt"]
     num_ca_ws = params["num_ca_ws"]
     num_trigger = len(trigger_worksheets)
 
@@ -442,7 +441,6 @@ def _build_global_skeleton_prompt(
 
 - custom_actions：从 {num_trigger} 个触发表中选 {num_ca_ws} 个，每个 {ca_per_ws} 个
 - worksheet_events：每个触发表 {ev_per_ws} 个
-- time_triggers：全应用共 {num_tt} 个
 - date_triggers：全应用最多 2 个，仅分配给有日期字段的最重要的 2 张表（Phase 1 阶段细化）
 
 ## 输出 JSON 格式（严格 JSON，无注释）
@@ -461,7 +459,7 @@ def _build_global_skeleton_prompt(
   }},
   "worksheets": [
     {{
-      "worksheet_id": "��自上方",
+      "worksheet_id": "取自上方",
       "worksheet_name": "表名",
       "custom_actions": [
         {{
@@ -484,15 +482,6 @@ def _build_global_skeleton_prompt(
         }}
       ]
     }}
-  ],
-  "time_triggers": [
-    {{
-      "name": "定时任务名[示范]",
-      "target_worksheet_name": "操作的主要目标表名",
-      "action_nodes": [
-        {{"name": "节点名", "type": "节点类型", "target_worksheet_name": "目标表名"}}
-      ]
-    }}
   ]
 }}
 
@@ -500,11 +489,11 @@ def _build_global_skeleton_prompt(
 
 1. action_nodes 只填 name + type + target_worksheet_name（用表名而非表ID，Phase 1 会转换）
 2. 不填 fields/sendContent/fieldValue 等细节（Phase 1 填充）
-3. 每个工作流 3~5 个节点，至少 1 个跨表操作
-4. trigger_id: "1"=仅新增, "2"=���增或更新, "4"=仅更新, "3"=删除
-5. worksheet_events/time_triggers 的 name 末尾加"[示范]"后缀
+3. 每个工作流 2~3 个节点，至少 1 个跨表操作
+4. trigger_id: "1"=仅新增, "2"=新增或更新, "4"=仅更新, "3"=删除
+5. worksheet_events 的 name 末尾加"[示范]"后缀
 6. custom_actions 的 name 不加后缀
-7. 禁止使用 type="branch"
+7. 节点类型只允许 update_record 和 add_record，禁止其他类型
 8. 跨表目标可以包含跳过的工作表（如向明细表 add_record）"""
 
 
@@ -704,12 +693,9 @@ def plan_all_worksheets(
     for ws_id, ws_data in all_ws_map.items():
         name_to_id[ws_data["name"]] = ws_id
 
-    # 分配 time_triggers 到各表
-    # time_triggers 中的 target_worksheet_name 指向目标表
-    skeleton_tt = skeleton.get("time_triggers", [])
-    # time_triggers 不绑定到特定触发表，在 Phase 1 中由最相关的表处理
-    # 简单策略：分配给第一个表处理
-    tt_assigned_to: str = trigger_ws_with_fields[0]["id"] if trigger_ws_with_fields else ""
+    # 定时触发已禁用，强制为空
+    skeleton_tt = []
+    tt_assigned_to: str = ""
 
     # 预先标记哪些表允许生成 date_triggers（全应用最多 2 个）
     # 取前 2 张有日期字段（type=15/16）的表
