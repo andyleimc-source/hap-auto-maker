@@ -715,6 +715,9 @@ def _fetch_real_fields(base_url: str, headers: dict, worksheet_id: str) -> list:
     """
     通过 v3 API 获取工作表的实际字段列表。
     返回 [{controlId, controlName, controlType}]，跳过 Relation/SubTable/Rollup 类型。
+
+    注意：V3 API 返回的 field.type 是字符串（如 "Text", "SingleSelect", "Relation"），
+    不是整数编号。用字符串集合来判断需要跳过的类型。
     """
     url = base_url.rstrip("/") + GET_WS_ENDPOINT.format(worksheet_id=worksheet_id)
     resp = requests.get(url, headers=headers, timeout=30)
@@ -726,17 +729,14 @@ def _fetch_real_fields(base_url: str, headers: dict, worksheet_id: str) -> list:
     fields = ws_data.get("fields", [])
     if not isinstance(fields, list):
         return []
-    # 跳过 Relation(29), SubTable(34), Rollup(37)
-    skip_types = {29, 34, 37}
+    # V3 API 用字符串类型名，跳过关联/子表/汇总这三种只读/复杂类型
+    skip_type_strs = {"Relation", "SubTable", "Rollup"}
     result = []
     for f in fields:
         if not isinstance(f, dict):
             continue
-        try:
-            ctype = int(f.get("type", 0) or 0)
-        except (ValueError, TypeError):
-            continue  # 字段 type 非整数（如 'Text'），跳过
-        if ctype in skip_types:
+        ctype = str(f.get("type", "") or "").strip()
+        if not ctype or ctype in skip_type_strs:
             continue
         result.append({
             "controlId": str(f.get("controlId", "")),
@@ -762,6 +762,7 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true", help="只打印计划，不发请求")
     parser.add_argument("--page-registry", default="", help="page_registry.json 路径")
     parser.add_argument("--app-name", default="", help="应用名称（图表规划用）")
+    parser.add_argument("--semaphore-value", type=int, default=1000, help="Gemini 并发限制（由 waves.py 传入）")
     args = parser.parse_args()
 
     # 加载 page_registry（图表回调所需）
