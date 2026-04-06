@@ -57,3 +57,73 @@ class TestComputeNewRecordCount:
         from planners.mock_data_inline import compute_new_record_count
         pairs = [self._make_pair("ws_x", "ws_y", "1-N")]
         assert compute_new_record_count("ws_z", pairs, []) == 3
+
+
+class TestApplyRelationPhase:
+    """apply_relation_phase 的 round-robin 分配逻辑测试（dry_run=True，不发网络请求）"""
+
+    def _make_schema(self, ws_id, ws_name, relation_fields):
+        """relation_fields: [{"fieldId": ..., "type": "Relation", "dataSource": target_ws_id, "subType": 1}]"""
+        return {
+            "worksheetId": ws_id,
+            "worksheetName": ws_name,
+            "fields": relation_fields,
+            "writableFields": [],
+            "skippedFields": [],
+        }
+
+    def test_dry_run_returns_summary(self):
+        """dry_run=True 时不发请求，返回 summary 结构"""
+        from planners.mock_data_inline import apply_relation_phase
+
+        # 订单（主表，3条）→ 订单明细（明细端，6条）
+        edges = [
+            {"sourceWorksheetId": "ws_detail", "targetWorksheetId": "ws_master", "subType": 1},
+        ]
+        pairs = [
+            {
+                "worksheetAId": "ws_master",
+                "worksheetBId": "ws_detail",
+                "pairType": "1-N",
+                "edges": edges,
+            }
+        ]
+        ws_schemas = [
+            self._make_schema("ws_master", "订单", []),
+            self._make_schema(
+                "ws_detail",
+                "订单明细",
+                [{"fieldId": "rel_f1", "name": "订单", "type": "Relation",
+                  "dataSource": "ws_master", "subType": 1}],
+            ),
+        ]
+        all_row_ids = {
+            "ws_master": ["r1", "r2", "r3"],
+            "ws_detail": ["d1", "d2", "d3", "d4", "d5", "d6"],
+        }
+        result = apply_relation_phase(
+            app_id="app1",
+            app_key="key",
+            sign="sign",
+            base_url="https://api.mingdao.com",
+            relation_pairs=pairs,
+            relation_edges=edges,
+            all_row_ids=all_row_ids,
+            worksheet_schemas=ws_schemas,
+            dry_run=True,
+        )
+        # dry_run 时 ws_detail 应被处理，ws_master 跳过
+        assert "ws_detail" in result
+        assert result["ws_detail"]["planned"] == 6
+        assert "ws_master" not in result  # 主表跳过
+
+    def test_round_robin_assignment(self):
+        """验证 round-robin 分配：6条明细 → 3条主表，循环分配"""
+        from planners.mock_data_inline import _build_relation_assignments
+        source_ids = ["d1", "d2", "d3", "d4", "d5", "d6"]
+        target_ids = ["r1", "r2", "r3"]
+        assignments = _build_relation_assignments(source_ids, target_ids)
+        assert assignments == [
+            ("d1", "r1"), ("d2", "r2"), ("d3", "r3"),
+            ("d4", "r1"), ("d5", "r2"), ("d6", "r3"),
+        ]
