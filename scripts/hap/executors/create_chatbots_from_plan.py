@@ -17,6 +17,8 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
+from utils import log_summary
+
 from chatbot_common import (
     ADD_WORKSHEET_URL,
     CHATBOT_CREATE_DIR,
@@ -227,6 +229,7 @@ def main() -> None:
             item_result["ok"] = True
             ok_count += 1
             append_log(log_path, "proposal_finished", index=idx, name=proposal["name"], chatbotId=add_chatbot["chatbotId"])
+            log_summary(f"✓ 机器人「{proposal['name']}」已创建")
         except Exception as exc:
             item_result["ok"] = False
             item_result["error"] = str(exc)
