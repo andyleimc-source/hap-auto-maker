@@ -870,6 +870,62 @@ def _resolve_target_names_to_ids(plan: dict, name_to_id: dict[str, str]) -> int:
     return resolved
 
 
+def _enrich_fields(plan: dict, all_ws_map: dict) -> int:
+    """后处理：统一字段键名并从 all_ws_map 补充 type。
+
+    AI 可能输出 field_id（下划线），执行层期望 fieldId（驼峰）。
+    AI 不输出 type，执行层校验时需要整数 type。
+    此函数：
+      1. field_id / field_value → fieldId / fieldValue
+      2. 从 all_ws_map 反查字段 type，找不到则默认 2（文本）
+    """
+    # 构建 field_id → type 的全局查找表
+    field_type_map: dict[str, int] = {}
+    for ws_data in all_ws_map.values():
+        for f in ws_data.get("fields", []):
+            fid = f.get("id", "")
+            ftype = f.get("type")
+            if fid and ftype is not None:
+                try:
+                    field_type_map[fid] = int(ftype)
+                except (TypeError, ValueError):
+                    pass
+
+    enriched = 0
+
+    def _fix_fields(fields: list) -> None:
+        nonlocal enriched
+        for f in fields:
+            if not isinstance(f, dict):
+                continue
+            # 统一键名
+            if "field_id" in f and "fieldId" not in f:
+                f["fieldId"] = f.pop("field_id")
+            if "field_value" in f and "fieldValue" not in f:
+                f["fieldValue"] = f.pop("field_value")
+            # 补充 type
+            if "type" not in f:
+                fid = f.get("fieldId", "")
+                f["type"] = field_type_map.get(fid, 2)
+                enriched += 1
+
+    def _fix_nodes(nodes: list) -> None:
+        for node in nodes:
+            if isinstance(node, dict):
+                _fix_fields(node.get("fields") or [])
+
+    for ws in plan.get("worksheets", []):
+        for section in ("custom_actions", "worksheet_events"):
+            for item in ws.get(section, []):
+                _fix_nodes(item.get("action_nodes", []))
+        for dt in ws.get("date_triggers", []):
+            _fix_nodes(dt.get("action_nodes", []))
+    for tt in plan.get("time_triggers", []):
+        _fix_nodes(tt.get("action_nodes", []))
+
+    return enriched
+
+
 def _cap_workflows(planned_ws: list[dict], planned_tt: list[dict]) -> None:
     """硬性截断：AI 可能无视数量限制，强制不超过 _MAX_TOTAL_WORKFLOWS。"""
     total_ca = sum(len(ws.get("custom_actions") or []) for ws in planned_ws)
@@ -903,6 +959,80 @@ def _cap_workflows(planned_ws: list[dict], planned_tt: list[dict]) -> None:
         del planned_tt[max(1, tt_budget):]
 
 
+# ── 简化模式：为第一个工作表生成 1 个 custom_action + 1 个 worksheet_event ──────
+
+def _build_simple_prompt(ws_info: dict) -> str:
+    """为第一张工作表生成恰好 1 个 custom_action + 1 个 worksheet_event 的 prompt。"""
+    ws_fields_desc = _describe_fields_for_prompt(ws_info.get("fields", []))
+    operable_count = sum(1 for f in ws_info.get("fields", []) if f["type"] not in _SKIP_FIELD_TYPES)
+
+    return f"""你是一名工作流配置专家，正在为工作表「{ws_info['name']}」规划工作流。
+
+## 本表字段（完整，含 field_id 和选项 key）
+
+工作表「{ws_info['name']}」(id={ws_info['id']})
+可操作字段数: {operable_count}
+{ws_fields_desc}
+
+## 任务
+
+为该工作表规划**恰好 2 个工作流**：
+1. custom_actions：1 个自定义按钮（name 体现业务动作，如"审批通过""标记完成"）
+2. worksheet_events：1 个工作表事件触发（监听数据变化触发业务流程）
+
+每个工作流包含 2~3 个 action_nodes，节点类型只允许 update_record 和 add_record。
+
+## 关键规则
+
+1. 单选字段(type=9/11) 的 fieldValue 必须使用上方的完整 UUID key，禁止截断或编造
+2. 动态引用触发记录字段值用 {{{{trigger.FIELD_ID}}}}（FIELD_ID 是十六进制，禁止用字段名）
+3. update_record 只填 1~3 个需要更新的字段
+4. add_record 的 fields 应包含目标表全部可操作字段
+5. target_worksheet_id 填本表 ID：{ws_info['id']}
+6. 日期/时间字段(type=15/16) fieldValue 留空 ""
+
+## 输出 JSON（严格 JSON，无注释，无多余字段）
+
+{{
+  "worksheet_id": "{ws_info['id']}",
+  "worksheet_name": "{ws_info['name']}",
+  "custom_actions": [
+    {{
+      "name": "业务动作名",
+      "confirm_msg": "确认提示（说明操作影响）",
+      "sure_name": "确认",
+      "cancel_name": "取消",
+      "action_nodes": [
+        {{
+          "name": "节点名",
+          "type": "update_record",
+          "target_worksheet_id": "{ws_info['id']}",
+          "fields": [
+            {{"fieldId": "字段ID", "fieldValue": "值", "type": 字段类型整数}}
+          ]
+        }}
+      ]
+    }}
+  ],
+  "worksheet_events": [
+    {{
+      "name": "事件名",
+      "trigger_id": "2",
+      "action_nodes": [
+        {{
+          "name": "节点名",
+          "type": "update_record",
+          "target_worksheet_id": "{ws_info['id']}",
+          "fields": [
+            {{"fieldId": "字段ID", "fieldValue": "{{{{trigger.字段ID}}}}", "type": 字段类型整数}}
+          ]
+        }}
+      ]
+    }}
+  ]
+}}"""
+
+
 # ── 主流程 ─────────────────────────────────────────────────────────────────────
 
 def main() -> int:
@@ -912,11 +1042,12 @@ def main() -> int:
     log_args = {k: v for k, v in vars(args).items()}
     run_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    # 1. 读取 appKey + sign
     print(f"\n{'='*60}", file=sys.stderr)
-    print(f"工作流规划 v2（三阶段逐表模式）", file=sys.stderr)
+    print(f"工作流规划（简化模式：仅第一张表，1 custom_action + 1 worksheet_event）", file=sys.stderr)
     print(f"{'='*60}", file=sys.stderr)
-    print(f"\n[step 1/5] 读取应用授权（relation_id={args.relation_id}）", file=sys.stderr)
+
+    # 1. 读取 appKey + sign
+    print(f"\n[step 1/3] 读取应用授权（relation_id={args.relation_id}）", file=sys.stderr)
     try:
         _, app_key, sign = load_app_auth(args.relation_id, args.app_auth_json)
     except Exception as exc:
@@ -924,7 +1055,7 @@ def main() -> int:
         persist(script_name, None, args=log_args, error=str(exc), started_at=started_at)
         return 2
 
-    # 2. 拉取工作表列表（不拉字段）
+    # 2. 拉取工作表列表，取第一个
     try:
         app_name, ws_list = fetch_worksheet_list(args.relation_id, app_key, sign)
     except Exception as exc:
@@ -937,9 +1068,17 @@ def main() -> int:
         print(f"Warning: {msg}", file=sys.stderr)
         persist(script_name, None, args=log_args, error=msg, started_at=started_at)
         return 1
-    print(f"[step 1/5] �� 应用：{app_name}，共 {len(ws_list)} 个工作表", file=sys.stderr)
 
-    # 3. AI 配置
+    first_ws = ws_list[0]
+    print(f"[step 1/3] ✓ 应用：{app_name}，共 {len(ws_list)} 个工作表，使用第一个：「{first_ws['name']}」", file=sys.stderr)
+
+    # 3. 拉取第一张表字段
+    print(f"\n[step 2/3] 拉取工作表「{first_ws['name']}」字段...", file=sys.stderr)
+    fields = fetch_worksheet_fields(first_ws["id"], app_key, sign)
+    ws_info = {"id": first_ws["id"], "name": first_ws["name"], "fields": fields}
+    print(f"[step 2/3] ✓ {len(fields)} 个字段", file=sys.stderr)
+
+    # 4. AI 配置 + 单次调用
     try:
         ai_config = load_ai_config()
     except Exception as exc:
@@ -947,152 +1086,64 @@ def main() -> int:
         persist(script_name, None, args=log_args, error=str(exc), started_at=started_at)
         return 2
 
-    # ── Phase -1: 表名筛选 ──────────────────────────────────────────────────
-    print(f"\n[step 2/5] Phase -1：表名筛选", file=sys.stderr)
-    ws_names = [ws["name"] for ws in ws_list]
-    trigger_names, skip_names = filter_trigger_tables(app_name, ws_names, ai_config, run_ts)
-
-    # 构建 ID 映射
-    name_to_ws: dict[str, dict] = {ws["name"]: ws for ws in ws_list}
-    trigger_ws_basic = [name_to_ws[n] for n in trigger_names if n in name_to_ws]
-    skip_ws_basic = [name_to_ws[n] for n in skip_names if n in name_to_ws]
-
-    if not trigger_ws_basic:
-        msg = "筛选后无触发表，无法继续规划。"
-        print(f"Error: {msg}", file=sys.stderr)
-        persist(script_name, None, args=log_args, error=msg, started_at=started_at)
-        return 1
-
-    # ── 拉取触发表字段（Phase 0 需要字段名，Phase 1 需要完整字段）─────────
-    print(f"\n[step 3/5] 拉取触发表字段（{len(trigger_ws_basic)} 个表）", file=sys.stderr)
-    all_ws_map: dict[str, dict] = {}  # {ws_id: {id, name, fields}}
-    name_to_id: dict[str, str] = {}
-
-    for ws in trigger_ws_basic:
-        ws_id, ws_name = ws["id"], ws["name"]
-        print(f"  ├─ {ws_name}（{ws_id}）...", file=sys.stderr)
-        fields = fetch_worksheet_fields(ws_id, app_key, sign)
-        ws_data = {"id": ws_id, "name": ws_name, "fields": fields}
-        all_ws_map[ws_id] = ws_data
-        name_to_id[ws_name] = ws_id
-        print(f"  │  └─ {len(fields)} 个字段", file=sys.stderr)
-
-    # 跳过的表也记录 ID 映射（供后续按需拉取）
-    for ws in skip_ws_basic:
-        name_to_id[ws["name"]] = ws["id"]
-        # 不拉字段，先创建空壳
-        all_ws_map[ws["id"]] = {"id": ws["id"], "name": ws["name"], "fields": []}
-
-    # 构建 Phase 0 用的轻量表信息（只含字段名）
-    trigger_ws_for_skeleton = []
-    for ws in trigger_ws_basic:
-        ws_data = all_ws_map[ws["id"]]
-        field_names = [f["name"] for f in ws_data.get("fields", []) if f["type"] not in _SKIP_FIELD_TYPES]
-        trigger_ws_for_skeleton.append({
-            "id": ws["id"], "name": ws["name"], "field_names": field_names,
-        })
-
-    # ── Phase 0: 全局骨架 ───────────────────────────────────────────────────
-    print(f"\n[step 4/5] Phase 0：全局骨架规划", file=sys.stderr)
-    params = _calc_workflow_params(len(trigger_ws_basic))
+    print(f"\n[step 3/3] AI 规划工作流...", file=sys.stderr)
+    prompt = _build_simple_prompt(ws_info)
+    _log_prompt("simple_plan", prompt)
     try:
-        skeleton = plan_global_skeleton(
-            app_name, trigger_ws_for_skeleton, skip_ws_basic, params,
-            ai_config, args.thinking, run_ts,
-        )
+        ai_result = _call_ai_json(prompt, ai_config, "none", "simple_plan", run_ts)
     except Exception as exc:
-        print(f"Error: Phase 0 失败：{exc}", file=sys.stderr)
+        print(f"Error: AI 调用失败：{exc}", file=sys.stderr)
         persist(script_name, None, args=log_args, error=str(exc), started_at=started_at)
         return 1
 
-    # ── 按需拉取跨表目标表字段 ──────────────────────────────────────────────
-    # 从骨架中收集所有跨表目标表名，按需拉取字段
-    cross_table_names_needed: set[str] = set()
-    for ws in skeleton.get("worksheets", []):
-        for section in ("custom_actions", "worksheet_events"):
-            for wf in ws.get(section, []):
-                for node in wf.get("action_nodes", []):
-                    tname = node.get("target_worksheet_name", "")
-                    ws_id_here = ws.get("worksheet_id", "")
-                    # 跨表 = 目标表名 ≠ 本表名
-                    ws_name_here = ws.get("worksheet_name", "")
-                    if tname and tname != ws_name_here:
-                        cross_table_names_needed.add(tname)
-    for tt in skeleton.get("time_triggers", []):
-        for node in tt.get("action_nodes", []):
-            tname = node.get("target_worksheet_name", "")
-            if tname:
-                cross_table_names_needed.add(tname)
+    # 确保 worksheet_id/name 正确，强制截断为 1 个
+    ai_result["worksheet_id"] = ws_info["id"]
+    ai_result["worksheet_name"] = ws_info["name"]
+    ai_result["custom_actions"] = (ai_result.get("custom_actions") or [])[:1]
+    ai_result["worksheet_events"] = (ai_result.get("worksheet_events") or [])[:1]
+    ai_result["date_triggers"] = []
 
-    # 拉取尚未有字段的跨表目标表
-    for ct_name in cross_table_names_needed:
-        ct_id = name_to_id.get(ct_name)
-        if ct_id and ct_id in all_ws_map and not all_ws_map[ct_id].get("fields"):
-            print(f"  [lazy-fetch] 拉取跨表目标「{ct_name}」字段...", file=sys.stderr)
-            fields = fetch_worksheet_fields(ct_id, app_key, sign)
-            all_ws_map[ct_id]["fields"] = fields
-            print(f"  [lazy-fetch] └─ {len(fields)} 个字段", file=sys.stderr)
-
-    # ── Phase 1: 逐表并行规划 ───────────────────────────────────────────────
-    print(f"\n[step 5/5] Phase 1：逐表并行规划", file=sys.stderr)
-    trigger_ws_with_fields = [all_ws_map[ws["id"]] for ws in trigger_ws_basic]
-
-    try:
-        ws_plans, tt_plans = plan_all_worksheets(
-            trigger_ws_with_fields, all_ws_map, skeleton,
-            ai_config, args.thinking, run_ts, args.max_parallel,
-        )
-    except Exception as exc:
-        print(f"Error: Phase 1 失败：{exc}", file=sys.stderr)
-        persist(script_name, None, args=log_args, error=str(exc), started_at=started_at)
-        return 1
+    ws_plans = [ai_result]
+    tt_plans: list = []
 
     # ── 后处理 ──────────────────────────────────────────────────────────────
-
-    # 构建字段名→ID 映射（用于修正 trigger 引用）
-    ws_fields_map: dict[str, dict[str, str]] = {}
-    for ws_id, ws_data in all_ws_map.items():
-        ws_fields_map[ws_id] = {f["name"]: f["id"] for f in ws_data.get("fields", []) if f.get("name") and f.get("id")}
+    all_ws_map = {ws_info["id"]: ws_info}
+    name_to_id = {ws_info["name"]: ws_info["id"]}
+    ws_fields_map = {ws_info["id"]: {f["name"]: f["id"] for f in fields if f.get("name") and f.get("id")}}
 
     plan: dict = {
         "app_id": args.relation_id,
         "app_name": app_name,
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "model": ai_config["model"],
-        "thinking": args.thinking,
-        "planning_mode": "three_phase_per_table",
+        "thinking": "none",
+        "planning_mode": "simple_first_table",
         "worksheets": ws_plans,
         "time_triggers": tt_plans,
     }
 
-    # 将 target_worksheet_name → target_worksheet_id
     resolved = _resolve_target_names_to_ids(plan, name_to_id)
     if resolved:
         print(f"[fix] 解析了 {resolved} 个 target_worksheet_name → target_worksheet_id", file=sys.stderr)
 
-    # 修正 {{trigger.字段名}} → {{trigger.field_id}}
     fix_count = _fix_trigger_references(plan, ws_fields_map)
     if fix_count:
         print(f"[fix] 修正了 {fix_count} 个 trigger 引用（字段名→字段ID）", file=sys.stderr)
 
-    # sendContent → content（兼容 execute_workflow_plan.py）
     nc_count = _normalize_notify_content(plan)
     if nc_count:
         print(f"[fix] sendContent→content 修正 {nc_count} 个节点", file=sys.stderr)
 
-    # 截断上限
-    _cap_workflows(ws_plans, tt_plans)
+    enrich_count = _enrich_fields(plan, all_ws_map)
+    if enrich_count:
+        print(f"[fix] 补全字段 type {enrich_count} 个", file=sys.stderr)
 
     # ── 统计 & 写出 ────────────────────────────────────────────────────────
-    total_ca = sum(len(ws.get("custom_actions") or []) for ws in ws_plans)
-    total_ev = sum(len(ws.get("worksheet_events") or []) for ws in ws_plans)
-    total_dt = sum(len(ws.get("date_triggers") or []) for ws in ws_plans)
-    total_estimated = total_ca + total_ev + total_dt + len(tt_plans)
+    total_ca = len(ai_result.get("custom_actions") or [])
+    total_ev = len(ai_result.get("worksheet_events") or [])
 
-    print(f"\n[output] 规划完成：{len(ws_plans)} 个工作表，"
-          f"自定义动作 {total_ca}，事件触发 {total_ev}，"
-          f"日期触发 {total_dt}，全局时间触发 {len(tt_plans)}，"
-          f"共 {total_estimated} 个工作流", file=sys.stderr)
+    print(f"\n[output] 规划完成：工作表「{first_ws['name']}」，"
+          f"自定义动作 {total_ca}，事件触发 {total_ev}，共 {total_ca + total_ev} 个工作流", file=sys.stderr)
 
     if args.output:
         out = Path(args.output).expanduser().resolve()
@@ -1106,10 +1157,8 @@ def main() -> int:
     print(f"\n{'='*60}", file=sys.stderr)
     print(f"✅ 工作流规划完成！（耗时 {elapsed:.0f}s）", file=sys.stderr)
     print(f"   应用：{app_name}", file=sys.stderr)
-    print(f"   触发表 {len(ws_plans)}/{len(ws_list)} 个（筛选掉 {len(skip_ws_basic)} 个）", file=sys.stderr)
-    print(f"   工作流 {total_estimated} 个", file=sys.stderr)
-    print(f"   规划文件：output/{script_name}_latest.json", file=sys.stderr)
-    print(f"\n   下一步：python3 scripts/execute_workflow_plan.py", file=sys.stderr)
+    print(f"   工作表：{first_ws['name']}", file=sys.stderr)
+    print(f"   工作流：{total_ca + total_ev} 个（custom_action={total_ca}, worksheet_event={total_ev}）", file=sys.stderr)
     print(f"{'='*60}", file=sys.stderr)
     return 0
 
