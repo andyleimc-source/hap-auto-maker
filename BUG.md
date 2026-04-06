@@ -119,6 +119,25 @@
 
 ---
 
+## [BUG-012] 视图重复（同名视图出现两次）
+- **状态**: 代码已修复，**未验证**（需重跑 pipeline 确认）
+- **现象**: 同一工作表下出现两个完全相同的视图（如"看板视图"出现两次）
+- **根因**: `plan_worksheet_views_gemini.py` 的 `fetch_worksheets` 从 GetApp 获取应用所有工作表。当 pipeline 因某步骤失败多次重试时，会产生多批次同名工作表（例如 44+35=79 张）。视图规划对所有 79 张工作表各规划一次，导致同名工作表各生成一套视图，最终在应用中重复出现。
+- **修复**:
+  - `plan_worksheet_views_gemini.py`：`fetch_worksheets` 末尾按工作表名称去重（保留同名中最后一个，即最新批次），并打印去重日志
+- **待验证**: 重跑 pipeline，检查每张工作表的视图是否不再重复
+
+---
+
+## [BUG-013] 对话机器人数量过多
+- **状态**: 代码已修复，**未验证**（需重跑 pipeline 确认）
+- **现象**: AI 规划生成过多对话机器人（如 5-8 个），超出实际需求
+- **根因**: `plan_chatbots_gemini.py` 中 prompt 只要求"至少 1 个"，无上限约束，AI 倾向于为大型应用规划过多机器人
+- **修复**:
+  - `plan_chatbots_gemini.py`：prompt 改为"1-3 个，根据应用复杂度决定，最多不超过 3 个"；`normalize_proposals` 加入截断逻辑，超过 3 个时取前 3 个
+
+---
+
 ## [BUG-003] AI 响应超时断连
 - **状态**: resolved
 - **现象**: Step 2 卡很久后抛出 `ConnectionError` 或 `ReadTimeout`

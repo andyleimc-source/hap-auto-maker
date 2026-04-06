@@ -183,7 +183,15 @@ def fetch_worksheets(app_key: str, sign: str) -> List[dict]:
 
     for sec in app_meta.get("sections", []) or []:
         walk_sections(sec)
-    return worksheets
+
+    # 按工作表名称去重（保留同名中最后一个，因为 pipeline 多次重试时最新批次排在后面）
+    seen_names: dict = {}
+    for ws in worksheets:
+        seen_names[ws["workSheetName"]] = ws
+    deduped = list(seen_names.values())
+    if len(deduped) < len(worksheets):
+        print(f"  [去重] 工作表总数 {len(worksheets)}，按名称去重后 {len(deduped)} 个")
+    return deduped
 
 
 def fetch_controls(worksheet_id: str, auth_config_path: Path) -> dict:

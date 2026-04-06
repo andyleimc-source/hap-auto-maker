@@ -97,7 +97,7 @@ def build_prompt(schema: dict, feedback_history: List[dict], previous_proposals:
         previous_text = json.dumps(previous_proposals, ensure_ascii=False, indent=2)
 
     return f"""
-你是明道云 HAP 对话机器人策划顾问。请基于以下应用结构，为该应用规划合适数量的对话机器人方案（至少 1 个）。
+你是明道云 HAP 对话机器人策划顾问。请基于以下应用结构，为该应用规划合适数量的对话机器人方案（1-3 个，根据应用复杂度决定，最多不超过 3 个）。
 
 应用名称：{app_name}
 目标分组：{str(selected_section.get('name', '')).strip() or '默认分组'}
@@ -111,7 +111,7 @@ def build_prompt(schema: dict, feedback_history: List[dict], previous_proposals:
 {feedback_text}
 
 要求：
-1. 根据应用复杂度规划合适数量的机器人（至少 1 个），职责各有侧重，不要重复。
+1. 根据应用复杂度规划合适数量的机器人（1-3 个，最多不超过 3 个），职责各有侧重，不要重复。简单应用规划 1 个，中等复杂度规划 2 个，高度复杂应用最多规划 3 个。
 2. 机器人必须适配该应用现有工作表，不要脱离业务。
 3. 名称简洁，不要出现”助手”这种占位名。
 4. 简介要说明它主要处理什么数据、解决什么问题。
@@ -152,6 +152,8 @@ def normalize_proposals(raw: Dict[str, Any]) -> List[dict]:
         result.append({"name": name, "description": description})
     if len(result) < 1:
         raise ValueError("Gemini 返回的有效方案为 0 个")
+    if len(result) > 3:
+        result = result[:3]
     return result
 
 
