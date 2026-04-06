@@ -181,23 +181,29 @@ FIELD_REGISTRY = {
     # ── 选择 ──
     "SingleSelect": {
         "controlType": 9, "name": "单选", "category": "select",
-        "doc": "单选字段（平铺展示），需 option_values(3-8 项)。适合看板分组。",
+        "doc": "单选字段，需 option_values(3-8 项)。适合看板分组。创建时随机使用下拉(showtype=0)或平铺(showtype=1)样式，选项自动分配浅色。",
         "requires_options": True,
         "advancedSetting": {
             "sorttype": "zh",
-            "showtype": "0",    # 0=下拉（收纳）, 1=平铺, 2=进度
+            # showtype 在 create_worksheets_from_plan.py 中随机设置为 "0"(下拉) 或 "1"(平铺)
+            # 进度样式（showtype="2"）需将 controlType 改为 11，且需额外参数：
+            #   advancedSetting: {"showtype": "2", "sorttype": "zh", "otherrequired": "0", "direction": "0"}
+            #   controlType: 11（Dropdown 类型，API 要求）
+            "showtype": "0",
         },
         "advancedSetting_all_keys": {
             "sorttype": "排序方式",
-            "showtype": "显示方式: 0=下拉, 1=平铺(默认), 2=进度",
+            "showtype": "显示方式: 0=下拉, 1=平铺, 2=进度（进度时 controlType=11）",
             "allowadd": "允许新增选项: 0=否, 1=是",
+            "otherrequired": "其他选项必填: 0=否（进度样式用）",
+            "direction": "平铺方向: 0=横向, 1=纵向（进度/平铺样式用）",
             "readonlyshowall": "只读时显示全部",
         },
         "options_format": {
             "key": "选项唯一 ID",
             "value": "选项显示名称（必填）",
             "index": "排序序号（从1开始）",
-            "color": "颜色 hex（可选）",
+            "color": "颜色 hex，建议浅色如 #C9E6FC（自动随机分配）",
             "score": "分值（默认0.0，服务端自动补）",
             "isDeleted": "是否已删除（服务端自动补 false）",
             "hide": "是否隐藏（服务端自动补 false）",

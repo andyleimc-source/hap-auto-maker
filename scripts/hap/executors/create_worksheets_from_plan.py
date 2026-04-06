@@ -14,6 +14,7 @@ if str(_HAP_DIR) not in _sys.path:
 
 import argparse
 import json
+import random
 import re
 import threading
 import time
@@ -104,14 +105,30 @@ def validate_plan_structure(plan: dict) -> None:
         raise ValueError("；".join(errors))
 
 
+# 单选/多选/下拉 选项浅色调色板（淡色系，视觉舒适）
+_OPTION_LIGHT_COLORS = [
+    "#C9E6FC", "#B9E7D3", "#FDE9C4", "#F7C6C6", "#DDD0F5",
+    "#C4E5F5", "#FFDDC1", "#D4EFD4", "#FFE4F0", "#E8E0FF",
+    "#C8EDE4", "#FFF0C2", "#F4DAFF", "#D1EDF8", "#FFD6C2",
+    "#CBF0E4", "#FFE8D0", "#E2D9F3", "#C5EDFE", "#FFDDE6",
+]  # noqa: RUF001
+
+
+def _random_light_color() -> str:
+    return random.choice(_OPTION_LIGHT_COLORS)
+
+
 def parse_select_options(description: str) -> List[dict]:
     text = (description or "").strip()
     if not text:
-        return [{"value": "选项1", "index": 1}, {"value": "选项2", "index": 2}]
+        return [
+            {"value": "选项1", "index": 1, "color": _random_light_color()},
+            {"value": "选项2", "index": 2, "color": _random_light_color()},
+        ]
     parts = [p.strip() for p in re.split(r"[/、,，;；|]", text) if p.strip()]
     cleaned_parts = []
     for p in parts:
-        # 清理示例引导词，避免出现“如：转介绍”“例如xx”等脏选项
+        # 清理示例引导词，避免出现"如：转介绍""例如xx"等脏选项
         p = re.sub(r"^(如|例如|比如)\s*[:：]\s*", "", p).strip()
         p = re.sub(r"(等|等等)$", "", p).strip()
         if p:
@@ -128,7 +145,7 @@ def parse_select_options(description: str) -> List[dict]:
             break
     if len(uniq) < 2:
         uniq = ["选项1", "选项2"]
-    return [{"value": v, "index": i + 1} for i, v in enumerate(uniq)]
+    return [{"value": v, "index": i + 1, "color": _random_light_color()} for i, v in enumerate(uniq)]
 
 
 def parse_select_options_from_field(field: dict) -> List[dict]:
@@ -149,7 +166,7 @@ def parse_select_options_from_field(field: dict) -> List[dict]:
             if len(vals) >= 10:
                 break
         if len(vals) >= 2:
-            return [{"value": v, "index": i + 1} for i, v in enumerate(vals)]
+            return [{"value": v, "index": i + 1, "color": _random_light_color()} for i, v in enumerate(vals)]
     return parse_select_options(str(field.get("description", "")))
 
 
@@ -165,7 +182,9 @@ def build_field_payload(field: dict, is_first_text_title: bool) -> dict:
     ftype = str(field.get("type", "Text")).strip()
     name = str(field.get("name", "")).strip() or "未命名字段"
     required = to_required(field.get("required", False))
-    if ftype == "Collaborator":
+    if ftype in ("Collaborator", "Checkbox"):
+        # Collaborator: API 不支持必填成员字段
+        # Checkbox: 布尔字段必填无意义（总有值），禁止设为必填
         required = False
     payload = {
         "name": name,
@@ -194,9 +213,10 @@ def build_field_payload(field: dict, is_first_text_title: bool) -> dict:
             payload["precision"] = payload["dot"]
     elif ftype in ("SingleSelect", "MultipleSelect", "Dropdown"):
         payload["options"] = parse_select_options_from_field(field)
-        # 收纳显示方式：单选 showtype=0（下拉），多选 checktype=1（下拉）
         if ftype == "SingleSelect":
-            payload["advancedSetting"] = {"sorttype": "zh", "showtype": "0"}
+            # 随机样式：0=下拉, 1=平铺（不含进度样式 2，进度需 type=11 另行处理）
+            showtype = random.choice(["0", "1"])
+            payload["advancedSetting"] = {"sorttype": "zh", "showtype": showtype}
         elif ftype == "MultipleSelect":
             payload["advancedSetting"] = {"sorttype": "zh", "checktype": "1"}
     elif ftype == "Collaborator":
@@ -383,7 +403,7 @@ def _pick_field_meta(
 
 def normalize_relation_plan(worksheets: List[dict], relationship_rules: List[dict]) -> List[dict]:
     """
-    把关系规范化为“每条业务关系对应一条主 Relation 字段”。
+    把关系规范化为"每条业务关系对应一条主 Relation 字段"。
     规则：
     - relationship_rules 为权威来源（若存在）
     - 1-N 一律落在多端表(to) -> 一端表(from)，subType=1
@@ -527,7 +547,7 @@ def add_relation_fields(
                 "required": required,
                 "dataSource": target_id,
                 "subType": 1,  # 单条关联
-                # 只创建“主边”，由系统自动生成反向字段，确保两端都可见。
+                # 只创建"主边"，由系统自动生成反向字段，确保两端都可见。
                 "relation": {"showFields": [], "bidirectional": True},
             }
         )
