@@ -350,7 +350,9 @@ def run_all_waves(
         if page_registry_output:
             os.environ["AUTH_CONFIG_PATH"] = str(config_web_auth)
         ok2b = _exec(2, "worksheets_create", "创建工作表", cmd2b, uses_gemini=False)
-        if ok2b and not execution_dry_run:
+        if not execution_dry_run:
+            # 即使 ok2b=False（crash），也尝试提取结果路径——
+            # 工作表可能已全部创建完毕，crash 发生在最后的校验阶段
             worksheet_create_result_path = _extract_saved_path(
                 str(steps_report[-1]["result"].get("stdout", ""))
             )
@@ -359,7 +361,7 @@ def run_all_waves(
             ctx.save_report()
             return ctx
 
-        if ok2b and ok2d and sections_create_result_path and worksheet_create_result_path and not execution_dry_run:
+        if ok2d and sections_create_result_path and worksheet_create_result_path and not execution_dry_run:
             cmd2d2 = [
                 sys.executable, str(scripts["create_sections"]),
                 "--sections-plan-json", str(sections_plan_output),

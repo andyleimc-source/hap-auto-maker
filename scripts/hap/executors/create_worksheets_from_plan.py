@@ -709,7 +709,10 @@ def _fetch_real_fields(base_url: str, headers: dict, worksheet_id: str) -> list:
     for f in fields:
         if not isinstance(f, dict):
             continue
-        ctype = int(f.get("type", 0) or 0)
+        try:
+            ctype = int(f.get("type", 0) or 0)
+        except (ValueError, TypeError):
+            continue  # 字段 type 非整数（如 'Text'），跳过
         if ctype in skip_types:
             continue
         result.append({
@@ -887,50 +890,53 @@ def main() -> None:
 
     # Phase 1.6: 为每个 Page 规划并创建图表（需要 page_registry）
     if page_registry and ai_config:
-        from executors.create_page_charts import plan_and_create_page_charts
+        try:
+            from executors.create_page_charts import plan_and_create_page_charts
 
-        auth_config_path = os.environ.get("AUTH_CONFIG_PATH", "")
-        sem = threading.Semaphore(2)
+            auth_config_path = os.environ.get("AUTH_CONFIG_PATH", "")
+            sem = threading.Semaphore(2)
 
-        # 构建 ws_name -> ws_info 映射（聚合已创建工作表的字段）
-        ws_fields_map: dict = {}
-        for item in relations_todo:
-            ws_name = item["name"]
-            ws_id = item["worksheetId"]
-            real_fields = _fetch_real_fields(args.base_url, headers, ws_id)
-            if real_fields:
-                ws_fields_map[ws_name] = {
-                    "worksheetId": ws_id,
-                    "worksheetName": ws_name,
-                    "fields": real_fields,
-                    "views": [],
-                }
+            # 构建 ws_name -> ws_info 映射（聚合已创建工作表的字段）
+            ws_fields_map: dict = {}
+            for item in relations_todo:
+                ws_name = item["name"]
+                ws_id = item["worksheetId"]
+                real_fields = _fetch_real_fields(args.base_url, headers, ws_id)
+                if real_fields:
+                    ws_fields_map[ws_name] = {
+                        "worksheetId": ws_id,
+                        "worksheetName": ws_name,
+                        "fields": real_fields,
+                        "views": [],
+                    }
 
-        # 构建 worksheets_by_id（validate_plan 需要）
-        worksheets_by_id = {
-            info["worksheetId"]: info
-            for info in ws_fields_map.values()
-        }
+            # 构建 worksheets_by_id（validate_plan 需要）
+            worksheets_by_id = {
+                info["worksheetId"]: info
+                for info in ws_fields_map.values()
+            }
 
-        # 逐 Page 规划+创建图表（串行，避免并发写同一 Page 冲突）
-        pages = page_registry.get("pages", [])
-        total_charts = 0
-        for page_entry in pages:
-            if not isinstance(page_entry, dict):
-                continue
-            page_result = plan_and_create_page_charts(
-                page_entry=page_entry,
-                ws_fields_map=ws_fields_map,
-                app_id=app_id,
-                app_name=getattr(args, "app_name", "") or "",
-                auth_config_path=auth_config_path,
-                ai_config=ai_config,
-                gemini_semaphore=sem,
-                worksheets_by_id=worksheets_by_id,
-            )
-            total_charts += page_result.get("charts_created", 0)
+            # 逐 Page 规划+创建图表（串行，避免并发写同一 Page 冲突）
+            pages = page_registry.get("pages", [])
+            total_charts = 0
+            for page_entry in pages:
+                if not isinstance(page_entry, dict):
+                    continue
+                page_result = plan_and_create_page_charts(
+                    page_entry=page_entry,
+                    ws_fields_map=ws_fields_map,
+                    app_id=app_id,
+                    app_name=getattr(args, "app_name", "") or "",
+                    auth_config_path=auth_config_path,
+                    ai_config=ai_config,
+                    gemini_semaphore=sem,
+                    worksheets_by_id=worksheets_by_id,
+                )
+                total_charts += page_result.get("charts_created", 0)
 
-        print(f"  ✔ Phase 1.6 图表: {len(pages)} 个 Page 共生成 {total_charts} 个图表")
+            print(f"  ✔ Phase 1.6 图表: {len(pages)} 个 Page 共生成 {total_charts} 个图表")
+        except Exception as e:
+            print(f"  ⚠ Phase 1.6 图表创建失败（不影响工作表结果）: {e}", file=sys.stderr)
 
     # Phase 2: 并发回填关联字段
     relation_results = []
