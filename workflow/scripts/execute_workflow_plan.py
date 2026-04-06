@@ -523,7 +523,9 @@ def add_action_nodes(
                         # 注意：不要重新读取 node_plan.get("content")，否则会丢失 sendContent
                         plan_content = node_plan.get("sendContent") or node_plan.get("content", "") or extra.get("content", "")
                         if plan_content:
-                            save_body[content_key] = plan_content
+                            # 将 {{trigger.FIELD_ID}} 替换为 $startNodeId-FIELD_ID$
+                            # HAP 通知节点的变量格式是 $nodeId-fieldId$，不是 {{trigger.xxx}}
+                            save_body[content_key] = _resolve_field_value(plan_content, start_node_id)
                         elif not save_body.get(content_key):
                             save_body[content_key] = f"工作流「{name}」已触发，请及时查看。"
                     # 注入来自 plan 的 accounts（通知对象），兜底为触发者
