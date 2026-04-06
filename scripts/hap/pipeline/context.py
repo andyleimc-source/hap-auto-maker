@@ -41,8 +41,7 @@ class PipelineContext:
     worksheet_layout_result_json: Optional[str] = None
     view_plan_json: Optional[str] = None
     view_create_result_json: Optional[str] = None
-    tableview_filter_plan_json: Optional[str] = None
-    tableview_filter_apply_result_json: Optional[str] = None
+    tableview_filter_result_json: Optional[str] = None
     mock_data_run_json: Optional[str] = None
     mock_data_inline_result_json: Optional[str] = None   # Wave 3.5b Phase 1 产物
     mock_relation_apply_result_json: Optional[str] = None  # Wave 3.5b Phase 2 产物
@@ -71,8 +70,7 @@ class PipelineContext:
             "worksheet_layout_result_json": self.worksheet_layout_result_json,
             "view_plan_json": self.view_plan_json,
             "view_create_result_json": self.view_create_result_json,
-            "tableview_filter_plan_json": self.tableview_filter_plan_json,
-            "tableview_filter_apply_result_json": self.tableview_filter_apply_result_json,
+            "tableview_filter_result_json": self.tableview_filter_result_json,
             "mock_data_run_json": self.mock_data_run_json,
             "mock_data_inline_result_json": self.mock_data_inline_result_json,
             "mock_relation_apply_result_json": self.mock_relation_apply_result_json,

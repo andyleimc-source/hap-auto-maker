@@ -207,6 +207,8 @@ def run_all_waves(
         max_ws = int(ws.get("max_worksheets", 0) or 0)
         if max_ws > 0:
             cmd2a.extend(["--max-worksheets", str(max_ws)])
+        sem_value = getattr(gemini_semaphore, '_value', 1000)
+        cmd2a.extend(["--concurrency", str(sem_value)])
         return _exec(2, "worksheets_plan", "规划工作表", cmd2a, uses_gemini=True)
 
     def run_step_3() -> bool:
@@ -339,10 +341,12 @@ def run_all_waves(
 
     worksheet_create_result_path: Optional[str] = None
     if ws.get("enabled", True) and ok2a:
+        _sem_value_2b = getattr(gemini_semaphore, '_value', 1000)
         cmd2b = [
             sys.executable, str(scripts["create_worksheets"]),
             "--plan-json", str(plan_output),
             "--app-auth-json", str(app_auth_json),
+            "--semaphore-value", str(_sem_value_2b),
         ]
         if page_registry_output:
             cmd2b.extend(["--page-registry", page_registry_output])
@@ -439,7 +443,7 @@ def run_all_waves(
             with _view_lock:
                 _view_results_all.append(r)
 
-        with ThreadPoolExecutor(max_workers=3) as pool:
+        with ThreadPoolExecutor(max_workers=max(1, len(_name_to_id))) as pool:
             futures = [pool.submit(_do_views_for_ws, wn, wi) for wn, wi in _name_to_id.items()]
             for f in futures:
                 try:
@@ -574,7 +578,7 @@ def run_all_waves(
         _md_ws_create_data = load_json(Path(worksheet_create_result_path))
         _md_name_to_id = _md_ws_create_data.get("name_to_worksheet_id", {})
 
-        with ThreadPoolExecutor(max_workers=3) as pool:
+        with ThreadPoolExecutor(max_workers=max(1, len(_md_name_to_id))) as pool:
             futures = [pool.submit(_do_mock_for_ws, wn, wi) for wn, wi in _md_name_to_id.items()]
             for f in futures:
                 try:
@@ -634,8 +638,7 @@ def run_all_waves(
     )
 
     view_plan_dir: Path = dirs["view_plan_dir"]
-    tableview_filter_plan_dir: Path = dirs["tableview_filter_plan_dir"]
-    tableview_filter_apply_result_dir: Path = dirs["tableview_filter_apply_result_dir"]
+    tableview_filter_result_dir: Path = dirs["tableview_filter_result_dir"]
 
     view_plan_output = (view_plan_dir / f"view_plan_{app_id}_{now_ts()}.json").resolve()
     view_create_output = (view_create_result_dir / f"view_create_result_{app_id}_{now_ts()}.json").resolve()
@@ -729,11 +732,13 @@ def run_all_waves(
                 steps_report.append({"step_id": 11, "step_key": "workflows_plan", "title": "规划工作流（AI）", "skipped": True, "reason": "disabled_by_spec", "result": {}})
             return True
         workflow_output_dir.mkdir(parents=True, exist_ok=True)
+        sem_value = getattr(gemini_semaphore, '_value', 1000)
         cmd11 = [
             sys.executable, str(scripts["workflows_plan"]),
             "--relation-id", app_id,
             "--thinking", str(workflows.get("thinking", "none")),
             "--output", str(workflow_plan_output),
+            "--max-parallel", str(sem_value),
         ]
         if workflows.get("skip_analysis", False):
             cmd11.append("--skip-analysis")
@@ -760,23 +765,16 @@ def run_all_waves(
     # Wave 5: 视图筛选 + 创建工作流（并行）
     print(f"\n-- Wave 5: 视图筛选 / 创建工作流（并行） --- 总计 {time.time()-pipeline_start:.0f}s", flush=True)
 
-    filter_plan_output = (
-        tableview_filter_plan_dir / f"tableview_filter_plan_{app_id}_{now_ts()}.json"
-    ).resolve()
-    filter_apply_output = (
-        tableview_filter_apply_result_dir / f"tableview_filter_apply_result_{app_id}_{now_ts()}.json"
-    ).resolve()
-
     def run_step_7() -> bool:
         if not view_filters.get("enabled", True):
             with steps_lock:
                 steps_report.append({"step_id": 7, "step_key": "view_filters", "title": "规划并应用视图筛选", "skipped": True, "reason": "disabled_by_spec", "result": {}})
             return True
+        sem_value = getattr(gemini_semaphore, '_value', 1000)
         cmd7 = [
             sys.executable, str(scripts["view_filters"]),
-            "--app-ids", app_id,
-            "--plan-output", str(filter_plan_output),
-            "--apply-output", str(filter_apply_output),
+            "--app-id", app_id,
+            "--semaphore-value", str(sem_value),
             "--app-auth-json", str(app_auth_json),
         ]
         if ctx.view_create_result_json and Path(ctx.view_create_result_json).exists():
@@ -785,8 +783,9 @@ def run_all_waves(
             cmd7.append("--dry-run")
         ok7 = _exec(7, "view_filters", "规划并应用视图筛选", cmd7, uses_gemini=True)
         if ok7:
-            ctx.tableview_filter_plan_json = str(filter_plan_output)
-            ctx.tableview_filter_apply_result_json = str(filter_apply_output)
+            latest = tableview_filter_result_dir / "tableview_filter_result_latest.json"
+            if latest.exists():
+                ctx.tableview_filter_result_json = str(latest)
         return ok7
 
     def run_step_12() -> bool:
