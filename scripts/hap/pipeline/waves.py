@@ -21,7 +21,7 @@ if str(_HAP_DIR) not in sys.path:
 
 from pipeline.step_runner import execute_step
 from pipeline.context import PipelineContext
-from utils import load_json, write_json, now_ts
+from utils import load_json, write_json, now_ts, log_summary
 
 
 def _extract_app_id(text: str) -> Optional[str]:
@@ -427,6 +427,10 @@ def run_all_waves(
                     auth_config_path=config_web_auth,
                     dry_run=execution_dry_run,
                 )
+            new_count = len(r.get("new_views_results", []))
+            default_ok = 1 if isinstance(r.get("default_view_result"), dict) and r["default_view_result"].get("success") else 0
+            total_views = new_count + default_ok
+            log_summary(f"✓「{ws_name}」→ {total_views} 个视图已创建")
             with _view_lock:
                 _view_results_all.append(r)
 
