@@ -38,8 +38,7 @@ class PipelineContext:
     role_pipeline_report_json: Optional[str] = None
     role_plan_json: Optional[str] = None
     role_create_result_json: Optional[str] = None
-    worksheet_layout_plan_json: Optional[str] = None
-    worksheet_layout_apply_result_json: Optional[str] = None
+    worksheet_layout_result_json: Optional[str] = None
     view_plan_json: Optional[str] = None
     view_create_result_json: Optional[str] = None
     tableview_filter_plan_json: Optional[str] = None
@@ -69,8 +68,7 @@ class PipelineContext:
             "role_pipeline_report_json": self.role_pipeline_report_json,
             "role_plan_json": self.role_plan_json,
             "role_create_result_json": self.role_create_result_json,
-            "worksheet_layout_plan_json": self.worksheet_layout_plan_json,
-            "worksheet_layout_apply_result_json": self.worksheet_layout_apply_result_json,
+            "worksheet_layout_result_json": self.worksheet_layout_result_json,
             "view_plan_json": self.view_plan_json,
             "view_create_result_json": self.view_create_result_json,
             "tableview_filter_plan_json": self.tableview_filter_plan_json,
