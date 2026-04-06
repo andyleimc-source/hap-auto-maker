@@ -74,6 +74,23 @@ def normalize_advanced_setting(view_type: str, value: Any) -> dict:
             raw["coverstyle"] = '{"position":"1","style":3}'
     out = {}
     for k, v in raw.items():
+        if k == "groupsetting":
+            # 表格视图分组字段必须是 JSON 数组字符串：
+            # ✅ [{"controlId":"...","isAsc":true}]
+            # ❌ {"controlId":"...","isAsc":true}
+            # 若写成对象字符串，前端打开工作表会出现「服务异常」。
+            parsed = parse_json_loose(v)
+            if isinstance(parsed, dict):
+                parsed = [parsed]
+            if isinstance(parsed, list):
+                out["groupsetting"] = json.dumps(parsed, ensure_ascii=False, separators=(",", ":"))
+            elif isinstance(v, str):
+                out["groupsetting"] = v
+            elif v is None:
+                out["groupsetting"] = "[]"
+            else:
+                out["groupsetting"] = str(v)
+            continue
         if k == "groupView":
             # groupView 是 navGroup（左侧导航筛选栏）配置，不是表格行分组。
             # 表格视图行分组应使用 groupsetting，见 view_config_schema.py。
