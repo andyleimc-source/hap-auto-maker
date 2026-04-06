@@ -622,3 +622,131 @@ def validate_view_plan(
                 view["viewControl"] = ""
 
     return raw
+
+
+# ─── 单表视图规划（一次 AI 调用，含默认视图改造）─────────────────────────
+
+
+def build_single_ws_view_prompt(
+    app_name: str,
+    ws_name: str,
+    ws_id: str,
+    fields: list[dict],
+    default_view_id: str,
+) -> str:
+    """为单张工作表生成视图规划 prompt，含默认视图改造方案。"""
+    import json as _json
+
+    view_type_section = build_view_type_prompt_section()
+    classified = classify_fields(fields)
+    suggestions = suggest_views(classified, ws_id)
+
+    field_lines = []
+    for f in fields:
+        if bool(f.get("isSystem", False)):
+            continue
+        opts_str = ""
+        if f.get("options"):
+            opts_str = " 选项: " + ", ".join(o.get("value", "") for o in f["options"][:6])
+        field_lines.append(f"  {f['id']}  type={f['type']}  {f['name']}{opts_str}")
+    field_section = "\n".join(field_lines)
+
+    suggestion_lines = []
+    for sg in suggestions:
+        suggestion_lines.append(
+            f"  - viewType={sg['viewType']} {sg['name']}（{sg.get('reason', '')}）"
+        )
+    suggestion_text = "推荐视图：\n" + "\n".join(suggestion_lines) if suggestion_lines else ""
+
+    return f"""你是明道云视图配置专家。请为工作表「{ws_name}」规划视图。
+
+应用名：{app_name}
+工作表：{ws_name}（ID: {ws_id}）
+
+## 字段列表
+{field_section}
+
+{view_type_section}
+
+{suggestion_text}
+
+## 任务
+
+1. **改造默认视图**：系统已有一个名为"全部"的默认表格视图（viewId: {default_view_id}），请将它改造成有业务含义的视图——改名并加配置（如分组、显示字段等）
+2. **规划新视图**：额外规划 1-3 个有业务价值的视图（看板/日历/甘特图/画廊等）
+
+## 输出格式（严格 JSON）
+
+{{
+  "default_view_update": {{
+    "name": "改造后的视图名（如'按状态分组'）",
+    "viewType": 0,
+    "displayControls": ["字段ID1", "字段ID2", ...],
+    "advancedSetting": {{
+      "groupsetting": "[...]"
+    }},
+    "postCreateUpdates": []
+  }},
+  "new_views": [
+    {{
+      "name": "视图名",
+      "viewType": 1,
+      "displayControls": ["字段ID1", ...],
+      "viewControl": "看板分组字段ID",
+      "coverCid": "",
+      "advancedSetting": {{}},
+      "postCreateUpdates": [...]
+    }}
+  ]
+}}
+
+## 规则
+
+1) 默认视图改造必须有实际业务含义——至少改名 + 设 displayControls，如有单选字段(type=9/11)则加 groupsetting 分组
+2) displayControls 选 5-8 个最重要的字段 ID
+3) 看板(viewType=1)：必须有单选字段(type=9/11)作为 viewControl
+4) 日历(viewType=4)：postCreateUpdates 中设 calendarcids
+5) 甘特图(viewType=5)：需要开始+结束两个日期字段
+6) 层级(viewType=2)：需要自关联字段(type=29)
+7) 画廊(viewType=3)：有附件字段(type=14)时推荐，设 coverCid
+8) 所有 advancedSetting 中的 JSON 字符串值必须是紧凑格式（无空格）
+9) 不要创建与默认视图改造后功能重复的视图"""
+
+
+def validate_single_ws_view_plan(
+    plan: dict,
+    field_ids: set[str],
+) -> list[str]:
+    """校验单表视图规划输出。"""
+    errors = []
+
+    dv = plan.get("default_view_update")
+    if not isinstance(dv, dict):
+        errors.append("缺少 default_view_update")
+    else:
+        name = str(dv.get("name", "")).strip()
+        if not name or name == "全部":
+            errors.append("default_view_update.name 未改造（仍为'全部'或为空）")
+        dc = dv.get("displayControls", [])
+        if isinstance(dc, list):
+            for cid in dc:
+                if str(cid).strip() and str(cid).strip() not in field_ids:
+                    errors.append(f"default_view_update.displayControls 引用了不存在的字段: {cid}")
+
+    new_views = plan.get("new_views", [])
+    if not isinstance(new_views, list):
+        errors.append("new_views 不是数组")
+    else:
+        for i, v in enumerate(new_views):
+            if not isinstance(v, dict):
+                continue
+            vt = str(v.get("viewType", "")).strip()
+            if vt not in ("0", "1", "2", "3", "4", "5", "6", "7", "8"):
+                errors.append(f"new_views[{i}] viewType 非法: {vt}")
+            dc = v.get("displayControls", [])
+            if isinstance(dc, list):
+                for cid in dc:
+                    if str(cid).strip() and str(cid).strip() not in field_ids:
+                        errors.append(f"new_views[{i}].displayControls 引用不存在的字段: {cid}")
+
+    return errors
