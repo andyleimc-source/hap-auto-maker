@@ -71,16 +71,7 @@ def suggest_views(classified_fields: dict[str, list[dict]], worksheet_id: str = 
             "calendarcid": dates[0]["id"],
         })
 
-    # 有自关联 → 层级视图
-    relations = classified_fields.get("relation", [])
-    for r in relations:
-        if r.get("dataSource") == worksheet_id:
-            suggestions.append({
-                "viewType": 2, "name": "层级视图",
-                "reason": f"有自关联字段「{r['name']}」",
-                "layersControlId": r["id"],
-            })
-            break
+    # 层级视图(viewType=2) 已禁用 — 前端兼容性问题，跳过
 
     # 画廊视图(viewType=3) — 有附件字段时推荐
     attachments = classified_fields.get("attachment", [])
@@ -162,7 +153,7 @@ def build_structure_prompt(
 3) 看板(1)：有单选字段（type=9/11）且数据有状态流转的表适合；必须有多状态单选字段(type=9 或 type=11)；检查框/等级字段不能用
 4) 甘特图(5)：有开始+结束两个日期字段时适合，用于时间轴展示
 5) 日历(4)：有日期字段时可以选；适合排班/预约/日程/计划类场景
-6) 层级(2)：有自关联字段(type=29)时适合，展示父子层级关系
+6) ❌ 层级(2)：已禁用，禁止生成
 7) 画廊(3)：有附件字段（type=14）时推荐，适合以卡片形式浏览内容；即使图片不是核心内容，有附件字段就可以选
 8) 分组表格(viewType=0)：有单选字段时可规划"按XX分组"的额外表格视图，与默认"全部"视图形成补充
 
@@ -550,7 +541,7 @@ def build_enhanced_prompt(
 4) 看板(1)：有单选字段（type=9/11）且数据有状态流转时适合；检查框/等级字段不能用
 5) 甘特图(5)：有开始+结束两个日期字段时适合，用于时间轴展示
 6) 日历(4)：有日期字段时适合，尤其是排班/预约/日程场景；在 postCreateUpdates 中设 calendarcids
-7) 层级(2)：有自关联字段(type=29)时适合，展示父子层级关系
+7) ❌ 层级(2)：已禁用，禁止生成
 8) 画廊(3)：有附件字段（type=14）时推荐；适合以卡片浏览，不要求图片是核心内容
 9) 分组表格(0)：有单选字段时可规划"按XX分组"视图；通过 postCreateUpdates 设 groupsetting（而非 groupView）
 10) 跨工作表视角：整个应用的视图组合应有多样性，避免全部工作表都只有看板或只有表格
@@ -707,7 +698,7 @@ def build_single_ws_view_prompt(
 3) 看板(viewType=1)：必须有单选字段(type=9/11)作为 viewControl
 4) 日历(viewType=4)：postCreateUpdates 中设 calendarcids；只要有任意日期字段（type=15/16）即可创建
 5) 甘特图(viewType=5)：需要开始+结束两个日期字段
-6) 层级(viewType=2)：需要自关联字段(type=29)
+6) ❌ 层级(viewType=2)：已禁用，禁止生成
 7) 画廊(viewType=3)：有附件字段(type=14)时推荐，设 coverCid；无附件时也可用于卡片浏览
 8) 所有 advancedSetting 中的 JSON 字符串值必须是紧凑格式（无空格）
 9) 不要创建与默认视图改造后功能重复的视图

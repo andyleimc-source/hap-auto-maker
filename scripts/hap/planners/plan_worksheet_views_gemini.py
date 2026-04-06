@@ -294,7 +294,7 @@ def build_prompt(app_name: str, worksheet_name: str, worksheet_id: str, fields: 
             )
         suggestion_text = "推荐视图（根据字段分析）：\n" + "\n".join(suggestion_lines) if suggestion_lines else ""
     else:
-        view_type_section = "允许 viewType=0(表格),1(看板),2(层级视图),3(画廊),4(日历),5(甘特图)"
+        view_type_section = "允许 viewType=0(表格),1(看板),3(画廊),4(日历),5(甘特图)；❌ viewType=2(层级视图)已禁用，禁止使用"
         suggestion_text = ""
 
     return f"""
@@ -343,7 +343,7 @@ def build_prompt(app_name: str, worksheet_name: str, worksheet_id: str, fields: 
 5) 【强制】看板视图(viewType=1)必须设置 viewControl 为一个单选字段(type=11)的ID。如果没有合适的单选字段，不要创建看板视图。
 6) 【强制】表格视图(viewType=0)如果视图名包含"按...分组"、"按...分类"、"分组"等含义，必须通过 postCreateUpdates 二次保存分组配置，格式：{{"editAttrs":["advancedSetting"],"editAdKeys":["groupsetting","groupsorts","groupcustom","groupshow","groupfilters","groupopen"],"advancedSetting":{{"groupsetting":"[{{\\\"controlId\\\":\\\"分组字段ID\\\",\\\"isAsc\\\":true}}]","groupsorts":"","groupcustom":"","groupshow":"0","groupfilters":"[]","groupopen":""}}}}。groupsetting 是字符串化 JSON 数组，controlId 必须为有实际选项的单选字段(type=9/11)的ID，isAsc 控制升序。
 7) 甘特图视图（viewType=5）有开始+结束日期字段时适合，用于时间轴展示。
-8) 层级视图（viewType=2）【强制】只有当字段列表中存在 type=29 的自关联字段时才允许规划；没有自关联字段则绝对不能选 viewType=2。
+8) ❌ 层级视图（viewType=2）：已禁用，禁止生成，任何情况下都不允许选 viewType=2。
 9) 画廊视图（viewType=3）有附件字段（type=14）时推荐，适合以卡片形式浏览内容；设置 coverCid 为附件字段ID。
 10) 若字段不支持某视图，请不要输出该视图类型。
 11) 输出必须是可解析 JSON。
@@ -541,28 +541,7 @@ def normalize_views(raw_views: Any, fields: List[dict], worksheet_id: str = "") 
         if len(out) >= 8:
             break
 
-    # 强制补全：如果工作表有自关联字段但 AI 没有规划层级视图，自动注入一个
-    if worksheet_id:
-        has_hierarchy = any(v.get("viewType") == "2" for v in out)
-        if not has_hierarchy:
-            rel_fid = _find_self_relation_field(fields, worksheet_id)
-            if rel_fid:
-                print(f"    ⚠ 工作表 {worksheet_id} 有自关联字段 {rel_fid}，AI 未规划层级视图，自动注入")
-                fallback_display = out[0]["displayControls"] if out else default_display_controls(fields)
-                out.append({
-                    "name": "层级视图",
-                    "viewType": "2",
-                    "reason": "工作表含自关联字段，自动生成层级视图",
-                    "displayControls": fallback_display,
-                    "coverCid": "",
-                    "viewControl": "",
-                    "advancedSetting": {},
-                    "postCreateUpdates": [{
-                        "editAttrs": ["childType", "layersControlId"],
-                        "childType": 0,
-                        "layersControlId": rel_fid,
-                    }],
-                })
+    # 层级视图(viewType=2) 已禁用，不再自动注入
 
     return out
 
@@ -614,7 +593,7 @@ def build_batch_prompt(app_name: str, worksheets_data: List[dict]) -> str:
 5) 【强制】看板视图(viewType=1)必须设置 viewControl 为一个单选字段(type=11)的ID。如果没有合适的单选字段，不要创建看板视图。
 6) 【强制】表格视图(viewType=0)如果视图名包含"按...分组"、"按...分类"、"分组"等含义，必须通过 postCreateUpdates 二次保存分组配置，格式：{{"editAttrs":["advancedSetting"],"editAdKeys":["groupsetting","groupsorts","groupcustom","groupshow","groupfilters","groupopen"],"advancedSetting":{{"groupsetting":"[{{\\\"controlId\\\":\\\"分组字段ID\\\",\\\"isAsc\\\":true}}]","groupsorts":"","groupcustom":"","groupshow":"0","groupfilters":"[]","groupopen":""}}}}。groupsetting 是字符串化 JSON 数组，controlId 必须为有实际选项的单选字段(type=9/11)的ID，isAsc 控制升序。
 7) 甘特图视图（viewType=5）有开始+结束日期字段时适合，用于时间轴展示。
-8) 层级视图（viewType=2）【强制】只有当字段列表中存在 type=29 的自关联字段时才允许规划；没有自关联字段则绝对不能选 viewType=2。
+8) ❌ 层级视图（viewType=2）：已禁用，禁止生成，任何情况下都不允许选 viewType=2。
 9) 画廊视图（viewType=3）有附件字段（type=14）时推荐；设 coverCid 为附件字段ID。
 10) 若字段不支持某视图，请不要输出该视图类型。
 11) 输出必须是可解析 JSON，worksheets 数组长度必须等于 {count}。

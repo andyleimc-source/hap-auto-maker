@@ -108,7 +108,7 @@ VIEW_REGISTRY = {
     2: {
         "name": "层级视图",
         "category": "basic",
-        "verified": True,
+        "verified": False,  # 已禁用 — 前端兼容性问题
         "requires_fields": ["self_relation"],
         "post_create": {
             "editAttrs": ["childType", "layersControlId"],
