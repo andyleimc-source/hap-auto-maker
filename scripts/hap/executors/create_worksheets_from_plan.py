@@ -215,6 +215,9 @@ def build_field_payload(field: dict, is_first_text_title: bool) -> dict:
         payload["options"] = parse_select_options_from_field(field)
         if ftype == "SingleSelect":
             # 随机样式：0=下拉, 1=平铺（不含进度样式 2，进度需 type=11 另行处理）
+            # 注意：V3 CreateWorksheet/addFields 实测不保存 showtype 和 option.color，
+            # 这两个属性只能通过 Web API SaveWorksheetControls（字段设计器）设置。
+            # options.color 仍然传入（备用），showtype 随机——期待未来 API 支持后自动生效。
             showtype = random.choice(["0", "1"])
             payload["advancedSetting"] = {"sorttype": "zh", "showtype": showtype}
         elif ftype == "MultipleSelect":
