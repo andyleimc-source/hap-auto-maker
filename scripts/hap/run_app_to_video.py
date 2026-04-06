@@ -99,8 +99,7 @@ def collect_artifact_sources(execution_report: dict) -> Dict[str, str]:
         "app_auth_json",
         "worksheet_plan_json",
         "worksheet_create_result_json",
-        "worksheet_layout_plan_json",
-        "worksheet_layout_apply_result_json",
+        "worksheet_layout_result_json",
         "view_plan_json",
         "view_create_result_json",
         "tableview_filter_plan_json",
@@ -294,7 +293,7 @@ def main() -> None:
             if copied:
                 copied_artifacts[key] = copied
 
-        layout_plan = load_json(Path(artifact_sources["worksheet_layout_plan_json"])) if artifact_sources.get("worksheet_layout_plan_json") else {}
+        layout_plan = load_json(Path(artifact_sources["worksheet_layout_result_json"])) if artifact_sources.get("worksheet_layout_result_json") else {}
         worksheet_create_result = load_json(Path(artifact_sources["worksheet_create_result_json"])) if artifact_sources.get("worksheet_create_result_json") else {}
         view_create_result = load_json(Path(artifact_sources["view_create_result_json"])) if artifact_sources.get("view_create_result_json") else {}
         mock_data_run = load_json(Path(artifact_sources["mock_data_run_json"])) if artifact_sources.get("mock_data_run_json") else {}
