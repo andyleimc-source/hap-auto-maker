@@ -11,6 +11,7 @@ HAP 应用创建入口（Claude Code 专用）
 """
 
 import argparse
+import importlib.util
 import json
 import subprocess
 import sys
@@ -28,6 +29,17 @@ from utils import now_iso, now_ts
 
 EXECUTE_SCRIPT = resolve_script("execute_requirements.py")
 SPEC_DIR = BASE_DIR / "data" / "outputs" / "requirement_specs"
+
+
+RUNTIME_DEPENDENCY_MODULES = [
+    ("requests", "requests"),
+    ("openai", "openai"),
+    ("google-genai", "google.genai"),
+    ("playwright", "playwright"),
+    ("json-repair", "json_repair"),
+    # 造数阶段 mock.faker_mapping 会直接 import faker
+    ("faker", "faker"),
+]
 
 
 def _load_org_group_ids() -> str:
@@ -166,6 +178,35 @@ def generate_spec(requirements: str, ai_config: dict) -> dict:
     return normalize_spec(raw)
 
 
+def _find_missing_runtime_packages() -> list[str]:
+    missing: list[str] = []
+    for package_name, module_name in RUNTIME_DEPENDENCY_MODULES:
+        if importlib.util.find_spec(module_name) is None:
+            missing.append(package_name)
+    return missing
+
+
+def ensure_runtime_dependencies(auto_install: bool = True) -> None:
+    missing = _find_missing_runtime_packages()
+    if not missing:
+        return
+
+    print(f"检测到缺少运行依赖：{', '.join(missing)}")
+    if not auto_install:
+        raise RuntimeError("缺少运行依赖，请先安装后重试。")
+
+    install_cmd = [sys.executable, "-m", "pip", "install", *missing]
+    print(f"正在安装依赖: {' '.join(install_cmd)}")
+    proc = subprocess.run(install_cmd, check=False)
+    if proc.returncode != 0:
+        raise RuntimeError(f"依赖安装失败，退出码={proc.returncode}")
+
+    still_missing = _find_missing_runtime_packages()
+    if still_missing:
+        raise RuntimeError(f"依赖安装后仍缺失：{', '.join(still_missing)}")
+    print("依赖检查完成。")
+
+
 def main():
     parser = argparse.ArgumentParser(description="HAP 应用创建入口（Claude Code 专用）")
     parser.add_argument("--requirements", default="", help="需求描述文本（由 Claude 整理后传入）")
@@ -200,6 +241,8 @@ def main():
     if args.no_execute:
         print("（--no-execute 模式，跳过执行）")
         return
+
+    ensure_runtime_dependencies(auto_install=True)
 
     # 执行
     exec_cmd = [sys.executable, str(EXECUTE_SCRIPT), "--spec-json", str(spec_path)]
