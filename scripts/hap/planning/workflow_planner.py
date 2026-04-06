@@ -461,6 +461,206 @@ def _validate_single_node_config(
             raise ValueError(f"{path}: {node_type} 节点缺少 sendContent")
 
 
+# ─── Phase 2 逐表: 节点配置规划（单工作表粒度）──────────────────────────────────
+
+
+def build_node_config_prompt_per_ws(
+    app_name: str,
+    ws_structure: dict,
+    ws_info: dict,
+    related_ws_infos: list[dict],
+) -> str:
+    """Phase 2 逐表版 — 只为单个工作表的工作流节点填写具体配置。
+
+    与 build_node_config_prompt() 功能相同，但每次只处理一个工作表，
+    大幅缩短 prompt 长度，提高 AI 输出质量。
+
+    Args:
+        app_name: 应用名称
+        ws_structure: Phase1 输出中该工作表的部分，包含：
+            worksheet_id, worksheet_name, custom_actions, worksheet_events, date_triggers
+        ws_info: 该表的完整字段信息
+            {worksheetId, worksheetName, fields: [{id, name, type, options}]}
+        related_ws_infos: 被引用的关联表信息（只含该工作表引用到的 target_worksheet_id 对应的表）
+            [{worksheetId, worksheetName, fields: [{id, name, type, options}]}]
+    """
+    ws_id = ws_info.get("worksheetId", "")
+    ws_name = ws_info.get("worksheetName", "")
+    fields = ws_info.get("fields", [])
+    classified = classify_fields(fields)
+
+    # 当前表完整字段（含 option UUID keys）
+    field_lines = [f"### 当前工作表「{ws_name}」(ID: {ws_id})"]
+    for cat_name, cat_label in [
+        ("text", "文本"), ("number", "数值"), ("date", "日期"),
+        ("select", "单选/下拉"), ("user", "成员"), ("relation", "关联"),
+    ]:
+        cat_fields = classified.get(cat_name, [])
+        if cat_fields:
+            for f in cat_fields:
+                opts = ""
+                if f.get("options"):
+                    opts = "  选项: " + ", ".join(
+                        f'key="{o["key"]}" value="{o["value"]}"'
+                        for o in f["options"][:8]
+                    )
+                field_lines.append(f"  field_id={f['id']}  type={f['type']}  {f['name']}{opts}")
+
+    # 关联表字段摘要（跨表节点需要）
+    for rws in related_ws_infos:
+        rws_id = rws.get("worksheetId", "")
+        rws_name = rws.get("worksheetName", "")
+        rws_fields = rws.get("fields", [])
+        rws_classified = classify_fields(rws_fields)
+
+        field_lines.append(f"\n### 关联工作表「{rws_name}」(ID: {rws_id})")
+        for cat_name, cat_label in [
+            ("text", "文本"), ("number", "数值"), ("date", "日期"),
+            ("select", "单选/下拉"), ("user", "成员"), ("relation", "关联"),
+        ]:
+            cat_fields = rws_classified.get(cat_name, [])
+            if cat_fields:
+                for f in cat_fields:
+                    opts = ""
+                    if f.get("options"):
+                        opts = "  选项: " + ", ".join(
+                            f'key="{o["key"]}" value="{o["value"]}"'
+                            for o in f["options"][:8]
+                        )
+                    field_lines.append(f"  field_id={f['id']}  type={f['type']}  {f['name']}{opts}")
+
+    ws_detail = "\n".join(field_lines)
+
+    # 骨架摘要（仅当前工作表的部分）
+    structure_lines = []
+    ws_struct_id = ws_structure.get("worksheet_id", ws_id)
+    ws_struct_name = ws_structure.get("worksheet_name", ws_name)
+    structure_lines.append(f"## 工作表「{ws_struct_name}」(ID: {ws_struct_id})")
+
+    for section_key, section_label in [
+        ("custom_actions", "自定义动作"),
+        ("worksheet_events", "工作表事件"),
+    ]:
+        for item in ws_structure.get(section_key, []):
+            structure_lines.append(f"  [{section_label}] {item.get('name', '')}")
+            for node in item.get("action_nodes", []):
+                target = node.get("target_worksheet_id", "")
+                structure_lines.append(
+                    f"    → {node.get('type', '')} \"{node.get('name', '')}\" target={target}"
+                )
+
+    for dt in ws_structure.get("date_triggers", []):
+        structure_lines.append(f"  [日期触发] {dt.get('name', '')}")
+        for node in dt.get("action_nodes", []):
+            structure_lines.append(
+                f"    → {node.get('type', '')} \"{node.get('name', '')}\""
+            )
+
+    structure_summary = "\n".join(structure_lines)
+
+    return f"""你是一名工作流配置专家，正在为「{app_name}」的工作流节点填写具体配置。
+
+## 已规划的工作流骨架（当前工作表）
+{structure_summary}
+
+## 完整字段参考（含选项 UUID key）
+{ws_detail}
+
+## 任务
+
+为骨架中的每个 action_node 补充具体配置：
+- update_record / add_record：填写 fields 数组
+- notify / copy：填写 sendContent
+- delay_duration：填写延时参数
+- calc / aggregate：填写公式参数
+
+## 关键规则
+
+1. 单选字段(type=9/11) 的 fieldValue 必须使用上方完整 UUID key，禁止截断或编造
+2. 动态引用触发记录字段值用 {{{{trigger.FIELD_ID}}}}
+3. add_record 的 fields 应包含目标表全部可操作字段
+4. update_record 只填 1~3 个需要更新的字段
+5. notify/copy 的内容字段名是 sendContent（不是 content）
+6. sendContent 必须有业务含义
+
+## 输出 JSON 格式
+
+只输出当前工作表的工作流配置，结构与骨架相同，但 action_nodes 增加 fields/sendContent 等字段：
+
+{{
+  "worksheet_id": "{ws_struct_id}",
+  "worksheet_name": "{ws_struct_name}",
+  "custom_actions": [
+    {{
+      "name": "...",
+      "confirm_msg": "...",
+      "sure_name": "确认",
+      "cancel_name": "取消",
+      "action_nodes": [
+        {{
+          "name": "节点名",
+          "type": "update_record",
+          "target_worksheet_id": "...",
+          "fields": [
+            {{"fieldId": "字段ID", "type": 字段type数字, "fieldValue": "值或{{{{trigger.xxx}}}}"}}
+          ]
+        }},
+        {{
+          "name": "通知",
+          "type": "notify",
+          "sendContent": "通知内容，可包含动态值"
+        }}
+      ]
+    }}
+  ],
+  "worksheet_events": [...],
+  "date_triggers": [...]
+}}"""
+
+
+def validate_node_config_per_ws(
+    raw: dict,
+    worksheets_by_id: dict[str, dict],
+) -> dict:
+    """Phase 2 逐表校验 — 检查单个工作表的节点配置。
+
+    与 validate_node_config() 逻辑一致，但输入是单个工作表的配置（无外层 worksheets 数组）。
+
+    Args:
+        raw: AI 输出的单个工作表 JSON，包含 worksheet_id, custom_actions, worksheet_events, date_triggers
+        worksheets_by_id: {worksheetId: {fields: [...]}} 全部工作表信息（用于跨表字段校验）
+
+    Returns:
+        校验通过的 raw dict
+
+    Raises:
+        ValueError: 校验失败
+    """
+    ws_id = str(raw.get("worksheet_id", "")).strip()
+    if not ws_id:
+        raise ValueError("缺少 worksheet_id")
+
+    for section_key in ("custom_actions", "worksheet_events"):
+        for j, item in enumerate(raw.get(section_key, [])):
+            nodes = item.get("action_nodes", [])
+            for k, node in enumerate(nodes):
+                node_type = node.get("type", "")
+                _validate_single_node_config(
+                    node, node_type, worksheets_by_id,
+                    f"{section_key}[{j}].action_nodes[{k}]"
+                )
+
+    for j, dt in enumerate(raw.get("date_triggers", [])):
+        for k, node in enumerate(dt.get("action_nodes", [])):
+            node_type = node.get("type", "")
+            _validate_single_node_config(
+                node, node_type, worksheets_by_id,
+                f"date_triggers[{j}].action_nodes[{k}]"
+            )
+
+    return raw
+
+
 # ─── 原有一体化接口（向后兼容）───────────────────────────────────────────────────
 
 
