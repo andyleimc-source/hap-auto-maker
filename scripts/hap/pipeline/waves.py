@@ -195,12 +195,14 @@ def run_all_waves(
             with steps_lock:
                 steps_report.append({"step_id": 2, "step_key": "worksheets_plan", "title": "规划工作表", "skipped": True, "reason": "disabled_by_spec", "result": {}})
             return True
+        plan_mode = str(ws.get("plan_mode", "layered")).strip()
         cmd2a = [
             sys.executable, str(scripts["plan_worksheets"]),
             "--app-name", str(app.get("name", "CRM自动化应用")),
             "--business-context", str(ws.get("business_context", "通用企业管理场景")),
             "--requirements", str(ws.get("requirements", "")),
             "--output", str(plan_output),
+            "--mode", plan_mode,
         ]
         max_ws = int(ws.get("max_worksheets", 0) or 0)
         if max_ws > 0:
