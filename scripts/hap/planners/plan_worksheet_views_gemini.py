@@ -946,6 +946,168 @@ def plan_views_for_worksheet(client, model: str, app_name: str, worksheet: dict,
     }
 
 
+def plan_and_create_views_for_ws(
+    client,
+    model: str,
+    app_id: str,
+    app_name: str,
+    worksheet_id: str,
+    worksheet_name: str,
+    default_view_id: str,
+    auth_config_path: Path,
+    dry_run: bool = False,
+) -> dict:
+    """单表视图原子操作：AI 规划 → 改造默认视图 → 创建新视图 → postCreateUpdates。"""
+    from planning.view_planner import (
+        build_single_ws_view_prompt,
+        validate_single_ws_view_plan,
+    )
+    from executors.create_views_from_plan import (
+        update_default_view,
+        build_create_payload,
+        build_update_payload,
+        save_view,
+        auto_complete_post_updates,
+        merge_post_updates,
+    )
+
+    result = {
+        "worksheetId": worksheet_id,
+        "worksheetName": worksheet_name,
+        "default_view_result": None,
+        "new_views_results": [],
+        "error": None,
+    }
+
+    # 1. 拉取真实字段
+    try:
+        schema = fetch_controls(worksheet_id, auth_config_path)
+    except Exception as exc:
+        result["error"] = f"拉取字段失败: {exc}"
+        print(f"  ✗ [{worksheet_name}] 拉取字段失败: {exc}", file=_sys.stderr)
+        return result
+
+    raw_fields = schema.get("fields", [])
+    fields = [simplify_field(f) for f in raw_fields if isinstance(f, dict)]
+    field_ids = {str(f.get("id", "")).strip() for f in fields if str(f.get("id", "")).strip()}
+
+    # 2. AI 规划
+    prompt = build_single_ws_view_prompt(
+        app_name=app_name,
+        ws_name=worksheet_name,
+        ws_id=worksheet_id,
+        fields=fields,
+        default_view_id=default_view_id,
+    )
+
+    plan = None
+    validation_errors: list[str] = []
+    for attempt in range(1, 3):
+        current_prompt = prompt
+        if validation_errors:
+            current_prompt = (
+                prompt + "\n\n上次输出校验失败，请修正：\n"
+                + "\n".join(f"- {e}" for e in validation_errors)
+            )
+        try:
+            raw_text = _call_ai_with_retry(client, model, current_prompt, label=f"view:{worksheet_name}")
+            plan = _parse_ai_json(raw_text)
+            validation_errors = validate_single_ws_view_plan(plan, field_ids)
+            if not validation_errors:
+                break
+        except Exception as exc:
+            validation_errors = [str(exc)]
+        if attempt >= 2:
+            print(f"  ⚠ [{worksheet_name}] 视图规划校验仍有错误: {validation_errors}", file=_sys.stderr)
+
+    if plan is None:
+        result["error"] = f"AI 规划失败: {validation_errors}"
+        return result
+
+    # 3. 改造默认视图
+    dv_plan = plan.get("default_view_update")
+    if isinstance(dv_plan, dict) and default_view_id:
+        try:
+            dv_resp = update_default_view(
+                app_id, worksheet_id, default_view_id, dv_plan, auth_config_path, dry_run
+            )
+            result["default_view_result"] = {
+                "viewId": default_view_id,
+                "name": str(dv_plan.get("name", "")).strip(),
+                "response": dv_resp,
+                "success": dry_run or (isinstance(dv_resp, dict) and int(dv_resp.get("state", 0) or 0) == 1),
+            }
+            post_updates = dv_plan.get("postCreateUpdates", [])
+            if isinstance(post_updates, list):
+                for upd in post_updates:
+                    if not isinstance(upd, dict):
+                        continue
+                    upd_payload = build_update_payload(app_id, worksheet_id, default_view_id, upd)
+                    skip_reason = str(upd_payload.pop("_skip_reason", "")).strip()
+                    if skip_reason:
+                        continue
+                    save_view(upd_payload, auth_config_path, app_id, worksheet_id, dry_run)
+            print(f"  ✓ [{worksheet_name}] 默认视图改造: {dv_plan.get('name', '')}", file=_sys.stderr)
+        except Exception as exc:
+            result["default_view_result"] = {"error": str(exc)}
+            print(f"  ⚠ [{worksheet_name}] 默认视图改造失败: {exc}", file=_sys.stderr)
+
+    # 4. 逐个创建新视图
+    new_views = plan.get("new_views", [])
+    if not isinstance(new_views, list):
+        new_views = []
+    new_views = normalize_views(new_views, fields, worksheet_id)
+
+    for view in new_views:
+        view_name = str(view.get("name", "")).strip()
+        try:
+            create_payload = build_create_payload(app_id, worksheet_id, view)
+            create_resp = save_view(create_payload, auth_config_path, app_id, worksheet_id, dry_run)
+
+            created_view_id = ""
+            if dry_run:
+                created_view_id = "__DRY_RUN__"
+            elif isinstance(create_resp, dict) and int(create_resp.get("state", 0) or 0) == 1:
+                created_view_id = str((create_resp.get("data") or {}).get("viewId", "")).strip()
+
+            view_result = {
+                "name": view_name,
+                "viewType": view.get("viewType"),
+                "createdViewId": created_view_id,
+                "success": bool(created_view_id),
+                "updates": [],
+            }
+
+            if created_view_id and created_view_id != "__DRY_RUN__":
+                view_type_int = int(str(view.get("viewType", "0")).strip() or "0")
+                ai_updates = view.get("postCreateUpdates", [])
+                if not isinstance(ai_updates, list):
+                    ai_updates = []
+                view_with_ws = dict(view)
+                view_with_ws["_worksheetId"] = worksheet_id
+                auto_updates = auto_complete_post_updates(view_with_ws, raw_fields)
+                post_updates = merge_post_updates(ai_updates, auto_updates, view_type_int)
+                for upd in post_updates:
+                    if not isinstance(upd, dict):
+                        continue
+                    upd_payload = build_update_payload(app_id, worksheet_id, created_view_id, upd)
+                    skip_reason = str(upd_payload.pop("_skip_reason", "")).strip()
+                    if skip_reason:
+                        view_result["updates"].append({"skipped": True, "reason": skip_reason})
+                        continue
+                    upd_resp = save_view(upd_payload, auth_config_path, app_id, worksheet_id, dry_run)
+                    view_result["updates"].append({"response": upd_resp})
+
+            result["new_views_results"].append(view_result)
+            status = "✓" if view_result["success"] else "✗"
+            print(f"  {status} [{worksheet_name}] 新视图: {view_name} (viewType={view.get('viewType')})", file=_sys.stderr)
+        except Exception as exc:
+            result["new_views_results"].append({"name": view_name, "error": str(exc), "success": False})
+            print(f"  ✗ [{worksheet_name}] 新视图创建失败 {view_name}: {exc}", file=_sys.stderr)
+
+    return result
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="遍历应用工作表并使用 AI 规划视图")
     parser.add_argument("--config", default=str(GEMINI_CONFIG_PATH), help="AI 配置 JSON 路径")
