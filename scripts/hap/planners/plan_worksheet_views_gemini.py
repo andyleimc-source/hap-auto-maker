@@ -61,7 +61,18 @@ CURRENT_AI_CONFIG: Dict[str, str] = {}
 
 APP_INFO_URL = "https://api.mingdao.com/v3/app"
 GET_CONTROLS_URL = "https://www.mingdao.com/api/Worksheet/GetWorksheetControls"
-ALLOWED_VIEW_TYPES = {"0", "1", "2", "3", "4", "5"}
+ALLOWED_VIEW_TYPES = {"0", "1", "3", "4", "5"}
+
+# 看板字段语义约束（用于执行前兜底校验，避免 AI 漏遵循 prompt 规则）
+KANBAN_FLOW_KEYWORDS = (
+    "状态", "阶段", "进度", "步骤", "环节",
+    "审批", "审核", "审查", "审定",
+    "优先级", "紧急程度", "严重程度", "风险等级", "紧急级别", "重要程度",
+)
+KANBAN_EXCLUDE_KEYWORDS = (
+    "类型", "分类", "方式", "来源", "渠道", "性别",
+    "行业", "地区", "部门", "岗位", "职位", "职级",
+)
 
 
 def parse_selection(text: str, max_index: int) -> List[int]:
@@ -374,6 +385,41 @@ def _find_single_select_field(fields: List[dict]) -> str:
     return ""
 
 
+def _is_kanban_semantic_field(field_name: str) -> bool:
+    """判断字段名是否具备看板流转语义（排除纯分类字段）。"""
+    name = str(field_name or "").strip()
+    if not name:
+        return False
+    has_flow = any(k in name for k in KANBAN_FLOW_KEYWORDS)
+    has_exclude = any(k in name for k in KANBAN_EXCLUDE_KEYWORDS)
+    # 允许“合同状态”等包含流转语义的字段，即使同时命中部分排除词也不放行
+    return has_flow and not has_exclude
+
+
+def _kanban_name_needs_rewrite(view_name: str) -> bool:
+    """看板名是否需要按真实字段重写（避免“按类型看板”等误导命名）。"""
+    name = str(view_name or "").strip()
+    if not name:
+        return True
+    has_flow = any(k in name for k in KANBAN_FLOW_KEYWORDS)
+    has_exclude = any(k in name for k in KANBAN_EXCLUDE_KEYWORDS)
+    return (not has_flow) or has_exclude
+
+
+def _find_kanban_field(fields: List[dict]) -> str:
+    """优先匹配具备看板流转语义的单选字段。"""
+    for f in fields:
+        if bool(f.get("isSystem", False)):
+            continue
+        if str(f.get("type", "")).strip() not in ("9", "11"):
+            continue
+        if _is_kanban_semantic_field(str(f.get("name", ""))):
+            fid = str(f.get("id", "")).strip()
+            if fid:
+                return fid
+    return ""
+
+
 def _find_date_fields(fields: List[dict]) -> List[str]:
     """找非系统日期字段 ID（type=15 或 16），用于甘特图自动补全。"""
     result = []
@@ -424,9 +470,6 @@ def normalize_views(raw_views: Any, fields: List[dict], worksheet_id: str = "") 
         name = str(item.get("name", "")).strip()
         if not name:
             name = f"视图_{view_type}_{len(out)+1}"
-        if name in seen_names:
-            name = f"{name}_{len(out)+1}"
-        seen_names.add(name)
 
         display_controls = item.get("displayControls")
         if not isinstance(display_controls, list):
@@ -446,12 +489,31 @@ def normalize_views(raw_views: Any, fields: List[dict], worksheet_id: str = "") 
         if not isinstance(advanced_setting, dict):
             advanced_setting = {}
 
-        # 自动补全：看板视图缺 viewControl 时，自动匹配第一个单选字段
-        if view_type == "1" and not view_control:
-            fallback_vc = _find_single_select_field(fields)
-            if fallback_vc:
-                view_control = fallback_vc
-                print(f"    ⚠ 看板视图「{name}」缺少 viewControl，自动补全为 {fallback_vc}")
+        # 看板视图：强制语义校验 + 严格补全（仅允许状态流转语义字段）
+        if view_type == "1":
+            field_by_id = {str(f.get("id", "")).strip(): f for f in fields}
+            vc_field = field_by_id.get(view_control) if view_control else None
+            vc_valid = False
+            if vc_field is not None:
+                vc_type = str(vc_field.get("type", "")).strip()
+                vc_name = str(vc_field.get("name", "")).strip()
+                vc_valid = (vc_type in ("9", "11")) and _is_kanban_semantic_field(vc_name)
+
+            if not vc_valid:
+                fallback_vc = _find_kanban_field(fields)
+                if fallback_vc:
+                    view_control = fallback_vc
+                    fb_field = field_by_id.get(fallback_vc, {})
+                    fb_name = str(fb_field.get("name", "")).strip()
+                    if fb_name and _kanban_name_needs_rewrite(name):
+                        old_name = name
+                        name = f"按{fb_name}看板"
+                        print(f"    ⚠ 看板视图「{old_name}」viewControl 无效，自动纠正为 {fallback_vc}，并重命名为「{name}」")
+                    else:
+                        print(f"    ⚠ 看板视图「{name}」viewControl 无效，自动纠正为 {fallback_vc}")
+                else:
+                    print(f"    ⚠ 看板视图「{name}」缺少可用状态流转字段，跳过该视图")
+                    continue
 
         # 自动补全：表格视图名暗示分组但缺 groupsetting 配置
         # 注意：表格视图行分组使用 advancedSetting.groupsetting（JSON字符串数组），
@@ -537,6 +599,22 @@ def normalize_views(raw_views: Any, fields: List[dict], worksheet_id: str = "") 
             if not isinstance(upd, dict):
                 continue
             normalized_updates.append(upd)
+
+        # 去重：同一张表不重复创建相同看板分组字段的看板视图
+        if view_type == "1" and view_control:
+            duplicated_kanban = any(
+                str(v.get("viewType", "")).strip() == "1"
+                and str(v.get("viewControl", "")).strip() == view_control
+                for v in out
+            )
+            if duplicated_kanban:
+                print(f"    ⚠ 看板视图「{name}」与已有看板分组字段重复（{view_control}），跳过")
+                continue
+
+        # 兜底去重：看板重命名后也要保证视图名唯一
+        if name in seen_names:
+            name = f"{name}_{len(out)+1}"
+        seen_names.add(name)
 
         out.append(
             {
@@ -1016,7 +1094,7 @@ def plan_and_create_views_for_ws(
         try:
             raw_text = _call_ai_with_retry(client, model, current_prompt, label=f"view:{worksheet_name}")
             plan = _parse_ai_json(raw_text)
-            validation_errors = validate_single_ws_view_plan(plan, field_ids)
+            validation_errors = validate_single_ws_view_plan(plan, field_ids, fields)
             if not validation_errors:
                 break
         except Exception as exc:

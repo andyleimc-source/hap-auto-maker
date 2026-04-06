@@ -773,7 +773,8 @@ def build_single_ws_view_prompt(
 
 1) 默认视图改造必须有实际业务含义——至少改名 + 设 displayControls，如有单选字段(type=9/11)则加 groupsetting 分组
 2) displayControls 选 5-8 个最重要的字段 ID
-3) 看板(viewType=1)：必须有单选字段(type=9/11)作为 viewControl
+3) 看板(viewType=1)：必须有单选字段(type=9/11)作为 viewControl，且字段名必须体现流转语义（状态/阶段/进度/审批/优先级/严重程度/风险等级等）
+   ❌ 禁止使用「类型、分类、方式、来源、渠道、性别、行业、地区、部门、岗位、职位、职级」等纯分类字段做看板列
 4) 日历(viewType=4)：postCreateUpdates 中设 calendarcids；只要有任意日期字段（type=15/16）即可创建
 5) 甘特图(viewType=5)：需要开始+结束两个日期字段
 6) ❌ 层级(viewType=2)：已禁用，禁止生成
@@ -786,6 +787,7 @@ def build_single_ws_view_prompt(
 def validate_single_ws_view_plan(
     plan: dict,
     field_ids: set[str],
+    fields: list[dict] | None = None,
 ) -> list[str]:
     """校验单表视图规划输出。"""
     errors = []
@@ -818,5 +820,32 @@ def validate_single_ws_view_plan(
                 for cid in dc:
                     if str(cid).strip() and str(cid).strip() not in field_ids:
                         errors.append(f"new_views[{i}].displayControls 引用不存在的字段: {cid}")
+            # 看板专属校验：viewControl 必须是有效且具备流转语义的单选字段
+            if vt == "1":
+                vc = str(v.get("viewControl", "")).strip()
+                if not vc:
+                    errors.append(f"new_views[{i}] 看板缺少 viewControl")
+                elif vc not in field_ids:
+                    errors.append(f"new_views[{i}] 看板 viewControl 引用不存在字段: {vc}")
+                elif isinstance(fields, list):
+                    f_by_id = {
+                        str(f.get("id", "")).strip(): f
+                        for f in fields
+                        if isinstance(f, dict) and str(f.get("id", "")).strip()
+                    }
+                    vf = f_by_id.get(vc)
+                    if not vf:
+                        errors.append(f"new_views[{i}] 看板 viewControl 字段不存在: {vc}")
+                    else:
+                        vtype = str(vf.get("type", "")).strip()
+                        vname = str(vf.get("name", "")).strip()
+                        if vtype not in ("9", "11"):
+                            errors.append(f"new_views[{i}] 看板 viewControl 不是单选字段(type=9/11): {vc}")
+                        FLOW = ("状态", "阶段", "进度", "步骤", "环节", "审批", "审核", "审查", "审定", "优先级", "紧急程度", "严重程度", "风险等级", "紧急级别", "重要程度")
+                        EXCLUDE = ("类型", "分类", "方式", "来源", "渠道", "性别", "行业", "地区", "部门", "岗位", "职位", "职级")
+                        has_flow = any(k in vname for k in FLOW)
+                        has_exclude = any(k in vname for k in EXCLUDE)
+                        if (not has_flow) or has_exclude:
+                            errors.append(f"new_views[{i}] 看板字段语义不合法（字段名={vname}）")
 
     return errors
