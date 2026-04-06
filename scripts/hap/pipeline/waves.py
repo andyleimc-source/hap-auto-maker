@@ -490,6 +490,138 @@ def run_all_waves(
     if _abort_if_failed():
         return ctx
 
+    # ── Wave 3.5b: 逐表造数 + 关联字段填写（Two-Phase）──────────────────────────────
+    if mock_data.get("enabled", True) and worksheet_create_result_path and not execution_dry_run:
+        from planners.mock_data_inline import plan_and_write_mock_data_for_ws, apply_relation_phase
+        from mock_data_common import build_schema_snapshot, DEFAULT_BASE_URL
+        from ai_utils import AI_CONFIG_PATH as _MD_AI_CFG, load_ai_config as _md_load_ai, get_ai_client as _md_get_client
+
+        print(f"\n-- Wave 3.5b Phase 1: 逐表造数 --- 总计 {time.time()-pipeline_start:.0f}s", flush=True)
+
+        # 从 app_auth_json 取 appKey/sign
+        _auth_data = load_json(Path(app_auth_json))
+        _auth_rows = _auth_data.get("data", [])
+        _auth_row = next(
+            (r for r in _auth_rows if isinstance(r, dict) and r.get("appId") == app_id),
+            _auth_rows[0] if _auth_rows else {},
+        )
+        _md_app_key = str(_auth_row.get("appKey", "")).strip()
+        _md_sign = str(_auth_row.get("sign", "")).strip()
+
+        # 构建结构快照（含 relationPairs, relationEdges）
+        _md_snapshot = build_schema_snapshot(
+            DEFAULT_BASE_URL,
+            {
+                "appId": app_id,
+                "appName": str(app.get("name", "")).strip(),
+                "appKey": _md_app_key,
+                "sign": _md_sign,
+                "authPath": app_auth_json,
+                "authFile": "",
+            },
+        )
+        _md_relation_pairs = _md_snapshot.get("relationPairs", [])
+        _md_relation_edges = _md_snapshot.get("relationEdges", [])
+        _md_ws_schemas_by_id = {wss["worksheetId"]: wss for wss in _md_snapshot.get("worksheets", [])}
+
+        # 业务背景
+        _md_business_context = str(ws.get("business_context", "")).strip()
+        _md_app_name = str(app.get("name", "")).strip()
+
+        # AI client
+        _md_ai_config = _md_load_ai(_MD_AI_CFG)
+        _md_client = _md_get_client(_md_ai_config)
+        _md_model = _md_ai_config["model"]
+
+        # Phase 1: 并发逐表造数
+        _md_all_row_ids: dict = {}
+        _md_results: list = []
+        _md_lock = threading.Lock()
+
+        def _do_mock_for_ws(ws_name: str, ws_id: str):
+            wss_schema = _md_ws_schemas_by_id.get(ws_id)
+            if not wss_schema:
+                print(f"  ⚠ [{ws_name}] 未找到结构快照，跳过造数", flush=True)
+                return
+            with gemini_semaphore:
+                result = plan_and_write_mock_data_for_ws(
+                    client=_md_client,
+                    model=_md_model,
+                    ai_config=_md_ai_config,
+                    app_id=app_id,
+                    app_name=_md_app_name,
+                    business_context=_md_business_context,
+                    app_key=_md_app_key,
+                    sign=_md_sign,
+                    base_url=DEFAULT_BASE_URL,
+                    worksheet_id=ws_id,
+                    worksheet_name=ws_name,
+                    ws_schema=wss_schema,
+                    relation_pairs=_md_relation_pairs,
+                    relation_edges=_md_relation_edges,
+                    dry_run=mock_data.get("dry_run", False),
+                )
+            with _md_lock:
+                _md_results.append(result)
+                if result.get("rowIds"):
+                    _md_all_row_ids[ws_id] = result["rowIds"]
+
+        _md_ws_create_data = load_json(Path(worksheet_create_result_path))
+        _md_name_to_id = _md_ws_create_data.get("name_to_worksheet_id", {})
+
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            futures = [pool.submit(_do_mock_for_ws, wn, wi) for wn, wi in _md_name_to_id.items()]
+            for f in futures:
+                try:
+                    f.result()
+                except Exception as exc:
+                    print(f"  ✗ 造数任务异常: {exc}", file=sys.stderr)
+
+        print(f"  造数完成: {len(_md_all_row_ids)}/{len(_md_name_to_id)} 张表写入成功", flush=True)
+
+        # 保存 Phase 1 结果
+        _md_result_dir = Path(app_auth_json).parent.parent / "mock_data_inline_results"
+        _md_result_dir.mkdir(parents=True, exist_ok=True)
+        _md_result_path = _md_result_dir / f"mock_data_inline_{app_id}_{now_ts()}.json"
+        write_json(_md_result_path, {
+            "appId": app_id,
+            "appName": _md_app_name,
+            "worksheets": _md_results,
+            "rowIdMap": _md_all_row_ids,
+        })
+        ctx.mock_data_inline_result_json = str(_md_result_path)
+
+        # Phase 2: 按 tier 并发填关联
+        if mock_data.get("relation_enabled", True) and _md_all_row_ids and _md_relation_pairs:
+            print(f"\n-- Wave 3.5b Phase 2: 关联字段填写 --- 总计 {time.time()-pipeline_start:.0f}s", flush=True)
+            _md_rel_result = apply_relation_phase(
+                app_id=app_id,
+                app_key=_md_app_key,
+                sign=_md_sign,
+                base_url=DEFAULT_BASE_URL,
+                relation_pairs=_md_relation_pairs,
+                relation_edges=_md_relation_edges,
+                all_row_ids=_md_all_row_ids,
+                worksheet_schemas=list(_md_ws_schemas_by_id.values()),
+                dry_run=mock_data.get("dry_run", False),
+            )
+            _md_rel_result_path = _md_result_dir / f"mock_relation_{app_id}_{now_ts()}.json"
+            write_json(_md_rel_result_path, _md_rel_result)
+            ctx.mock_relation_apply_result_json = str(_md_rel_result_path)
+            print(f"  关联处理完成: {_md_rel_result_path}", flush=True)
+
+        with steps_lock:
+            steps_report.append({
+                "step_id": 9, "step_key": "mock_data_inline",
+                "title": "Wave 3.5b 造数+关联",
+                "skipped": False,
+                "ok": True,
+                "result": {
+                    "inline_result": str(ctx.mock_data_inline_result_json),
+                    "worksheets_written": len(_md_all_row_ids),
+                },
+            })
+
     # Wave 4: 并行（icon/布局/造数/机器人/工作流规划/图表规划）
     print(
         f"\n-- Wave 4: icon / 布局 / 造数 / 机器人 / 工作流规划（并行） --- 总计 {time.time()-pipeline_start:.0f}s",
@@ -533,6 +665,17 @@ def run_all_waves(
         return ok5
 
     def run_step_9() -> bool:
+        # Wave 3.5b 已完成造数，跳过旧流水线
+        if ctx.mock_data_inline_result_json:
+            with steps_lock:
+                steps_report.append({
+                    "step_id": 9, "step_key": "mock_data",
+                    "title": "执行造数流水线",
+                    "skipped": True,
+                    "reason": "already_done_in_wave_3.5b",
+                    "result": {},
+                })
+            return True
         if not mock_data.get("enabled", True):
             with steps_lock:
                 steps_report.append({"step_id": 9, "step_key": "mock_data", "title": "执行造数流水线", "skipped": True, "reason": "disabled_by_spec", "result": {}})
