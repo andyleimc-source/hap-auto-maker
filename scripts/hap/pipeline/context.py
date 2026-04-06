@@ -46,8 +46,6 @@ class PipelineContext:
     mock_data_inline_result_json: Optional[str] = None   # Wave 3.5b Phase 1 产物
     mock_relation_apply_result_json: Optional[str] = None  # Wave 3.5b Phase 2 产物
     chatbot_pipeline_result_json: Optional[str] = None
-    workflow_plan_json: Optional[str] = None
-    workflow_execute_result_json: Optional[str] = None
     page_registry_json: Optional[str] = None
 
     # ── 步骤报告（线程安全） ────────────────────────────────
@@ -75,8 +73,6 @@ class PipelineContext:
             "mock_data_inline_result_json": self.mock_data_inline_result_json,
             "mock_relation_apply_result_json": self.mock_relation_apply_result_json,
             "chatbot_pipeline_result_json": self.chatbot_pipeline_result_json,
-            "workflow_plan_json": self.workflow_plan_json,
-            "workflow_execute_result_json": self.workflow_execute_result_json,
             "page_registry_json": self.page_registry_json,
         }
 
@@ -100,7 +96,7 @@ class PipelineContext:
         ])
         fail_count = len([s for s in self.steps_report if s.get("ok") is False])
         return {
-            "schema_version": "workflow_requirement_v1_execution_report",
+            "schema_version": "hap_requirement_v1_execution_report",
             "created_at": now_iso(),
             "spec_json": str(self.spec_path),
             "dry_run": self.execution_dry_run,
