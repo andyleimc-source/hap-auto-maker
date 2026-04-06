@@ -4,7 +4,8 @@ description: 增量操作特性进展：对已有应用做局部增删改查的 
 type: project
 ---
 
-当前已完成 Phase 1 + Phase 2（2026-04-03）：
+当前已完成 Phase 1 + Phase 2（2026-04-03）。
+注：2026-04-07 起工作流模块已下线，以下条目中的工作流脚本仅作历史记录。
 
 **已创建文件：**
 - `scripts/hap/incremental/__init__.py`

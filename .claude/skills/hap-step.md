@@ -8,7 +8,6 @@
 /hap-step [步骤名]
 /hap-step mock-data
 /hap-step views
-/hap-step workflows
 ```
 
 不带参数时，列出所有可用步骤供选择。
@@ -21,7 +20,6 @@
 | `worksheets` | 创建工作表和字段 | `pipeline_worksheets.py` |
 | `views` | 创建视图配置 | `pipeline_views.py` |
 | `mock-data` | 生成测试数据 | `pipeline_mock_data.py` |
-| `workflows` | 创建工作流 | `workflow/scripts/pipeline_workflows.py` |
 | `charts` | 创建统计图表页 | `create_pages_from_plan.py` |
 | `roles` | 配置角色权限 | `pipeline_app_roles.py` |
 | `chatbots` | 创建智能机器人 | `pipeline_chatbots.py` |
@@ -71,6 +69,5 @@ python3 scripts/hap/[对应脚本] [参数]
 
 - `views` 依赖 `worksheets` 完成
 - `mock-data` 依赖 `worksheets` 完成
-- `workflows` 依赖 `worksheets` 完成
 - `charts` 依赖 `worksheets` + `mock-data` 完成（可选）
 - `repair-relations` 依赖 `mock-data` 完成

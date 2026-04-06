@@ -9,12 +9,11 @@
 worksheets/FIELD_REGISTRY → worksheet_planner.py → prompt → Gemini → validate → plan.json
 views/VIEW_REGISTRY       → view_planner.py      → prompt → Gemini → validate → plan.json
 charts/CHART_REGISTRY     → chart_planner.py      → prompt → Gemini → validate → plan.json
-nodes/NODE_REGISTRY       → workflow_planner.py    → prompt → Gemini → validate → plan.json
 ```
 
 核心能力：
 1. **从注册中心读取元数据** — 自动生成 AI prompt 中的类型说明
-2. **字段分类** — 按类型(text/number/date/select)分组，推荐适合的图表/视图/节点类型
+2. **字段分类** — 按类型(text/number/date/select)分组，推荐适合的图表/视图类型
 3. **增强校验** — 不仅检查存在性，还检查类型兼容性
 
 ## 目录结构
@@ -26,11 +25,10 @@ scripts/hap/planning/
 ├── worksheet_planner.py     # 工作表+字段规划器
 ├── view_planner.py          # 视图规划+配置器
 ├── chart_planner.py         # 图表规划器
-├── workflow_planner.py      # 工作流规划器
 └── README.md
 ```
 
-## 四个规划器
+## 三个规划器
 
 ### 1. worksheet_planner.py — 工作表+字段规划
 
@@ -60,25 +58,14 @@ scripts/hap/planning/
 | `build_enhanced_prompt()` | 包含类型约束+字段推荐 |
 | `validate_enhanced_plan()` | 字段存在性+类型兼容性 |
 
-### 4. workflow_planner.py — 工作流规划
-
-利用 `nodes/NODE_REGISTRY`（27 种节点）。
-
-| 函数 | 用途 |
-|------|------|
-| `build_enhanced_prompt()` | 从注册中心生成节点说明 |
-| `validate_workflow_plan()` | 节点类型+跨表+trigger 校验 |
-
 ## constraints.py — 共用约束生成器
 
 | 函数 | 用途 |
 |------|------|
 | `get_chart_constraints()` | 17 种图表类型约束 |
-| `get_node_constraints()` | 27 种节点类型约束 |
 | `classify_fields(controls)` | 将字段按 text/number/date/select 分类 |
 | `suggest_chart_types(classified)` | 根据字段推荐图表 |
 | `build_chart_type_prompt_section()` | 生成 prompt 段落 |
-| `build_node_type_prompt_section()` | 生成 prompt 段落 |
 
 ## 与现有代码的关系
 
@@ -87,4 +74,3 @@ scripts/hap/planning/
 | `scripts/gemini/plan_app_worksheets_gemini.py` | `worksheet_planner.py` | 可迁移 |
 | `scripts/hap/plan_worksheet_views_gemini.py` | `view_planner.py` | 可迁移 |
 | `scripts/hap/plan_charts_gemini.py` | `chart_planner.py` | 可迁移 |
-| `workflow/scripts/pipeline_workflows.py` | `workflow_planner.py` | 可迁移 |

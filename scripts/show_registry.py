@@ -6,7 +6,6 @@ HAP Auto Maker — 注册中心 & 规划师总览 CLI
     python scripts/show_registry.py fields        # 只看字段
     python scripts/show_registry.py views         # 只看视图
     python scripts/show_registry.py charts        # 只看图表
-    python scripts/show_registry.py nodes         # 只看工作流节点
     python scripts/show_registry.py planners      # 只看规划师
 """
 
@@ -18,8 +17,7 @@ from pathlib import Path
 # 确保 import 路径
 _ROOT = Path(__file__).resolve().parents[1]
 _HAP = _ROOT / "scripts" / "hap"
-_WF = _ROOT / "workflow"
-for p in [str(_HAP), str(_WF)]:
+for p in [str(_HAP)]:
     if p not in sys.path:
         sys.path.insert(0, p)
 
@@ -160,27 +158,8 @@ def show_charts():
     _table(rows, ["reportType", "名称", "已验证", "子模块", "说明"])
 
 
-def show_nodes():
-    from nodes import NODE_REGISTRY
-
-    _header("工作流节点注册中心 (NODE_REGISTRY)", len(NODE_REGISTRY),
-            "workflow/nodes/__init__.py")
-
-    rows = []
-    for nt in sorted(NODE_REGISTRY.keys()):
-        spec = NODE_REGISTRY[nt]
-        verified = green("Yes") if spec.get("verified") else yellow("No")
-        rows.append([
-            str(nt),
-            spec.get("name", "-"),
-            spec.get("category", "-"),
-            verified,
-        ])
-    _table(rows, ["nodeType", "名称", "分类", "已验证"])
-
-
 def show_planners():
-    _header("规划师 (Planners)", 4, "planning/*.py")
+    _header("规划师 (Planners)", 3, "planning/*.py")
 
     planners = [
         {
@@ -204,13 +183,6 @@ def show_planners():
             "functions": "build_enhanced_prompt(), validate_enhanced_plan()",
             "output": "统计图表配置",
         },
-        {
-            "name": "工作流规划师",
-            "file": "planning/workflow_planner.py",
-            "registry": "NODE_REGISTRY (27 种节点)",
-            "functions": "build_enhanced_prompt(), validate_workflow_plan()",
-            "output": "工作流节点及连接",
-        },
     ]
 
     for p in planners:
@@ -228,8 +200,7 @@ def show_summary():
         ("字段类型", "FIELD_REGISTRY", "38", "worksheets/field_types.py"),
         ("视图类型", "VIEW_REGISTRY", "9", "views/view_types.py"),
         ("图表类型", "CHART_REGISTRY", "15", "charts/__init__.py"),
-        ("工作流节点", "NODE_REGISTRY", "27", "workflow/nodes/__init__.py"),
-        ("规划师", "planning/*.py", "4", "planning/"),
+        ("规划师", "planning/*.py", "3", "planning/"),
     ]
     rows = [[n, r, c, f] for n, r, c, f in items]
     _table(rows, ["模块", "注册变量", "数量", "文件"])
@@ -241,7 +212,6 @@ SECTIONS = {
     "fields": show_fields,
     "views": show_views,
     "charts": show_charts,
-    "nodes": show_nodes,
     "planners": show_planners,
 }
 
