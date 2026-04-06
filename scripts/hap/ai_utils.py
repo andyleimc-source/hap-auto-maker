@@ -83,17 +83,10 @@ def get_rpd_usage(model: str = None) -> Dict:
         }
     return {"date": today, "models": result}
 
-# 任务档位映射
-# Gemini 只允许使用 gemini-2.5-flash（费用控制，禁止 pro）
-TIER_MODELS = {
-    "gemini": {
-        "reasoning": "gemini-2.5-flash",
-        "fast": "gemini-2.5-flash",
-    },
-    "deepseek": {
-        "reasoning": "deepseek-reasoner",
-        "fast": "deepseek-chat",
-    },
+# 各供应商的默认模型（用户未配置时的 fallback）
+DEFAULT_MODELS = {
+    "gemini": DEFAULT_GEMINI_MODEL,
+    "deepseek": DEFAULT_DEEPSEEK_MODEL,
 }
 
 
@@ -106,20 +99,36 @@ def normalize_provider(provider: str) -> str:
     raise ValueError(f"不支持的 AI 供应商: {provider}")
 
 
-def get_model_by_tier(provider: str, tier: str = "fast") -> str:
+def default_model_for_provider(provider: str) -> str:
+    return DEFAULT_MODELS.get(normalize_provider(provider), DEFAULT_GEMINI_MODEL)
+
+
+def list_models(provider: str, api_key: str, base_url: str = "") -> list:
     """
-    根据供应商和任务档位获取模型名称。
-    tier: "reasoning" (推理档) | "fast" (极速档)
+    从厂商 API 拉取可用模型列表。失败时返回空列表。
     """
     p = normalize_provider(provider)
-    t = str(tier or "fast").strip().lower()
-    if t not in {"reasoning", "fast"}:
-        t = "fast"
-    return TIER_MODELS.get(p, {}).get(t, TIER_MODELS[p]["fast"])
-
-
-def default_model_for_provider(provider: str) -> str:
-    return get_model_by_tier(provider, "fast")
+    try:
+        if p == "gemini":
+            from google import genai
+            client = genai.Client(api_key=api_key)
+            models = []
+            for m in client.models.list():
+                name = m.name or ""
+                # 去掉 "models/" 前缀
+                short = name.replace("models/", "") if name.startswith("models/") else name
+                if short:
+                    models.append(short)
+            return sorted(models)
+        if p == "deepseek":
+            from openai import OpenAI
+            url = base_url or DEFAULT_DEEPSEEK_BASE_URL
+            client = OpenAI(api_key=api_key, base_url=url)
+            resp = client.models.list()
+            return sorted(m.id for m in resp.data if m.id)
+    except Exception as e:
+        print(f"  ⚠️  拉取 {p} 模型列表失败: {e}")
+    return []
 
 
 def default_base_url_for_provider(provider: str) -> str:
@@ -135,12 +144,11 @@ def mask_secret(value: str, show: int = 4) -> str:
     return text[:show] + "****"
 
 
-def load_ai_config(config_path: Optional[Path] = None, tier: Optional[str] = None) -> Dict[str, str]:
+def load_ai_config(config_path: Optional[Path] = None) -> Dict[str, str]:
     """
     加载 AI 配置。
-    如果指定了 tier，则根据 provider 自动选择模型；
-    否则，优先使用配置文件中的 model，若无则使用默认的 fast 模型。
-    返回: {"provider": "gemini|deepseek", "api_key": "...", "model": "...", "base_url": "...", "tier": "..."}
+    直接使用配置文件中的 model，若无则使用供应商默认模型。
+    返回: {"provider": "gemini|deepseek", "api_key": "...", "model": "...", "base_url": "..."}
     """
     if config_path is None:
         config_path = AI_CONFIG_PATH
@@ -161,29 +169,17 @@ def load_ai_config(config_path: Optional[Path] = None, tier: Optional[str] = Non
 
     provider = normalize_provider(str(data.get("provider", "gemini")).strip().lower())
     api_key = str(data.get("api_key", "")).strip()
-
-    # 模型选择逻辑
-    if tier:
-        model = get_model_by_tier(provider, tier)
-    else:
-        model = str(data.get("model", "")).strip() or get_model_by_tier(provider, "fast")
-
+    model = str(data.get("model", "")).strip() or default_model_for_provider(provider)
     base_url = str(data.get("base_url", "")).strip() or default_base_url_for_provider(provider)
 
     if not api_key:
         raise ValueError(f"AI 配置缺少 api_key: {target_path}")
-
-    # Gemini provider 只允许使用 gemini-2.5-flash（费用控制，禁止 pro）
-    if provider == "gemini" and model != "gemini-2.5-flash":
-        print(f"  ⚠️  Gemini 模型 '{model}' 已被强制替换为 'gemini-2.5-flash'（禁止使用 pro，费用控制）")
-        model = "gemini-2.5-flash"
 
     return {
         "provider": provider,
         "api_key": api_key,
         "model": model,
         "base_url": base_url,
-        "tier": tier or ("reasoning" if "reasoner" in model else "fast"),
     }
 
 
