@@ -22,6 +22,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
+import os
+
 import requests
 from utils import latest_file, load_json
 
@@ -667,6 +669,52 @@ def verify_relation_cardinality(
     }
 
 
+_TYPE_NAME_MAP = {
+    "Text": 2, "Number": 6, "SingleSelect": 9, "MultipleSelect": 10,
+    "Dropdown": 11, "Attachment": 14, "Date": 15, "DateTime": 16,
+    "Collaborator": 26, "Department": 27, "Rating": 28, "Checkbox": 36,
+    "Phone": 3, "Money": 8, "Email": 5, "Area": 24, "RichText": 41,
+    "AutoNumber": 33, "Formula": 31, "Score": 28,
+}
+
+
+def _type_name_to_int(type_name: str) -> int:
+    """将字段类型名称转为整数类型编号，未知类型默认返回 2（Text）。"""
+    return _TYPE_NAME_MAP.get(type_name, 2)
+
+
+def _fetch_real_fields(base_url: str, headers: dict, worksheet_id: str) -> list:
+    """
+    通过 v3 API 获取工作表的实际字段列表。
+    返回 [{controlId, controlName, controlType}]，跳过 Relation/SubTable/Rollup 类型。
+    """
+    url = base_url.rstrip("/") + GET_WS_ENDPOINT.format(worksheet_id=worksheet_id)
+    resp = requests.get(url, headers=headers, timeout=30)
+    data = resp.json()
+    if not data.get("success"):
+        print(f"[warn] 获取工作表字段失败: {worksheet_id}, resp={data}")
+        return []
+    ws_data = data.get("data", {})
+    fields = ws_data.get("fields", [])
+    if not isinstance(fields, list):
+        return []
+    # 跳过 Relation(29), SubTable(34), Rollup(37)
+    skip_types = {29, 34, 37}
+    result = []
+    for f in fields:
+        if not isinstance(f, dict):
+            continue
+        ctype = int(f.get("type", 0) or 0)
+        if ctype in skip_types:
+            continue
+        result.append({
+            "controlId": str(f.get("controlId", "")),
+            "controlName": str(f.get("name", "")),
+            "controlType": ctype,
+        })
+    return result
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="根据规划 JSON 创建工作表")
     parser.add_argument(
@@ -681,7 +729,18 @@ def main() -> None:
     )
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="API 基础地址")
     parser.add_argument("--dry-run", action="store_true", help="只打印计划，不发请求")
+    parser.add_argument("--page-registry", default="", help="page_registry.json 路径")
     args = parser.parse_args()
+
+    # 加载 page_registry（图表回调所需）
+    page_registry = None
+    ai_config = None
+    if args.page_registry and Path(args.page_registry).exists():
+        page_registry = load_json(Path(args.page_registry))
+        from ai_utils import load_ai_config
+        ai_config = load_ai_config(tier="fast")
+        pages = page_registry.get("pages", [])
+        print(f"[page-registry] 已加载 {len(pages)} 个页面")
 
     plan_path = resolve_json_input(args.plan_json)
     plan = load_json(plan_path)
@@ -801,6 +860,59 @@ def main() -> None:
         futures = [executor.submit(_add_deferred_one, item) for item in relations_todo]
         for future in as_completed(futures):
             future.result()  # 失败已在函数内打印警告，不中断主流程
+
+    # Phase 1.6: 为每个工作表规划并创建图表（需要 page_registry）
+    if page_registry and ai_config:
+        from executors import create_single_ws_charts
+
+        # 建立 ws_name -> page_entry 映射
+        ws_name_to_page = {}
+        for page in page_registry.get("pages", []):
+            if not isinstance(page, dict):
+                continue
+            ws = page.get("worksheet_name", "")
+            if ws:
+                ws_name_to_page[ws] = page
+
+        auth_config_path = os.environ.get("AUTH_CONFIG_PATH", "")
+        sem = threading.Semaphore(2)
+        chart_results = []
+
+        def _create_charts_one(item):
+            ws_name = item["name"]
+            ws_id = item["worksheetId"]
+            page_entry = ws_name_to_page.get(ws_name)
+            if not page_entry:
+                return None
+            real_fields = _fetch_real_fields(args.base_url, headers, ws_id)
+            if not real_fields:
+                print(f"  [chart] {ws_name}: 无可用字段，跳过图表")
+                return None
+            try:
+                count = create_single_ws_charts.plan_and_create_charts(
+                    worksheet_id=ws_id,
+                    worksheet_name=ws_name,
+                    fields=real_fields,
+                    page_entry=page_entry,
+                    app_id=app_id,
+                    auth_config_path=auth_config_path,
+                    ai_config=ai_config,
+                    gemini_semaphore=sem,
+                )
+                return {"name": ws_name, "charts_created": count}
+            except Exception as exc:
+                print(f"  [chart] {ws_name}: 图表创建失败 — {exc}")
+                return {"name": ws_name, "charts_created": 0, "error": str(exc)}
+
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            futures = [executor.submit(_create_charts_one, item) for item in relations_todo]
+            for future in as_completed(futures):
+                r = future.result()
+                if r is not None:
+                    chart_results.append(r)
+
+        total_charts = sum(r.get("charts_created", 0) for r in chart_results)
+        print(f"  ✔ Phase 1.6 图表: {len(chart_results)}/{len(relations_todo)} 工作表共生成 {total_charts} 个图表")
 
     # Phase 2: 并发回填关联字段
     relation_results = []
