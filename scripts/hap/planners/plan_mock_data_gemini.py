@@ -51,7 +51,7 @@ def generate_with_retry(client, model: str, prompt: str, retries: int, ai_config
                 config=create_generation_config(
                     ai_config,
                     response_mime_type="application/json",
-                    temperature=0.2,
+                    temperature=0.3,
                 ),
             )
         except Exception as exc:

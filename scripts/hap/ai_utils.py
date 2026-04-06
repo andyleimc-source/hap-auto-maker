@@ -25,7 +25,8 @@ DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 _RPD_USAGE_FILE = BASE_DIR / "config" / "gemini_rpd_usage.json"
 _RPD_USAGE_LOCK = BASE_DIR / "config" / "gemini_rpd_usage.json.lock"
 
-# RPD 配置上限（每日请求次数限额）
+# RPD 配置上限（每日请求次数限额）- 付费账号第一层级实际限额
+# gemini-2.5-flash: RPD=10K, RPM=1000, TPM=1M
 RPD_LIMITS = {
     "gemini-2.5-flash": 10000,
     "gemini-2.5-pro":   1000,

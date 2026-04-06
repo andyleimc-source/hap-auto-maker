@@ -24,15 +24,34 @@ if str(_HAP_DIR) not in sys.path:
     sys.path.insert(0, str(_HAP_DIR))
 
 
+_BATCH_SIZE = 5  # 每轮 AI 最多生成条数，修改此值即可全局调整
+
+
+def _split_into_batches(total: int, batch_size: int = _BATCH_SIZE) -> List[int]:
+    """
+    将 total 条记录按 batch_size 拆分为各轮条数列表。
+    示例：total=8, batch_size=5 → [5, 3]；total=5 → [5]；total=3 → [3]
+    """
+    if total <= 0:
+        return []
+    batches = []
+    remaining = total
+    while remaining > 0:
+        batches.append(min(batch_size, remaining))
+        remaining -= batch_size
+    return batches
+
+
 def compute_new_record_count(
     ws_id: str,
     relation_pairs: List[dict],
     relation_edges: List[dict],
-) -> int:
+) -> List[int]:
     """
-    新 recordCount 规则：
-    - 1:N 明细端（该表有 subType=1 的出边，且参与 1-N pair）→ 6 条
-    - 其余（主表端 subType=2、1:1、无关联）→ 3 条
+    新 recordCount 规则（返回各轮条数列表，每轮最多 _BATCH_SIZE 条）：
+    - 1:N 明细端（该表有 subType=1 的出边，且参与 1-N pair）→ 共10条，拆成 [5, 5]
+    - 其余（主表端 subType=2、1:1、无关联）→ 共5条，拆成 [5]
+    未来修改目标条数只需调整此函数返回的 total 值，分批逻辑自动处理。
     """
     # 收集该表的出边 subType
     outgoing_subtypes = [
@@ -55,7 +74,8 @@ def compute_new_record_count(
         and all(s == 1 for s in outgoing_subtypes)
         and in_1n_pair
     )
-    return 10 if is_detail_end else 5
+    total = 10 if is_detail_end else 5
+    return _split_into_batches(total)
 
 
 def build_mock_prompt(
@@ -198,7 +218,9 @@ def plan_and_write_mock_data_for_ws(
     from ai_utils import parse_ai_json
     from mock_data_common import create_rows_batch_v3
 
-    record_count = compute_new_record_count(worksheet_id, relation_pairs, relation_edges)
+    batches = compute_new_record_count(worksheet_id, relation_pairs, relation_edges)
+    total_count = sum(batches)
+    rounds = len(batches)
 
     # 构建 mini_snapshot（validate_plan 需要此结构）
     # Relation 字段已在 build_mock_prompt 中剔除，这里 ws_schema 保持原样供 validate 用
@@ -209,73 +231,76 @@ def plan_and_write_mock_data_for_ws(
             if f.get("type") != "Relation"
         ],
     }
-    mini_snapshot = {
-        "app": {"appId": app_id, "appName": app_name},
-        "worksheets": [ws_schema_no_relation],
-        "worksheetTiers": [{
-            "worksheetId": worksheet_id,
-            "worksheetName": worksheet_name,
-            "tier": 1,
-            "order": 1,
-            "recordCount": record_count,
-            "reason": "inline_mock",
-            "pairTypes": [],
-            "selfRelationSubTypes": [],
-        }],
+    field_meta_map = {
+        f["fieldId"]: f
+        for f in ws_schema_no_relation.get("writableFields", [])
     }
 
     try:
-        prompt = build_mock_prompt(
-            app_name=app_name,
-            business_context=business_context,
-            ws_name=worksheet_name,
-            ws_schema=ws_schema,
-            record_count=record_count,
-        )
-        resp = generate_with_retry(client, model, prompt, gemini_retries, ai_config)
-        raw = parse_ai_json(resp.text or "")
-        validated = validate_plan(raw, mini_snapshot)
-        bundle = validated["bundle"]
+        all_row_ids: List[str] = []
 
-        if dry_run:
-            print(f"  [dry-run] [{worksheet_name}] 规划完成，recordCount={record_count}，跳过写入")
-            return {
-                "worksheetId": worksheet_id,
-                "worksheetName": worksheet_name,
-                "rowIds": [],
-                "recordCount": record_count,
-                "error": None,
+        for round_idx, batch_count in enumerate(batches, start=1):
+            round_label = f"第{round_idx}/{rounds}轮" if rounds > 1 else ""
+            # mini_snapshot 的 recordCount 按本轮实际条数设置（供 validate_plan 校验）
+            mini_snapshot = {
+                "app": {"appId": app_id, "appName": app_name},
+                "worksheets": [ws_schema_no_relation],
+                "worksheetTiers": [{
+                    "worksheetId": worksheet_id,
+                    "worksheetName": worksheet_name,
+                    "tier": 1,
+                    "order": 1,
+                    "recordCount": batch_count,
+                    "reason": "inline_mock",
+                    "pairTypes": [],
+                    "selfRelationSubTypes": [],
+                }],
             }
+            prompt = build_mock_prompt(
+                app_name=app_name,
+                business_context=business_context,
+                ws_name=worksheet_name,
+                ws_schema=ws_schema,
+                record_count=batch_count,
+            )
+            resp = generate_with_retry(client, model, prompt, gemini_retries, ai_config)
+            raw = parse_ai_json(resp.text or "")
+            validated = validate_plan(raw, mini_snapshot)
+            bundle = validated["bundle"]
 
-        # 取 bundle 中该表的 records
-        ws_bundle = next(
-            (w for w in bundle.get("worksheets", []) if w["worksheetId"] == worksheet_id),
-            None,
-        )
-        if not ws_bundle:
-            raise ValueError(f"bundle 中找不到 worksheetId={worksheet_id}")
+            if dry_run:
+                print(f"  [dry-run] [{worksheet_name}]{round_label} 规划完成，batch={batch_count}，跳过写入")
+                continue
 
-        records = ws_bundle.get("records", [])
-        field_meta_map = {
-            f["fieldId"]: f
-            for f in ws_schema_no_relation.get("writableFields", [])
-        }
+            ws_bundle = next(
+                (w for w in bundle.get("worksheets", []) if w["worksheetId"] == worksheet_id),
+                None,
+            )
+            if not ws_bundle:
+                raise ValueError(f"bundle 中找不到 worksheetId={worksheet_id}（{round_label}）")
 
-        row_ids = create_rows_batch_v3(
-            base_url=base_url,
-            app_key=app_key,
-            sign=sign,
-            worksheet_id=worksheet_id,
-            enriched_records=records,
-            field_meta_map=field_meta_map,
-            trigger_workflow=False,
-        )
-        print(f"  ✓ [{worksheet_name}] 写入 {len(row_ids)} 条（计划 {record_count} 条）")
+            records = ws_bundle.get("records", [])
+            row_ids = create_rows_batch_v3(
+                base_url=base_url,
+                app_key=app_key,
+                sign=sign,
+                worksheet_id=worksheet_id,
+                enriched_records=records,
+                field_meta_map=field_meta_map,
+                trigger_workflow=False,
+            )
+            all_row_ids.extend(row_ids)
+            if rounds > 1:
+                print(f"  ✓ [{worksheet_name}] {round_label} 写入 {len(row_ids)} 条")
+
+        if not dry_run:
+            print(f"  ✓ [{worksheet_name}] 共写入 {len(all_row_ids)} 条（计划 {total_count} 条）")
+
         return {
             "worksheetId": worksheet_id,
             "worksheetName": worksheet_name,
-            "rowIds": row_ids,
-            "recordCount": record_count,
+            "rowIds": all_row_ids,
+            "recordCount": total_count,
             "error": None,
         }
 
@@ -285,7 +310,7 @@ def plan_and_write_mock_data_for_ws(
             "worksheetId": worksheet_id,
             "worksheetName": worksheet_name,
             "rowIds": [],
-            "recordCount": record_count,
+            "recordCount": total_count,
             "error": str(exc),
         }
 
