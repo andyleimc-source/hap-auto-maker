@@ -31,6 +31,10 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).parent))
+_HAP_DIR = str(Path(__file__).resolve().parents[2] / "scripts" / "hap")
+if _HAP_DIR not in sys.path:
+    sys.path.insert(0, _HAP_DIR)
+from utils import log_summary
 from workflow_io import Session, persist
 
 
@@ -1087,6 +1091,13 @@ def execute_worksheet_plan(
         r["seq"] = i
         results.append(r)
         print(f"    {'✓' if r.get('ok') else '✗'}  process_id={r.get('process_id')}", file=sys.stderr)
+        if r.get("ok") and not r.get("skipped"):
+            trigger_desc = "自定义动作"
+            node_names = [str(n.get("name", "")).strip() for n in r.get("action_nodes", []) if isinstance(n, dict) and n.get("name")]
+            node_count = len(r.get("action_nodes", []))
+            log_summary(f"✓ 工作流「{name}」→ {worksheet_name} / {trigger_desc} / {node_count} 个节点")
+            if node_names:
+                log_summary(f"  {' | '.join(node_names)}")
 
     # ── 2 个工作表事件触发 ────────────────────────────────────────────────────
     ev_plans = (ws_plan.get("worksheet_events") or [])[:2]
@@ -1103,6 +1114,15 @@ def execute_worksheet_plan(
         r["seq"] = len(ca_plans) + j
         results.append(r)
         print(f"    {'✓' if r.get('ok') else '✗'}  process_id={r.get('process_id')}", file=sys.stderr)
+        if r.get("ok") and not r.get("skipped"):
+            trigger_id = r.get("trigger_id", "")
+            trigger_map = {"1": "新增记录时", "2": "编辑记录时", "3": "删除记录时"}
+            trigger_desc = trigger_map.get(str(trigger_id), f"事件触发(id={trigger_id})")
+            node_names = [str(n.get("name", "")).strip() for n in r.get("action_nodes", []) if isinstance(n, dict) and n.get("name")]
+            node_count = len(r.get("action_nodes", []))
+            log_summary(f"✓ 工作流「{ev_name}」→ {worksheet_name} / {trigger_desc} / {node_count} 个节点")
+            if node_names:
+                log_summary(f"  {' | '.join(node_names)}")
 
     # ── 日期字段触发 ─────────────────────────────────────────────────────────
     dt_plans = (ws_plan.get("date_triggers") or [])[:2]
@@ -1120,6 +1140,12 @@ def execute_worksheet_plan(
         r["seq"] = seq_offset + k
         results.append(r)
         print(f"    {'✓' if r.get('ok') else '✗'}  process_id={r.get('process_id')}", file=sys.stderr)
+        if r.get("ok") and not r.get("skipped"):
+            node_names = [str(n.get("name", "")).strip() for n in r.get("action_nodes", []) if isinstance(n, dict) and n.get("name")]
+            node_count = len(r.get("action_nodes", []))
+            log_summary(f"✓ 工作流「{dt_name}」→ {worksheet_name} / 按日期字段触发 / {node_count} 个节点")
+            if node_names:
+                log_summary(f"  {' | '.join(node_names)}")
 
     ok_count = sum(1 for r in results if r.get("ok"))
     return {
@@ -1155,6 +1181,12 @@ def execute_time_triggers(
             print(f"    ❌ 异常：{exc}", file=sys.stderr)
         results.append(r)
         print(f"    {'✓' if r.get('ok') else '✗'}  process_id={r.get('process_id')}", file=sys.stderr)
+        if r.get("ok") and not r.get("skipped"):
+            node_names = [str(n.get("name", "")).strip() for n in r.get("action_nodes", []) if isinstance(n, dict) and n.get("name")]
+            node_count = len(r.get("action_nodes", []))
+            log_summary(f"✓ 工作流「{name}」→ 全局 / 定时触发 / {node_count} 个节点")
+            if node_names:
+                log_summary(f"  {' | '.join(node_names)}")
     return results
 
 
