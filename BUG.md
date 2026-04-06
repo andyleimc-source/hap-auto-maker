@@ -56,6 +56,21 @@
 
 ---
 
+## [BUG-007] 工作流更新记录节点创建后字段映射为空
+- **状态**: resolved
+- **现象**: 创建工作流的「更新记录」节点后，HAP 编辑器中「更新字段」区域为空，节点显示「未设置可执行的动作」
+- **根因**: 三层缺陷叠加
+  1. **规划层校验缺失**：`_validate_single_node_config` 对 `add_record` 要求 ≥2 个字段，但 `update_record` 没有对应的非空检查，AI 输出 `fields:[]` 可通过 Phase 2 验证
+  2. **执行层静默跳过**：`_sanitize_action_nodes` 发现 `update_record` 的 `fields` 为空时跳过该节点，但没有反馈机制触发重试，导致 `action_nodes_plan` 为空
+  3. **兜底逻辑反效果**：`add_action_nodes` 在 `action_nodes` 为空时自动注入 `fields:[]` 的占位节点，绕过 sanitize 直接发到 HAP API
+- **修复**:
+  - `scripts/hap/planning/workflow_planner.py`：`_validate_single_node_config` 对 `update_record` 补充 `len(fields) < 1` 校验，Phase 2 验证阶段直接报错迫使 AI 重规划
+  - `workflow/scripts/execute_workflow_plan.py`：`add_action_nodes` 中 `action_nodes` 为空时直接 `return []`，移除注入空字段占位节点的兜底逻辑
+- **验证**: 在综合医院应用创建测试工作流「测试-更新记录字段验证」，更新患者姓名节点 `fields_count=1`，saveNode 返回 `status=1 msg='成功'`，编辑器中可见字段映射
+- **关联**: GitHub Issue #2
+
+---
+
 ## [BUG-003] AI 响应超时断连
 - **状态**: resolved
 - **现象**: Step 2 卡很久后抛出 `ConnectionError` 或 `ReadTimeout`
