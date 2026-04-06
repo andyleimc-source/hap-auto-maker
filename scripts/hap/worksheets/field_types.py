@@ -76,6 +76,8 @@ FIELD_REGISTRY = {
     },
     "AutoNumber": {
         "controlType": 33, "name": "自动编号", "category": "basic",
+        "ai_disabled": True,
+        "ai_disabled_reason": "自动编号由系统自动管理，AI 规划禁止生成此字段类型",
         "doc": "自动递增编号，创建记录时自动分配。strDefault='increase' 必填。",
         "api_extra": {"strDefault": "increase"},
         "advancedSetting": {

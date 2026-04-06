@@ -29,14 +29,16 @@ from worksheets.field_types import (
 
 
 def build_field_type_enum() -> str:
-    """从注册中心生成字段类型枚举字符串。"""
-    return "|".join(FIELD_REGISTRY.keys())
+    """从注册中心生成字段类型枚举字符串（排除 ai_disabled 类型）。"""
+    return "|".join(k for k, v in FIELD_REGISTRY.items() if not v.get("ai_disabled"))
 
 
 def build_field_type_prompt_section() -> str:
-    """生成 AI prompt 中的字段类型说明。"""
+    """生成 AI prompt 中的字段类型说明（排除 ai_disabled 类型）。"""
     lines = ["可用字段类型："]
     for name, spec in FIELD_REGISTRY.items():
+        if spec.get("ai_disabled"):
+            continue
         extra = ""
         if spec.get("requires_options"):
             extra = " [需 option_values]"
@@ -161,6 +163,9 @@ def validate_worksheet_plan(plan: dict, min_worksheets: int = 0, max_worksheets:
             ftype = str(f.get("type", "")).strip()
             if ftype and ftype not in ALLOWED_FIELD_TYPES:
                 errors.append(f"工作表「{name}」字段 {j+1} 类型非法: {ftype}")
+            elif ftype and FIELD_REGISTRY.get(ftype, {}).get("ai_disabled"):
+                reason = FIELD_REGISTRY[ftype].get("ai_disabled_reason", "AI 规划禁止使用")
+                errors.append(f"工作表「{name}」字段 {j+1} 类型 {ftype} 已禁用: {reason}")
 
             if ftype in OPTION_REQUIRED_TYPES:
                 opts = f.get("option_values", [])
