@@ -86,6 +86,18 @@
 
 ---
 
+## [BUG-010] add_record 日期字段写入 Invalid date
+- **状态**: resolved
+- **现象**: 工作流 `add_record` 节点中日期/日期时间字段显示 `Invalid date`，无法正常写入
+- **根因**: AI 规划师（Phase 2）输出 `{{NOW}}`/`{{NOW_DATE}}`/`{{NOW_DATE_TIME}}` 等占位符作为日期字段值。执行层 `_build_fields` 只处理 `{{trigger.xxx}}` 格式，对 `NOW` 系列占位符不做任何转换，直接原样写入 HAP API，HAP 无法识别，渲染为 `Invalid date`
+- **正确格式（抓包确认）**: 日期字段"当前时间"需用系统节点结构：`{"fieldValueId":"nowTime","nodeId":"5d39140d381d42d20db0c4da","nodeName":"系统","fieldValueName":"当前时间","fieldValueType":<15或16>,"nodeTypeId":100,"appType":100}`
+- **修复**:
+  - `workflow/scripts/execute_workflow_plan.py`：`_build_fields` 检测 `{{NOW}}`/`{{NOW_DATE}}`/`{{NOW_DATE_TIME}}`/`{{CURRENT_DATE}}` 等，自动转换为 HAP 系统节点"当前时间"格式，`fieldValueType` 跟随字段 type（15 或 16）
+  - `workflow/scripts/pipeline_workflows.py`：prompt 明确禁止这些占位符，说明日期字段留空 `""` 即可
+- **验证**: 单元测试确认 `{{NOW_DATE}}` → type=15 系统节点、`{{NOW}}` → type=16 系统节点、普通文本和触发器变量格式均不受影响
+
+---
+
 ## [BUG-009] date_trigger 工作流无动作节点（仅有触发器）
 - **状态**: resolved
 - **现象**: 日期字段触发工作流（如"患者生日祝福提醒"）创建后只有触发节点，没有任何动作节点，工作流没有业务含义
