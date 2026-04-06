@@ -37,6 +37,9 @@ from mock_data_common import (
     write_json_with_latest,
 )
 
+# Faker 造数：能被 Faker 处理的字段从 prompt 中移除，减少 AI 负担
+from mock.faker_mapping import can_faker_handle, generate_faker_value
+
 
 def generate_with_retry(client, model: str, prompt: str, retries: int, ai_config: dict) -> Any:
     last_exc: Optional[Exception] = None
@@ -62,14 +65,40 @@ def generate_with_retry(client, model: str, prompt: str, retries: int, ai_config
     raise last_exc
 
 
+def _split_faker_fields(writable_fields: list[dict]) -> tuple[list[dict], list[str]]:
+    """
+    将 writableFields 分为两组：
+    - ai_fields: 需要 AI 生成的字段（Faker 无法处理）
+    - faker_field_names: Faker 可处理的字段名列表（用于 prompt 提示）
+    """
+    ai_fields = []
+    faker_field_names = []
+    for field in writable_fields:
+        field_name = field.get("name", "")
+        field_type = field.get("type", "")
+        if can_faker_handle(field_name, field_type):
+            faker_field_names.append(field_name)
+        else:
+            ai_fields.append(field)
+    return ai_fields, faker_field_names
+
+
 def build_prompt(snapshot: dict) -> str:
     app = snapshot.get("app", {})
     worksheets = []
+    all_faker_fields_info: list[str] = []  # 收集所有表的 Faker 字段信息
     for item in snapshot.get("worksheetTiers", []):
         ws_id = str(item.get("worksheetId", "")).strip()
         worksheet = next((ws for ws in snapshot.get("worksheets", []) if ws.get("worksheetId") == ws_id), None)
         if not worksheet:
             continue
+        # 分离 Faker 可处理的字段
+        original_fields = worksheet.get("writableFields", [])
+        ai_fields, faker_field_names = _split_faker_fields(original_fields)
+        if faker_field_names:
+            all_faker_fields_info.append(
+                f"  - {worksheet['worksheetName']}: {', '.join(faker_field_names)}"
+            )
         worksheets.append(
             {
                 "worksheetId": worksheet["worksheetId"],
@@ -78,10 +107,18 @@ def build_prompt(snapshot: dict) -> str:
                 "order": item["order"],
                 "recordCount": item["recordCount"],
                 "reason": item["reason"],
-                "writableFields": worksheet.get("writableFields", []),
+                "writableFields": ai_fields,  # 只传 AI 需要处理的字段
                 "skippedFields": worksheet.get("skippedFields", []),
             }
         )
+    # 构建 Faker 自动生成字段的提示信息
+    faker_note = ""
+    if all_faker_fields_info:
+        faker_note = (
+            "\n\n以下字段将由系统自动生成，你不需要为它们提供值（也不要在 valuesByFieldId 中输出这些字段）：\n"
+            + "\n".join(all_faker_fields_info)
+        )
+
     return f"""
 你是企业应用造数规划助手。请基于给定应用结构，输出严格 JSON，不要 markdown，不要解释。
 
@@ -97,7 +134,8 @@ def build_prompt(snapshot: dict) -> str:
 9. RichText（富文本）字段使用纯文本字符串。
 10. valuesByFieldId 的 key 必须是字段 ID。
 11. 每条记录都要有一句中文 recordSummary，描述该记录的业务含义。
-12. ⚠️ 每个 writableField 都必须填值，禁止遗漏！只有 skippedFields 里的字段才可以不填。
+12. ⚠️ 每个 writableField 都必须填值，禁止遗漏！只有 skippedFields 里的字段和系统自动生成的字段才可以不填。
+{faker_note}
 
 应用信息：
 {json.dumps(app, ensure_ascii=False, indent=2)}
@@ -155,6 +193,26 @@ def build_prompt(snapshot: dict) -> str:
 
 def build_prompt_v2(app: dict, worksheets: List[dict]) -> str:
     """V2 Prompt: 支持单表或多表分片，结构更紧凑。"""
+    # 分离 Faker 可处理的字段，缩小 prompt 体积
+    filtered_worksheets = []
+    all_faker_fields_info: list[str] = []
+    for ws in worksheets:
+        original_fields = ws.get("writableFields", [])
+        ai_fields, faker_field_names = _split_faker_fields(original_fields)
+        if faker_field_names:
+            all_faker_fields_info.append(
+                f"  - {ws.get('worksheetName', '')}: {', '.join(faker_field_names)}"
+            )
+        filtered_ws = {**ws, "writableFields": ai_fields}
+        filtered_worksheets.append(filtered_ws)
+
+    faker_note = ""
+    if all_faker_fields_info:
+        faker_note = (
+            "\n\n以下字段将由系统自动生成，你不需要为它们提供值（也不要在 valuesByFieldId 中输出这些字段）：\n"
+            + "\n".join(all_faker_fields_info)
+        )
+
     return f"""
 你是企业应用造数规划助手。请基于给定应用结构，输出严格 JSON，不要 markdown，不要解释。
 
@@ -169,13 +227,14 @@ def build_prompt_v2(app: dict, worksheets: List[dict]) -> str:
 8. RichText（富文本）字段使用纯文本字符串。
 9. valuesByFieldId 的 key 必须是字段 ID。
 10. 每条记录都要有一句中文 recordSummary。
-11. ⚠️ 每个 writableField 都必须填值，禁止遗漏！
+11. ⚠️ 每个 writableField 都必须填值，禁止遗漏！系统自动生成的字段不需要填。
+{faker_note}
 
 应用信息：
 {json.dumps(app, ensure_ascii=False, indent=2)}
 
 工作表规划输入：
-{json.dumps(worksheets, ensure_ascii=False, indent=2)}
+{json.dumps(filtered_worksheets, ensure_ascii=False, indent=2)}
 
 请严格输出 JSON，格式如下：
 {{
@@ -371,7 +430,24 @@ def validate_plan(raw: dict, snapshot: dict) -> Dict[str, Any]:
                     else:
                         value = num_val
                 final_values[field_id] = value
-            
+
+            # Faker 补充：为 AI 未生成的 Faker 可处理字段自动填值
+            for field_id, field_meta in allowed_fields.items():
+                if field_id in final_values or field_id in skipped_field_ids:
+                    continue
+                field_name = str(field_meta.get("name", ""))
+                field_type = str(field_meta.get("type", ""))
+                if can_faker_handle(field_name, field_type):
+                    options = field_meta.get("options")
+                    faker_val = generate_faker_value(field_name, field_type, options)
+                    if faker_val is not None:
+                        # 单选/多选字段需要包装成数组格式
+                        if field_type in {"SingleSelect", "Dropdown"} and not isinstance(faker_val, list):
+                            faker_val = [faker_val]
+                        elif field_type == "MultipleSelect" and not isinstance(faker_val, list):
+                            faker_val = [faker_val]
+                        final_values[field_id] = faker_val
+
             # 如果 AI 没填任何有效字段，强行填入标题字段
             if not final_values:
                 title_field = next((f for f in schema_ws.get("writableFields", []) if f.get("isTitle")), schema_ws.get("writableFields", [None])[0])
