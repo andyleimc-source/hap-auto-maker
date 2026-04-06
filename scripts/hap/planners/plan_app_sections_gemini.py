@@ -91,17 +91,31 @@ def validate_sections_plan(plan: dict, worksheet_names: Set[str]) -> None:
     if not isinstance(sections, list) or not sections:
         raise ValueError("sections_plan 缺少 sections 列表或为空")
 
-    assigned: Set[str] = set()
-    for i, sec in enumerate(sections):
+    # 超出 12 张的分组自动拆分（AI 偶尔不遵守约束）
+    MAX_WS = 12
+    new_sections: List[dict] = []
+    for sec in sections:
         name = str(sec.get("name", "")).strip()
         if not name:
-            raise ValueError(f"sections[{i}] 缺少 name 字段")
+            raise ValueError(f"section 缺少 name 字段")
         ws_list = sec.get("worksheets")
         if not isinstance(ws_list, list):
-            raise ValueError(f"sections[{i}].worksheets 必须是列表")
-        # 允许空分组（如"数据分析"分组，用于后续放统计页面）
-        if len(ws_list) > 12:
-            raise ValueError(f"分组「{name}」有 {len(ws_list)} 张工作表，每个分组最多允许 12 张")
+            raise ValueError(f"sections[{name}].worksheets 必须是列表")
+        if len(ws_list) > MAX_WS:
+            # 按 MAX_WS 切片，拆成多个子分组
+            print(f"[warn] 分组「{name}」有 {len(ws_list)} 张工作表（超过 {MAX_WS}），自动拆分", file=sys.stderr)
+            for idx, chunk_start in enumerate(range(0, len(ws_list), MAX_WS)):
+                chunk = ws_list[chunk_start:chunk_start + MAX_WS]
+                suffix = f"（{idx + 1}）" if idx > 0 else ""
+                new_sections.append({"name": f"{name}{suffix}", "worksheets": chunk})
+        else:
+            new_sections.append(sec)
+    plan["sections"] = new_sections
+
+    assigned: Set[str] = set()
+    for i, sec in enumerate(new_sections):
+        name = str(sec.get("name", "")).strip()
+        ws_list = sec.get("worksheets", [])
         for ws_name in ws_list:
             ws_name = str(ws_name).strip()
             if ws_name not in worksheet_names:

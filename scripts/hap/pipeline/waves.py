@@ -135,6 +135,8 @@ def run_all_waves(
 
     app_auth_dir: Path = dirs["app_auth_dir"]
     workflow_output_dir: Path = dirs["workflow_output_dir"]
+    output_root: Path = dirs["output_root"]
+    config_web_auth: Path = dirs["config_web_auth"]
 
     # Wave 1: 创建/使用现有应用
     if app.get("target_mode") == "create_new":
@@ -375,7 +377,6 @@ def run_all_waves(
 
     # 提前初始化 Wave 3.5 和 Wave 4 共用的目录变量
     view_create_result_dir: Path = dirs["view_create_result_dir"]
-    config_web_auth: Path = dirs["config_web_auth"]
 
     # Wave 3.5: 单表视图创建（每张表字段完成后立即触发）
     if views.get("enabled", True) and worksheet_create_result_path and not execution_dry_run:
@@ -494,7 +495,6 @@ def run_all_waves(
     view_plan_dir: Path = dirs["view_plan_dir"]
     tableview_filter_plan_dir: Path = dirs["tableview_filter_plan_dir"]
     tableview_filter_apply_result_dir: Path = dirs["tableview_filter_apply_result_dir"]
-    output_root: Path = dirs["output_root"]
 
     view_plan_output = (view_plan_dir / f"view_plan_{app_id}_{now_ts()}.json").resolve()
     view_create_output = (view_create_result_dir / f"view_create_result_{app_id}_{now_ts()}.json").resolve()
