@@ -17,6 +17,8 @@ CURRENT_DIR = Path(__file__).resolve().parent
 if str(CURRENT_DIR) not in sys.path:
     sys.path.insert(0, str(CURRENT_DIR))
 
+from utils import log_summary
+
 from mock_data_common import (
     DEFAULT_BASE_URL,
     OUTPUT_ROOT,
@@ -228,6 +230,10 @@ def main() -> None:
     write_json(output_path, result)
     write_json(ROLE_CREATE_RESULT_LATEST.resolve(), result)
     append_log(log_path, "finished", output=str(output_path), summary=result["summary"])
+
+    created_names = [str(c.get("name", "")).strip() for c in created if isinstance(c, dict)]
+    if created_names:
+        log_summary(f"✓ 角色已创建：{'、'.join(created_names)}")
 
     print("角色创建执行完成")
     print(f"- 应用: {app['appName']} ({app['appId']})")
