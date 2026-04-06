@@ -418,6 +418,50 @@ def save_view(payload: dict, auth_config_path: Path, app_id: str, worksheet_id: 
     return post_web_api(SAVE_VIEW_URL, payload, auth_config_path, app_id=app_id, worksheet_id=worksheet_id)
 
 
+def update_default_view(
+    app_id: str,
+    worksheet_id: str,
+    view_id: str,
+    update_plan: dict,
+    auth_config_path: Path,
+    dry_run: bool = False,
+) -> dict:
+    """改造默认视图：改名 + 修改 displayControls + 加配置。
+
+    Args:
+        app_id: 应用 ID
+        worksheet_id: 工作表 ID
+        view_id: 默认视图的 viewId
+        update_plan: AI 输出的 default_view_update dict
+        auth_config_path: 认证配置路径
+        dry_run: 是否仅演练
+
+    Returns:
+        API 响应 dict
+    """
+    view_type = str(update_plan.get("viewType", "0")).strip()
+    payload = {
+        "viewId": view_id,
+        "appId": app_id,
+        "worksheetId": worksheet_id,
+        "name": str(update_plan.get("name", "")).strip() or "数据总览",
+        "editAttrs": ["name", "displayControls", "advancedSetting"],
+    }
+
+    display_controls = update_plan.get("displayControls")
+    if isinstance(display_controls, list):
+        payload["displayControls"] = [str(x).strip() for x in display_controls if str(x).strip()]
+
+    adv = update_plan.get("advancedSetting")
+    if isinstance(adv, dict):
+        payload["advancedSetting"] = normalize_advanced_setting(view_type, adv)
+
+    if dry_run:
+        return {"dry_run": True, "payload": payload}
+
+    return post_web_api(SAVE_VIEW_URL, payload, auth_config_path, app_id=app_id, worksheet_id=worksheet_id, view_id=view_id)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="执行视图规划 JSON，批量创建工作表视图")
     parser.add_argument("--plan-json", default="", help="视图规划 JSON 路径（默认取最新）")
