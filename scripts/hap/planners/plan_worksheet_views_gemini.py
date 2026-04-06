@@ -334,6 +334,7 @@ def build_prompt(app_name: str, worksheet_name: str, worksheet_id: str, fields: 
 
 规则：
 1) 允许 viewType=0(表格),1(看板),2(层级视图),3(画廊),4(日历),5(甘特图)。
+   🚫 【强制禁止】viewType=0 的视图必须与系统内置"全部"视图有实质差异（如分组/特定筛选），否则禁止创建。如果该表字段少（仅名称+日期等），无法创建有意义的额外表格视图，请选其他类型或不创建。
 2) 视图数量 1-4 个，尽量多样化——系统已内置"全部"列表视图，额外视图应优先选非表格类型（看板/日历/画廊/甘特图），避免所有表都只有一种类型。
 3) displayControls / coverCid / viewControl 必须来自提供的字段ID；无法确定时填空或省略。
 4) 日历视图必须在 postCreateUpdates.advancedSetting 中提供 calendarcids（字符串化 JSON），格式必须为：'[{{"begin":"日期字段ID","end":"结束日期字段ID或空字符串"}}]'。begin 为开始日期字段ID（必填），end 为结束日期字段ID（无则填空字符串）。
@@ -579,6 +580,7 @@ def build_batch_prompt(app_name: str, worksheets_data: List[dict]) -> str:
 
 规则：
 1) 允许 viewType=0(表格),1(看板),2(层级视图),3(画廊),4(日历),5(甘特图)。
+   🚫 【强制禁止】viewType=0 的视图必须与系统内置"全部"视图有实质差异（如分组/特定筛选），否则禁止创建。字段稀少（仅名称+日期等）无法差异化的表，不要创建额外 viewType=0 视图。
 2) 每个工作表视图数量 1-4 个，尽量多样化——系统已内置"全部"列表视图，额外视图应优先选非表格类型（看板/日历/画廊/甘特图），避免整个应用的视图都是同一类型。
 3) displayControls / coverCid / viewControl 必须来自对应工作表提供的字段ID；无法确定时填空或省略。
 4) 日历视图必须在 postCreateUpdates.advancedSetting 中提供 calendarcids（字符串化 JSON），格式必须为：'[{{"begin":"日期字段ID","end":"结束日期字段ID或空字符串"}}]'。begin 为开始日期字段ID（必填），end 为结束日期字段ID（无则填空字符串）。

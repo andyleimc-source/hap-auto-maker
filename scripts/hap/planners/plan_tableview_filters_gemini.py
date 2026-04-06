@@ -354,13 +354,13 @@ worksheetId：{worksheet_id}
         {{"controlId": "字段ID", "filterType": 1}},
         {{"controlId": "字段ID", "filterType": 2, "advancedSetting": {{"direction":"2","allowitem":"1"}}}}
       ],
-      “fastAdvancedSetting”: {{“enablebtn”: “1”}},
-      “fastEditAdKeys”: [“enablebtn”],
-      “needColor”: true,
-      “colorControlId”: “单选字段ID，用于记录颜色标记”,
-      “needGroup”: true,
-      “groupControlId”: “单选字段ID，用于分组显示”,
-      “reason”: “原因”
+      "fastAdvancedSetting": {{"enablebtn": "1"}},
+      "fastEditAdKeys": ["enablebtn"],
+      "needColor": true,
+      "colorControlId": "单选字段ID，用于记录颜色标记",
+      "needGroup": true,
+      "groupControlId": "单选字段ID，用于分组显示",
+      "reason": "原因"
     }}
   ]
 }}
@@ -369,7 +369,7 @@ worksheetId：{worksheet_id}
 1) 【强制】目标视图中的每个视图都必须在 viewPlans 中输出，不得遗漏。
 2) controlId 必须来自字段列表。
 3) 只有 表格视图(type=0) 和 画廊视图(type=3) 允许配置 navGroup。
-4) navGroup（筛选列表）只能使用”下拉字段”（SingleSelect/MultipleSelect）。
+4) navGroup（筛选列表）只能使用"下拉字段"（SingleSelect/MultipleSelect）。
 5) 若存在多个下拉字段，优先选择业务管理意义最强的那个（如状态/类型/分类/等级/阶段等）。
 6) 仅表格/看板/画廊视图允许配置 fastFilters；日历视图不要配置。
 7) 若不需要某功能，对应 needXxx=false，数组/字段留空。即使某视图不需要任何配置也必须输出（needXxx 全 false）。
@@ -377,11 +377,12 @@ worksheetId：{worksheet_id}
 9) 输出必须为合法 JSON，viewPlans 长度必须等于目标视图数量。
 10) 颜色(needColor): 仅 viewType=0 的表格视图支持。选一个最能代表记录状态/分类的单选字段(type=9 或 type=11)作为 colorControlId。若无合适单选字段，needColor=false，colorControlId 留空。
 11) 分组(needGroup): 仅 viewType=0 的表格视图支持。选一个有业务分类意义的单选字段(type=9 或 type=11)作为 groupControlId（可与 colorControlId 相同）。若无合适字段或分组无业务意义，needGroup=false，groupControlId 留空。
-“””.strip()
+""".strip()
 
 
 def build_batch_filter_prompt(app_name: str, worksheets_data: List[dict]) -> str:
-    """一次 Prompt 规划所有工作表视图筛选。worksheets_data: [{worksheetId, worksheetName, targetViews, fields}]"""
+    """一次 Prompt 规划所有工作表视图筛选. worksheets_data: [{worksheetId, worksheetName, targetViews, fields}]
+    """
     count = len(worksheets_data)
     ws_section = json.dumps(worksheets_data, ensure_ascii=False, indent=2)
     return f"""你是明道云视图配置专家。请分析以下 {count} 个工作表中支持的视图，是否需要配置筛选列表和快速筛选。
@@ -470,7 +471,7 @@ def generate_with_retry(client, model: str, prompt: str, retries: int, ai_config
 
 def pick_best_dropdown_field(fields: List[dict]) -> str:
     """
-    选“最有业务管理意义”的下拉字段。
+    选"最有业务管理意义"的下拉字段。
     """
     keywords = ("状态", "类型", "分类", "等级", "阶段", "级别", "优先级", "标签", "归属")
     best_id = ""
