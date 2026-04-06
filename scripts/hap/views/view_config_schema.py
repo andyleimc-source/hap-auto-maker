@@ -117,7 +117,7 @@ VIEW_SCHEMA = {
                 "editAdKeys": ["groupsetting", "groupsorts", "groupcustom", "groupshow", "groupfilters", "groupopen"],
                 "description": "表格视图行分组配置（按字段值把记录分组显示）",
                 "advancedSetting": {
-                    "groupsetting": '[{"controlId":"<fieldId>","filterType":11}]',
+                    "groupsetting": '[{"controlId":"<fieldId>","isAsc":true}]',
                     "groupsorts": "",
                     "groupcustom": "",
                     "groupshow": "0",
@@ -125,8 +125,8 @@ VIEW_SCHEMA = {
                     "groupopen": "",
                 },
                 "notes": [
-                    "groupsetting 是 JSON 字符串数组，controlId 为分组字段 ID（推荐单选 type=11）",
-                    "filterType=11 表示按选项分组",
+                    "groupsetting 是 JSON 字符串数组，controlId 为分组字段 ID（推荐单选 type=9/11），isAsc 控制升序",
+                    "【重要】用 controlId+isAsc，不要用 groupid（旧格式，HAP 已不识别）",
                     "groupshow: '0'=全部, '1'=筛选, '2'=自定义",
                     "不需要 viewId，创建后立即可二次保存",
                     "【重要】此配置与 navGroup/groupView（导航筛选栏）完全不同，不要混用",
@@ -138,8 +138,8 @@ VIEW_SCHEMA = {
             # 行分组：把记录按字段值分组显示（正确配置）
             "groupsetting": {
                 "type": "string",
-                "desc": "行分组配置，JSON 字符串数组。格式：[{controlId, filterType}]",
-                "example": '[{"controlId":"fieldId123","filterType":11}]',
+                "desc": "行分组配置，JSON 字符串数组。格式：[{controlId, isAsc}]",
+                "example": '[{"controlId":"fieldId123","isAsc":true}]',
                 "requires_post_create": True,
             },
             "groupsorts": {"type": "string", "default": "", "desc": "分组排序，JSON 字符串"},
@@ -619,7 +619,7 @@ GROUP_SETTING_FORMAT_NOTES = """
 
 【正确配置】
 - 字段名：advancedSetting.groupsetting（JSON 字符串数组）
-- 格式：[{"controlId":"<fieldId>","filterType":11}]
+- 格式：[{"controlId":"<fieldId>","isAsc":true}]
 - 通过 editAttrs=["advancedSetting"] + editAdKeys=["groupsetting","groupsorts","groupcustom","groupshow","groupfilters","groupopen"] 二次保存
 - 无需 viewId，创建后立即可配置
 
@@ -627,13 +627,14 @@ GROUP_SETTING_FORMAT_NOTES = """
 - 错误：用 groupView 配置行分组 → groupView 是看板/导航筛选栏配置，不是行分组
 - groupView 格式：{"viewId":"...","groupFilters":[...],"navShow":true} 这是 navGroup，与行分组无关
 - 历史版本（2026-04-03 之前）用 groupView 导致分组设置无效
+- 历史版本用 {groupid:...,filterType:11} 格式，HAP 前端不识别，导致「服务异常」。正确用 controlId+isAsc
 
 【实测保存请求体】
 {
   "editAttrs": ["advancedSetting"],
   "editAdKeys": ["groupsetting","groupsorts","groupcustom","groupshow","groupfilters","groupopen"],
   "advancedSetting": {
-    "groupsetting": "[{\\"controlId\\":\\"<fieldId>\\",\\"filterType\\":11}]",
+    "groupsetting": "[{\\"controlId\\":\\"<fieldId>\\",\\"isAsc\\":true}]",
     "groupsorts": "",
     "groupcustom": "",
     "groupshow": "0",
@@ -655,7 +656,7 @@ API_OBSERVED_DATA = {
         # viewType 0 — 分组表格（正确配置：groupsetting，2026-04-06 HAR 验证）
         # 注意：旧版本错误用了 groupView，已修复。groupView 是 navGroup 配置，与行分组无关。
         {"viewType": 0, "name": "按状态分组", "advancedSetting": {
-            "groupsetting": '[{"controlId":"69cf74f0f9434db36c6e0827","filterType":11}]',
+            "groupsetting": '[{"controlId":"69cf74f0f9434db36c6e0827","isAsc":true}]',
             "groupsorts": "", "groupcustom": "", "groupshow": "0", "groupfilters": "[]", "groupopen": "",
             "navempty": "1", "enablerules": "1", "detailbtns": "[]", "listbtns": "[]",
         }},
