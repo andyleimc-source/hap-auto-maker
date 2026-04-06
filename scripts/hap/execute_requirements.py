@@ -39,9 +39,6 @@ WORKSHEET_PLAN_DIR = OUTPUT_ROOT / "worksheet_plans"
 CONFIG_ORG = BASE_DIR / "config" / "credentials" / "organization_auth.json"
 CONFIG_WEB_AUTH = BASE_DIR / "config" / "credentials" / "auth_config.py"
 
-WORKFLOW_SCRIPTS_DIR = BASE_DIR / "workflow" / "scripts"
-WORKFLOW_OUTPUT_DIR = BASE_DIR / "workflow" / "output"
-
 # ── Script paths ──────────────────────────────────────────────────────────────
 
 def _scripts() -> dict:
@@ -57,8 +54,6 @@ def _scripts() -> dict:
         "navi":                resolve_script("update_app_navi_style.py"),
         "mock_data":           resolve_script("pipeline_mock_data.py"),
         "chatbots":            resolve_script("pipeline_chatbots.py"),
-        "workflows_plan":      WORKFLOW_SCRIPTS_DIR / "pipeline_workflows.py",
-        "workflows_execute":   WORKFLOW_SCRIPTS_DIR / "execute_workflow_plan.py",
         "delete_default_views": resolve_script("delete_default_views.py"),
         "pages":               resolve_script("pipeline_pages.py"),
         "plan_pages":          resolve_script("plan_pages_gemini.py"),
@@ -79,7 +74,6 @@ def _dirs() -> dict:
         "tableview_filter_result_dir":    OUTPUT_ROOT / "tableview_filter_results",
         "sections_plan_dir":              OUTPUT_ROOT / "sections_plans",
         "sections_create_result_dir":     OUTPUT_ROOT / "sections_create_results",
-        "workflow_output_dir":            WORKFLOW_OUTPUT_DIR,
         "config_web_auth":                CONFIG_WEB_AUTH,
     }
 
@@ -174,13 +168,6 @@ def normalize_spec(raw: dict) -> dict:
     chatbots.setdefault("auto", True)
     chatbots.setdefault("dry_run", False)
     spec["chatbots"] = chatbots
-
-    workflows = spec.get("workflows") if isinstance(spec.get("workflows"), dict) else {}
-    workflows.setdefault("enabled", True)
-    workflows.setdefault("thinking", "none")
-    workflows.setdefault("no_publish", False)
-    workflows.setdefault("skip_analysis", True)
-    spec["workflows"] = workflows
 
     delete_default_views = spec.get("delete_default_views") if isinstance(spec.get("delete_default_views"), dict) else {}
     delete_default_views.setdefault("enabled", True)
