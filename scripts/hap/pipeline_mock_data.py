@@ -38,6 +38,7 @@ from mock_data_common import (
     write_json,
 )
 from script_locator import resolve_script
+from utils import log_summary
 
 SCRIPT_EXPORT_SCHEMA = resolve_script("export_app_mock_schema.py")
 SCRIPT_PLAN_DATA = resolve_script("plan_mock_data_gemini.py")
@@ -200,6 +201,15 @@ def main() -> None:
         run_step(write_cmd, "Step 3/6 写入造数", log_path)
         context["steps"].append({"step": "write_mock_data", "ok": True, "write_result_json": write_json_path})
         context["artifacts"]["write_result_json"] = write_json_path
+        try:
+            wr = load_json(Path(write_json_path))
+            for ws_item in wr.get("worksheets", []):
+                if isinstance(ws_item, dict):
+                    ws_n = str(ws_item.get("worksheetName", "")).strip()
+                    ok_c = int(ws_item.get("successCount", 0) or 0)
+                    log_summary(f"✓「{ws_n}」已写入 {ok_c} 条记录")
+        except Exception:
+            pass
 
         relation_plan_json = str(make_output_path(MOCK_RELATION_REPAIR_PLAN_DIR, "mock_relation_repair_plan", app["appId"]))
         relation_plan_cmd = [
