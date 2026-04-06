@@ -345,8 +345,7 @@ def add_action_nodes(
     若 action_nodes 为空，自动添加一个默认空节点（防止工作流无动作）。
     """
     if not action_nodes:
-        # 兜底：至少保证一个空节点
-        action_nodes = [{"name": "更新记录", "type": "update_record", "target_worksheet_id": worksheet_id, "fields": []}]
+        return []
 
     results: list[dict]  = []
     prev_node_id: str    = start_node_id
@@ -520,7 +519,9 @@ def add_action_nodes(
                     else:
                         content_key = None
                     if content_key and node_type in ("notify", "copy", "push", "sms", "email"):
-                        plan_content = node_plan.get("content", "") or extra.get("content", "")
+                        # sendContent 优先（Phase 2 规划师输出），兼容旧的 content
+                        # 注意：不要重新读取 node_plan.get("content")，否则会丢失 sendContent
+                        plan_content = node_plan.get("sendContent") or node_plan.get("content", "") or extra.get("content", "")
                         if plan_content:
                             save_body[content_key] = plan_content
                         elif not save_body.get(content_key):
