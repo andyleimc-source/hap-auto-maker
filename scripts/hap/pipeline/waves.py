@@ -416,7 +416,38 @@ def run_all_waves(
 
         view_create_result_dir.mkdir(parents=True, exist_ok=True)
         _view_result_path = view_create_result_dir / f"view_create_result_{app_id}_{now_ts()}.json"
-        write_json(_view_result_path, {"worksheets": _view_results_all})
+        # 转换为兼容旧格式（load_view_targets 期望 worksheets[].views[].createdViewId）
+        _compat_worksheets = []
+        for _vr in _view_results_all:
+            _compat_views = []
+            _dvr = _vr.get("default_view_result")
+            if isinstance(_dvr, dict) and _dvr.get("viewId"):
+                _compat_views.append({
+                    "name": str(_dvr.get("name", "")).strip(),
+                    "viewType": "0",
+                    "createdViewId": str(_dvr.get("viewId", "")).strip(),
+                    "success": bool(_dvr.get("success")),
+                })
+            for _nvr in _vr.get("new_views_results", []):
+                if isinstance(_nvr, dict):
+                    _compat_views.append({
+                        "name": str(_nvr.get("name", "")).strip(),
+                        "viewType": str(_nvr.get("viewType", "")).strip(),
+                        "createdViewId": str(_nvr.get("createdViewId", "")).strip(),
+                        "success": bool(_nvr.get("success")),
+                    })
+            _compat_worksheets.append({
+                "worksheetId": str(_vr.get("worksheetId", "")).strip(),
+                "worksheetName": str(_vr.get("worksheetName", "")).strip(),
+                "views": _compat_views,
+            })
+        write_json(_view_result_path, {
+            "apps": [{
+                "appId": app_id,
+                "appName": _app_name_for_views,
+                "worksheets": _compat_worksheets,
+            }],
+        })
         ctx.view_create_result_json = str(_view_result_path)
         print(f"  视图创建完成: {_view_result_path}", flush=True)
 
