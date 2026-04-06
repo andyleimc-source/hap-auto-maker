@@ -738,8 +738,9 @@ def _fetch_real_fields(base_url: str, headers: dict, worksheet_id: str) -> list:
         ctype = str(f.get("type", "") or "").strip()
         if not ctype or ctype in skip_type_strs:
             continue
+        # V3 API 字段的 ID key 是 "id"，不是 "controlId"
         result.append({
-            "controlId": str(f.get("controlId", "")),
+            "controlId": str(f.get("id", "") or f.get("controlId", "")),
             "controlName": str(f.get("name", "")),
             "controlType": ctype,
         })
