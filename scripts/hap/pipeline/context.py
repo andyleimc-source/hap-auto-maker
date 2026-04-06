@@ -48,6 +48,7 @@ class PipelineContext:
     chatbot_pipeline_result_json: Optional[str] = None
     workflow_plan_json: Optional[str] = None
     workflow_execute_result_json: Optional[str] = None
+    page_registry_json: Optional[str] = None
 
     # ── 步骤报告（线程安全） ────────────────────────────────
     steps_report: List[dict] = field(default_factory=list)
@@ -76,6 +77,7 @@ class PipelineContext:
             "chatbot_pipeline_result_json": self.chatbot_pipeline_result_json,
             "workflow_plan_json": self.workflow_plan_json,
             "workflow_execute_result_json": self.workflow_execute_result_json,
+            "page_registry_json": self.page_registry_json,
         }
 
     def as_legacy_dict(self) -> Dict[str, Any]:
