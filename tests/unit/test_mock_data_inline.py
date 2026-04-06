@@ -28,35 +28,35 @@ class TestComputeNewRecordCount:
             "subType": sub_type,
         }
 
-    def test_no_relation_returns_3(self):
+    def test_no_relation_returns_5(self):
         from planners.mock_data_inline import compute_new_record_count
-        assert compute_new_record_count("ws_a", [], []) == 3
+        assert compute_new_record_count("ws_a", [], []) == 5
 
-    def test_1n_detail_end_sub_type_1_returns_6(self):
+    def test_1n_detail_end_sub_type_1_returns_10(self):
         """明细端（单选 Relation，subType=1）→ 6 条"""
         from planners.mock_data_inline import compute_new_record_count
         edges = [self._make_edge("ws_detail", "ws_master", sub_type=1)]
         pairs = [self._make_pair("ws_master", "ws_detail", "1-N", edges=edges)]
-        assert compute_new_record_count("ws_detail", pairs, edges) == 6
+        assert compute_new_record_count("ws_detail", pairs, edges) == 10
 
-    def test_1n_master_end_sub_type_2_returns_3(self):
+    def test_1n_master_end_sub_type_2_returns_5(self):
         """主表端（聚合 Relation，subType=2）→ 3 条"""
         from planners.mock_data_inline import compute_new_record_count
         edges = [self._make_edge("ws_master", "ws_detail", sub_type=2)]
         pairs = [self._make_pair("ws_master", "ws_detail", "1-N", edges=edges)]
-        assert compute_new_record_count("ws_master", pairs, edges) == 3
+        assert compute_new_record_count("ws_master", pairs, edges) == 5
 
-    def test_1_1_relation_returns_3(self):
-        """1:1 关系 → 3 条"""
+    def test_1_1_relation_returns_5(self):
+        """1:1 关系 → 5 条"""
         from planners.mock_data_inline import compute_new_record_count
         pairs = [self._make_pair("ws_a", "ws_b", "1-1")]
-        assert compute_new_record_count("ws_a", pairs, []) == 3
+        assert compute_new_record_count("ws_a", pairs, []) == 5
 
-    def test_no_matching_pair_returns_3(self):
-        """有 pair 但 ws_id 不在其中 → 3 条"""
+    def test_no_matching_pair_returns_5(self):
+        """有 pair 但 ws_id 不在其中 → 5 条"""
         from planners.mock_data_inline import compute_new_record_count
         pairs = [self._make_pair("ws_x", "ws_y", "1-N")]
-        assert compute_new_record_count("ws_z", pairs, []) == 3
+        assert compute_new_record_count("ws_z", pairs, []) == 5
 
 
 class TestApplyRelationPhase:
@@ -98,8 +98,8 @@ class TestApplyRelationPhase:
             ),
         ]
         all_row_ids = {
-            "ws_master": ["r1", "r2", "r3"],
-            "ws_detail": ["d1", "d2", "d3", "d4", "d5", "d6"],
+            "ws_master": ["r1", "r2", "r3", "r4", "r5"],
+            "ws_detail": ["d1", "d2", "d3", "d4", "d5", "d6", "d7", "d8", "d9", "d10"],
         }
         result = apply_relation_phase(
             app_id="app1",
@@ -114,16 +114,16 @@ class TestApplyRelationPhase:
         )
         # dry_run 时 ws_detail 应被处理，ws_master 跳过
         assert "ws_detail" in result
-        assert result["ws_detail"]["planned"] == 6
+        assert result["ws_detail"]["planned"] == 10
         assert "ws_master" not in result  # 主表跳过
 
     def test_round_robin_assignment(self):
         """验证 round-robin 分配：6条明细 → 3条主表，循环分配"""
         from planners.mock_data_inline import _build_relation_assignments
-        source_ids = ["d1", "d2", "d3", "d4", "d5", "d6"]
-        target_ids = ["r1", "r2", "r3"]
+        source_ids = ["d1", "d2", "d3", "d4", "d5", "d6", "d7", "d8", "d9", "d10"]
+        target_ids = ["r1", "r2", "r3", "r4", "r5"]
         assignments = _build_relation_assignments(source_ids, target_ids)
         assert assignments == [
-            ("d1", "r1"), ("d2", "r2"), ("d3", "r3"),
-            ("d4", "r1"), ("d5", "r2"), ("d6", "r3"),
+            ("d1", "r1"), ("d2", "r2"), ("d3", "r3"), ("d4", "r4"), ("d5", "r5"),
+            ("d6", "r1"), ("d7", "r2"), ("d8", "r3"), ("d9", "r4"), ("d10", "r5"),
         ]

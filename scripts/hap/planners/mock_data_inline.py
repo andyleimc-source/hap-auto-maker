@@ -55,7 +55,7 @@ def compute_new_record_count(
         and all(s == 1 for s in outgoing_subtypes)
         and in_1n_pair
     )
-    return 6 if is_detail_end else 3
+    return 10 if is_detail_end else 5
 
 
 def build_mock_prompt(
