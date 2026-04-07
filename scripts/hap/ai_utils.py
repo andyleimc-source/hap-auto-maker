@@ -31,6 +31,45 @@ PROVIDER_BASE_URLS = {
     "qwen":     "https://dashscope.aliyuncs.com/compatible-mode/v1",
 }
 
+# 各供应商已知模型列表（供 /models 端点不支持时作 fallback）。
+# 经测试：MiniMax /models → 404；其余供应商按文档收录，实际支持情况以 list_models() 为准。
+PROVIDER_KNOWN_MODELS = {
+    "minimax": [
+        "MiniMax-M2.7",
+        "MiniMax-M2.7-highspeed",
+        "MiniMax-M2.5",
+        "MiniMax-M2.5-highspeed",
+        "MiniMax-M2.1",
+        "MiniMax-M2.1-highspeed",
+        "MiniMax-M2",
+    ],
+    "kimi": [
+        "moonshot-v1-auto",
+        "moonshot-v1-8k",
+        "moonshot-v1-32k",
+        "moonshot-v1-128k",
+        "kimi-k2.5",
+    ],
+    "zhipu": [
+        "glm-4-flash",
+        "glm-4-air",
+        "glm-4",
+        "glm-4-long",
+    ],
+    "doubao": [
+        "doubao-pro-32k",
+        "doubao-pro-128k",
+        "doubao-lite-32k",
+        "doubao-lite-128k",
+    ],
+    "qwen": [
+        "qwen-plus",
+        "qwen-turbo",
+        "qwen-max",
+        "qwen-long",
+    ],
+}
+
 # RPD 使用量追踪（跨进程，按日期 + 模型统计）
 _RPD_USAGE_FILE = BASE_DIR / "config" / "gemini_rpd_usage.json"
 _RPD_USAGE_LOCK = BASE_DIR / "config" / "gemini_rpd_usage.json.lock"
@@ -163,6 +202,9 @@ def list_models(provider: str, api_key: str, base_url: str = "") -> list:
 
     except Exception as e:
         print(f"  ⚠️  拉取 {p} 模型列表失败: {e}")
+        if p in PROVIDER_KNOWN_MODELS:
+            print(f"  📋  使用文档记载的已知模型列表作为备用")
+            return PROVIDER_KNOWN_MODELS[p]
     return []
 
 
