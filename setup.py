@@ -208,8 +208,8 @@ def get_status_group():
 # --- 步骤执行 ---
 
 def step_ai(force=True):
-    from ai_utils import (AI_CONFIG_PATH, PROVIDER_BASE_URLS,
-                          load_ai_config, list_models, normalize_provider,
+    from ai_utils import (AI_CONFIG_PATH,
+                          load_ai_config, list_models,
                           default_base_url_for_provider)
     existing = {}
     try:
