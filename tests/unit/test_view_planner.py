@@ -276,7 +276,7 @@ class TestSuggestViews:
             ("d2", 15, "结束日期"),
         )
         classified = classify_fields(fields)
-        result = suggest_views(classified, "ws1", "任务管理")
+        result = suggest_views(classified, "ws1", "资源分配")
         view_types = [s["viewType"] for s in result]
         assert 7 in view_types, "成员+两日期应触发资源视图"
 
@@ -320,6 +320,15 @@ class TestSuggestViews:
         result = suggest_views(classified, "ws1", "门店管理")
         view_types = [s["viewType"] for s in result]
         assert 8 in view_types
+
+    def test_map_carries_latlng_field_id(self):
+        """地图候选应携带正确的 latlng 字段 ID。"""
+        fields = _fields(("loc1", 40, "位置"))
+        classified = classify_fields(fields)
+        result = suggest_views(classified, "ws1", "门店管理")
+        map_view = next((s for s in result if s["viewType"] == 8), None)
+        assert map_view is not None
+        assert map_view.get("latlng") == "loc1"
 
     def test_map_not_triggered_by_area_type_24(self):
         """type=24 地区字段（省市区）不应触发地图视图。"""
