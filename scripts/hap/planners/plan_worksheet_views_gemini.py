@@ -61,13 +61,13 @@ CURRENT_AI_CONFIG: Dict[str, str] = {}
 
 APP_INFO_URL = "https://api.mingdao.com/v3/app"
 GET_CONTROLS_URL = "https://www.mingdao.com/api/Worksheet/GetWorksheetControls"
-ALLOWED_VIEW_TYPES = {"0", "1", "3", "4", "5"}
+ALLOWED_VIEW_TYPES = {"0", "1", "3", "4", "5", "7", "8"}
 
-# 看板字段语义约束（用于执行前兜底校验，避免 AI 漏遵循 prompt 规则）
+# 看板字段语义约束（与 view_planner.suggest_views 保持一致）
+# 注意：优先级/紧急程度/风险等级等分级字段已移除，它们不是阶段流转字段
 KANBAN_FLOW_KEYWORDS = (
     "状态", "阶段", "进度", "步骤", "环节",
     "审批", "审核", "审查", "审定",
-    "优先级", "紧急程度", "严重程度", "风险等级", "紧急级别", "重要程度",
 )
 KANBAN_EXCLUDE_KEYWORDS = (
     "类型", "分类", "方式", "来源", "渠道", "性别",
