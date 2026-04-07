@@ -74,9 +74,6 @@ def suggest_views(
         if has_flow and not has_exclude:
             kanban_field = f
             break
-        if fname in KANBAN_FLOW:
-            kanban_field = f
-            break
 
     if kanban_field:
         suggestions.append({
@@ -130,6 +127,7 @@ def suggest_views(
         })
 
     # ── 资源视图(7)：成员字段(type=26) + ≥2 个日期字段 ──────────────────────────
+    # 注意：begin_field / end_field 复用上方甘特图段落的计算结果
     members = [f for f in classified_fields.get("user", []) if f.get("type") == 26]
     if members and begin_field and end_field and begin_field["id"] != end_field["id"]:
         suggestions.append({
