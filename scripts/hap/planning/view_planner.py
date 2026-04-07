@@ -200,7 +200,7 @@ def build_structure_prompt(
             for sg in confirmed:
                 lines.append(f"    ✓ viewType={sg['viewType']} {sg['name']} — {sg['reason']}")
         if candidates:
-            lines.append("  候选视图（请用判断标准决定是否采纳）：")
+            lines.append("  候选视图（请用上方判断标准决定是否采纳）：")
             for sg in candidates:
                 lines.append(f"    ? viewType={sg['viewType']} {sg['name']} — {sg['reason']}")
 
