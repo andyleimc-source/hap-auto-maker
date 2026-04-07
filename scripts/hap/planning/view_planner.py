@@ -403,7 +403,9 @@ def build_config_prompt(
 - **所有视图**：displayControls（显示字段 ID 列表，选最重要的 5-8 个字段）
 - **表格(0) 含"分组"/"分类"关键词的**：通过 postCreateUpdates 设 groupsetting（JSON 字符串数组 [{"controlId":"字段ID","isAsc":true}]），editAdKeys 包含 ["groupsetting","groupsorts","groupcustom","groupshow","groupfilters","groupopen"]。【注意：不要用 groupView，groupView 是导航筛选栏配置，与行分组无关。groupsetting 必须是数组格式，用 controlId+isAsc，不要用 groupid】
 - **日历(4)**：postCreateUpdates 中设 calendarcids（开始/结束日期字段 ID）
-- **甘特图(5)**：视图顶层设 begindate（开始日期字段 ID）和 enddate（结束日期字段 ID），同时在 postCreateUpdates 中通过 editAdKeys 二次保存
+- **甘特图(5)**：postCreateUpdates 必须严格按以下格式，字段 ID 必须放在 advancedSetting 内，不能放在顶层：
+  {{"editAttrs":["advancedSetting"],"editAdKeys":["begindate","enddate"],"advancedSetting":{{"begindate":"<开始日期字段ID>","enddate":"<结束日期字段ID>"}}}}
+  ⚠️ 不要把 begindate/enddate 放在 postCreateUpdates 条目的顶层，必须放在 advancedSetting 内。
 - **画廊(3)**：设置 coverCid 为附件字段 ID
 - **层级(2)**：视图顶层设 layersControlId（自关联字段 ID），postCreateUpdates 用 editAttrs=["viewControl","childType","viewType"]，viewControl 可设为 "create"（自动创建自关联字段）或具体字段 ID
 - **资源(7)**：视图顶层设 viewControl（分组字段 ID）+ advancedSetting.begindate/enddate，postCreateUpdates 二次保存
@@ -437,6 +439,21 @@ calendarcids 格式（JSON 紧凑字符串）：
               "editAttrs": ["advancedSetting"],
               "editAdKeys": ["calendarcids"],
               "advancedSetting": {{"calendarcids": "[...]"}}
+            }}
+          ]
+        }},
+        {{
+          "name": "甘特视图示例",
+          "viewType": "5",
+          "displayControls": ["字段ID1", "字段ID2"],
+          "coverCid": "",
+          "viewControl": "",
+          "advancedSetting": {{}},
+          "postCreateUpdates": [
+            {{
+              "editAttrs": ["advancedSetting"],
+              "editAdKeys": ["begindate", "enddate"],
+              "advancedSetting": {{"begindate": "<开始日期字段ID>", "enddate": "<结束日期字段ID>"}}
             }}
           ]
         }}
@@ -500,7 +517,9 @@ def build_config_prompt_single_ws(
 - **所有视图**：displayControls（显示字段 ID 列表，选最重要的 5-8 个字段）
 - **表格(0) 含"分组"/"分类"关键词的**：通过 postCreateUpdates 设 groupsetting（JSON 字符串数组 [{{"controlId":"字段ID","isAsc":true}}]），editAdKeys 包含 ["groupsetting","groupsorts","groupcustom","groupshow","groupfilters","groupopen"]。【注意：不要用 groupView，groupView 是导航筛选栏配置，与行分组无关。groupsetting 必须是数组格式，用 controlId+isAsc，不要用 groupid】
 - **日历(4)**：postCreateUpdates 中设 calendarcids（开始/结束日期字段 ID）
-- **甘特图(5)**：视图顶层设 begindate（开始日期字段 ID）和 enddate（结束日期字段 ID），同时在 postCreateUpdates 中通过 editAdKeys 二次保存
+- **甘特图(5)**：postCreateUpdates 必须严格按以下格式，字段 ID 必须放在 advancedSetting 内，不能放在顶层：
+  {{"editAttrs":["advancedSetting"],"editAdKeys":["begindate","enddate"],"advancedSetting":{{"begindate":"<开始日期字段ID>","enddate":"<结束日期字段ID>"}}}}
+  ⚠️ 不要把 begindate/enddate 放在 postCreateUpdates 条目的顶层，必须放在 advancedSetting 内。
 - **画廊(3)**：设置 coverCid 为附件字段 ID
 - **层级(2)**：视图顶层设 layersControlId（自关联字段 ID），postCreateUpdates 用 editAttrs=["viewControl","childType","viewType"]，viewControl 可设为 "create"（自动创建自关联字段）或具体字段 ID
 - **资源(7)**：视图顶层设 viewControl（分组字段 ID）+ advancedSetting.begindate/enddate，postCreateUpdates 二次保存
@@ -532,6 +551,21 @@ calendarcids 格式（JSON 紧凑字符串）：
           "editAttrs": ["advancedSetting"],
           "editAdKeys": ["calendarcids"],
           "advancedSetting": {{"calendarcids": "[...]"}}
+        }}
+      ]
+    }},
+    {{
+      "name": "甘特视图示例",
+      "viewType": "5",
+      "displayControls": ["字段ID1", "字段ID2"],
+      "coverCid": "",
+      "viewControl": "",
+      "advancedSetting": {{}},
+      "postCreateUpdates": [
+        {{
+          "editAttrs": ["advancedSetting"],
+          "editAdKeys": ["begindate", "enddate"],
+          "advancedSetting": {{"begindate": "<开始日期字段ID>", "enddate": "<结束日期字段ID>"}}
         }}
       ]
     }}
