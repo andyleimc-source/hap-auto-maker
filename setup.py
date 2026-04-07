@@ -152,11 +152,13 @@ def ask(label: str, default: str = "", required: bool = False, hint: str = "", i
         if is_pwd:
             val = get_password_masked(prompt_str).strip()
         else:
-            # 用 print 显示提示符（正确处理 CJK 双宽字符），再用 input() 读取输入
-            # 若直接 input(prompt_str)，readline 用字节数计算光标位置，CJK 字符
-            # 每个占 3 字节但显示 2 列，导致光标错位、乱码、无法输入。
+            # 用 print 显示提示符，再用 sys.stdin.readline() 读取输入。
+            # 不能用 input(prompt_str)：readline 用字节数计算 CJK 光标位置，导致错位乱码。
+            # 不能用 print()+input()：input() 无参数仍调用 readline，方向键/Ctrl+Z 会产生
+            # 转义序列 ^[[B / ^Z 回显到输入行。
+            # sys.stdin.readline() 完全绕过 readline，使用终端 cooked mode 读取，无上述问题。
             print(prompt_str, end='', flush=True)
-            val = input()
+            val = sys.stdin.readline().rstrip('\n')
             val = val.strip("\"'").strip("\u200b\u200c\u200d\ufeff")
             
         final = val if val else (default if not is_placeholder else "")
@@ -428,7 +430,11 @@ def main():
 
 if __name__ == "__main__":
     try:
-        try: pass
-        except: subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "--break-system-packages", "requests", "openai", "playwright"])
+        try:
+            import openai  # noqa: F401
+        except ImportError:
+            print("  📦 正在安装缺少的依赖 openai...")
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "-q",
+                                   "--break-system-packages", "openai"])
         main()
     except KeyboardInterrupt: print("\n👋 配置流程已中断。")
