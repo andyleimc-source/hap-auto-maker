@@ -32,8 +32,10 @@ PROVIDER_BASE_URLS = {
 }
 
 # 各供应商已知模型列表（供 /models 端点不支持时作 fallback）。
-# 经测试：MiniMax /models → 404；其余供应商按文档收录，实际支持情况以 list_models() 为准。
+# 来源：各供应商官方文档（2026-04）。实际调用优先用 list_models()，此为 fallback。
+# 经测试：MiniMax /models → 404（已确认不支持）。
 PROVIDER_KNOWN_MODELS = {
+    # 来源：https://platform.minimaxi.com/docs/guides/text-generation（2026-04）
     "minimax": [
         "MiniMax-M2.7",
         "MiniMax-M2.7-highspeed",
@@ -43,29 +45,48 @@ PROVIDER_KNOWN_MODELS = {
         "MiniMax-M2.1-highspeed",
         "MiniMax-M2",
     ],
+    # 来源：https://platform.moonshot.cn/docs/api/chat（2026-04）
     "kimi": [
         "moonshot-v1-auto",
         "moonshot-v1-8k",
         "moonshot-v1-32k",
         "moonshot-v1-128k",
         "kimi-k2.5",
+        "kimi-k2-thinking",
+        "kimi-k2-thinking-turbo",
     ],
+    # 来源：https://bigmodel.cn/dev/howuse/model（2026-04）
     "zhipu": [
-        "glm-4-flash",
-        "glm-4-air",
-        "glm-4",
+        "glm-5.1",
+        "glm-5",
+        "glm-5-turbo",
+        "glm-4.7",
+        "glm-4.7-flash",
+        "glm-4.7-flashx",
+        "glm-4.6",
+        "glm-4.5-air",
+        "glm-4.5-airx",
         "glm-4-long",
+        "glm-4-flash-250414",
     ],
+    # 来源：https://www.volcengine.com/docs/82379/1330310（2026-04）
+    # 注意：豆包模型 ID 带日期后缀，需使用完整 ID 调用
     "doubao": [
-        "doubao-pro-32k",
-        "doubao-pro-128k",
-        "doubao-lite-32k",
-        "doubao-lite-128k",
+        "doubao-seed-2-0-pro-260215",
+        "doubao-seed-2-0-lite-260215",
+        "doubao-seed-2-0-mini-260215",
+        "doubao-seed-1-8-251228",
+        "doubao-1-5-pro-32k-250115",
+        "doubao-1-5-lite-32k-250115",
     ],
+    # 来源：https://help.aliyun.com/zh/model-studio/getting-started/models（2026-04）
     "qwen": [
+        "qwen3-max",
+        "qwen3-plus",
+        "qwen3-flash",
+        "qwen-max",
         "qwen-plus",
         "qwen-turbo",
-        "qwen-max",
         "qwen-long",
     ],
 }

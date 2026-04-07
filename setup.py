@@ -211,6 +211,69 @@ def get_status_group():
     if _is_valid(gid): return f"✅ 已选中 (ID: {_mask(gid, 5)})"
     return "❌ 未选择"
 
+# --- 交互式列表选择 ---
+
+def _select_interactive(items: list, title: str = "", current_idx: int = 0) -> int:
+    """
+    用上/下方向键浏览列表，Enter 确认，数字键直接跳转。
+    返回 0-based 索引。items 为字符串列表。
+    """
+    import tty
+    import termios
+
+    idx = max(0, min(current_idx, len(items) - 1))
+    n = len(items)
+
+    def _render(first=False):
+        if not first:
+            # 移到渲染区起点（上移 n 行）并清空到屏幕底部
+            sys.stdout.write(f"\x1b[{n}A\x1b[0J")
+        for i, item in enumerate(items):
+            marker = "▶" if i == idx else " "
+            num = str(i + 1)
+            line = f"      {marker} {num}. {item}"
+            sys.stdout.write(line + "\n")
+        sys.stdout.flush()
+
+    if title:
+        print(f"\n   {title}")
+    _render(first=True)
+
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        while True:
+            ch = sys.stdin.read(1)
+            if ch == '\x1b':
+                # 读取完整转义序列（最多再读 2 个字符）
+                seq = sys.stdin.read(1)
+                if seq == '[':
+                    direction = sys.stdin.read(1)
+                    if direction == 'A':  # 上箭头
+                        idx = (idx - 1) % n
+                    elif direction == 'B':  # 下箭头
+                        idx = (idx + 1) % n
+                # 其他转义序列忽略
+            elif ch in ('\r', '\n'):
+                break
+            elif ch == '\x03':  # Ctrl+C
+                raise KeyboardInterrupt
+            elif ch.isdigit() and ch != '0':
+                d = int(ch) - 1
+                if 0 <= d < n:
+                    idx = d
+            _render()
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+    # 确认选中：显示结果行
+    sys.stdout.write(f"\x1b[{n}A\x1b[0J")
+    sys.stdout.write(f"   ✔ {idx + 1}. {items[idx]}\n")
+    sys.stdout.flush()
+    return idx
+
+
 # --- 步骤执行 ---
 
 def step_ai(force=True):
@@ -236,23 +299,13 @@ def step_ai(force=True):
         ("qwen",     "千问 (Qwen/Alibaba)"),
     ]
     old_p = existing.get("provider", "")
-    print("\n   可用 AI 供应商：")
-    for i, (key, label) in enumerate(PROVIDERS, 1):
-        marker = " [当前]" if key == old_p else ""
-        print(f"      {i}. {label}{marker}")
-
-    valid_choices = [str(i) for i in range(1, len(PROVIDERS) + 1)]
-    default_choice = next(
-        (str(i) for i, (key, _) in enumerate(PROVIDERS, 1) if key == old_p),
-        "1"
+    provider_labels = [label for _, label in PROVIDERS]
+    default_provider_idx = next(
+        (i for i, (key, _) in enumerate(PROVIDERS) if key == old_p),
+        0
     )
-    p_choice = ask(
-        "选择 AI 平台 (输入编号)",
-        default=default_choice,
-        required=True,
-        choices=valid_choices,
-    )
-    provider, provider_label = PROVIDERS[int(p_choice) - 1]
+    p_idx = _select_interactive(provider_labels, title="选择 AI 供应商（↑↓ 移动，Enter 确认，数字键跳转）：", current_idx=default_provider_idx)
+    provider, provider_label = PROVIDERS[p_idx]
     provider_changed = provider != old_p
 
     # API Key
@@ -276,23 +329,11 @@ def step_ai(force=True):
     models = list_models(provider, key, base_url)
 
     if models:
-        print(f"\n   可用模型 ({len(models)} 个):")
-        for i, m in enumerate(models, 1):
-            print(f"      {i}. {m}")
-        model_input = ask(
-            "选择模型 (输入编号或模型名)",
-            default="1",
-            required=True,
-        )
-        if model_input.isdigit():
-            idx = int(model_input) - 1
-            if 0 <= idx < len(models):
-                selected_model = models[idx]
-            else:
-                print(f"   ⚠️  编号超出范围，请手动输入模型名。")
-                selected_model = ask("模型名称", default="", required=True)
-        else:
-            selected_model = model_input.strip()
+        old_model = existing.get("model", "") if not provider_changed else ""
+        default_model_idx = next((i for i, m in enumerate(models) if m == old_model), 0)
+        print(f"\n   可用模型（共 {len(models)} 个）：")
+        m_idx = _select_interactive(models, current_idx=default_model_idx)
+        selected_model = models[m_idx]
     else:
         print("   ⚠️  无法拉取模型列表，请手动输入模型名称。")
         old_model = existing.get("model", "") if not provider_changed else ""
