@@ -226,13 +226,15 @@ def _select_interactive(items: list, title: str = "", current_idx: int = 0) -> i
 
     def _render(first=False):
         if not first:
-            # 移到渲染区起点（上移 n 行）并清空到屏幕底部
-            sys.stdout.write(f"\x1b[{n}A\x1b[0J")
+            # 上移 n 行，回到行首，清空到屏幕底部
+            # raw 模式下 \n 只是 LF（不含 CR），必须加 \r 才能回到列 0
+            sys.stdout.write(f"\x1b[{n}A\r\x1b[0J")
         for i, item in enumerate(items):
             marker = "▶" if i == idx else " "
             num = str(i + 1)
             line = f"      {marker} {num}. {item}"
-            sys.stdout.write(line + "\n")
+            # raw 模式下必须用 \r\n，否则下一行从当前列开始，导致排版错乱
+            sys.stdout.write(line + "\r\n")
         sys.stdout.flush()
 
     if title:
@@ -267,9 +269,9 @@ def _select_interactive(items: list, title: str = "", current_idx: int = 0) -> i
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
-    # 确认选中：显示结果行
-    sys.stdout.write(f"\x1b[{n}A\x1b[0J")
-    sys.stdout.write(f"   ✔ {idx + 1}. {items[idx]}\n")
+    # 确认选中：擦除列表，只显示选中结果
+    sys.stdout.write(f"\x1b[{n}A\r\x1b[0J")
+    sys.stdout.write(f"   ✔ {idx + 1}. {items[idx]}\r\n")
     sys.stdout.flush()
     return idx
 
