@@ -337,6 +337,69 @@ def generate_with_retry(client, model: str, prompt: str, ai_config: dict, retrie
 VALID_REPORT_TYPES = set(range(1, 18))  # reportType 1-17
 
 
+def _force_ctime_filter(chart: dict) -> None:
+    """统一强制时间筛选来源为创建时间 ctime，保留原有时间范围设置。"""
+    filter_cfg = chart.get("filter")
+    if not isinstance(filter_cfg, dict):
+        filter_cfg = {}
+    filter_cfg["filterRangeId"] = "ctime"
+    filter_cfg["filterRangeName"] = "创建时间"
+    chart["filter"] = filter_cfg
+
+
+def _default_record_count_yaxis(rename: str = "记录数量") -> dict:
+    return {
+        "controlId": "record_count",
+        "controlType": 10000000,
+        "controlName": "记录数量",
+        "rename": rename,
+    }
+
+
+def _sanitize_yaxis_list(yaxis_list: list, valid_fids: set[str], *, log_prefix: str) -> list[dict]:
+    """过滤掉字段不存在的 y 轴项。"""
+    clean: list[dict] = []
+    for j, yaxis in enumerate(yaxis_list):
+        if not isinstance(yaxis, dict):
+            print(f"[跳过yaxis] {log_prefix}[{j}] 不是对象，已移除")
+            continue
+        y_cid = str(yaxis.get("controlId", "")).strip()
+        if y_cid and y_cid not in valid_fids:
+            print(f"[跳过yaxis] {log_prefix}[{j}].controlId「{y_cid}」不在字段中，已移除该 yaxis")
+            continue
+        clean.append(yaxis)
+    return clean
+
+
+def _ensure_symmetric_right_axis(chart: dict, valid_fids: set[str], *, chart_label: str) -> None:
+    """对称条形图(reportType=11) 兜底：保证方向2有可用数值轴。"""
+    right_y = chart.get("rightY", {})
+    if isinstance(right_y, list):
+        right_y = {"yaxisList": right_y}
+    if not isinstance(right_y, dict):
+        right_y = {}
+
+    raw_right_list = right_y.get("yaxisList", [])
+    if not isinstance(raw_right_list, list):
+        raw_right_list = []
+    clean_right = _sanitize_yaxis_list(
+        raw_right_list,
+        valid_fids,
+        log_prefix=f"{chart_label} rightY.yaxisList",
+    )
+    if not clean_right:
+        print(f"[补全] {chart_label} 方向2(数值)无有效字段，自动补全 record_count")
+        clean_right = [_default_record_count_yaxis("方向2记录数量")]
+
+    right_y["yaxisList"] = clean_right
+    if right_y.get("reportType") is None:
+        right_y["reportType"] = 2
+    chart["rightY"] = right_y
+
+    if chart.get("yreportType") is None:
+        chart["yreportType"] = 1
+
+
 def validate_plan(raw: dict, worksheets_by_id: Dict[str, dict]) -> List[dict]:
     charts = raw.get("charts", [])
     if not isinstance(charts, list) or len(charts) == 0:
@@ -383,13 +446,11 @@ def validate_plan(raw: dict, worksheets_by_id: Dict[str, dict]) -> List[dict]:
             print(f"[跳过] 图表 {i+1}「{name}」yaxisList 为空，已跳过")
             continue
         # 校验 yaxisList 中的 controlId（跳过无效的 yaxis 条目而非整张图）
-        clean_yaxis = []
-        for j, yaxis in enumerate(yaxis_list):
-            y_cid = str(yaxis.get("controlId", "")).strip()
-            if y_cid and y_cid not in valid_fids:
-                print(f"[跳过yaxis] 图表 {i+1}「{name}」yaxisList[{j}].controlId「{y_cid}」不在字段中，已移除该 yaxis")
-            else:
-                clean_yaxis.append(yaxis)
+        clean_yaxis = _sanitize_yaxis_list(
+            yaxis_list,
+            valid_fids,
+            log_prefix=f"图表 {i+1}「{name}」yaxisList",
+        )
         if not clean_yaxis:
             print(f"[跳过] 图表 {i+1}「{name}」所有 yaxis 均无效，已跳过整张图")
             continue
@@ -405,6 +466,16 @@ def validate_plan(raw: dict, worksheets_by_id: Dict[str, dict]) -> List[dict]:
                 chart.pop("yreportType", None)
                 chart.pop("rightY", None)
 
+        # 对称条形图(reportType=11) 必须保证方向2(数值)有可用字段
+        if report_type == 11:
+            _ensure_symmetric_right_axis(
+                chart,
+                valid_fids,
+                chart_label=f"图表 {i+1}「{name}」",
+            )
+
+        # 所有图表统一强制时间来源为 ctime
+        _force_ctime_filter(chart)
         validated.append(chart)
     if not validated:
         raise ValueError("所有图表均未通过校验，请重新规划")

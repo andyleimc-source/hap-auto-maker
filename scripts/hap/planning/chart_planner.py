@@ -404,6 +404,67 @@ def build_chart_config_prompt_per_ws(
 }}"""
 
 
+def _force_ctime_filter(chart: dict) -> None:
+    """统一强制时间筛选来源为创建时间 ctime，保留原有时间范围。"""
+    filter_cfg = chart.get("filter")
+    if not isinstance(filter_cfg, dict):
+        filter_cfg = {}
+    filter_cfg["filterRangeId"] = "ctime"
+    filter_cfg["filterRangeName"] = "创建时间"
+    chart["filter"] = filter_cfg
+
+
+def _default_record_count_yaxis(rename: str = "记录数量") -> dict:
+    return {
+        "controlId": "record_count",
+        "controlType": 10000000,
+        "controlName": "记录数量",
+        "rename": rename,
+    }
+
+
+def _sanitize_yaxis_list(yaxis_list: list, valid_fids: set[str], *, log_prefix: str) -> list[dict]:
+    clean: list[dict] = []
+    for j, yaxis in enumerate(yaxis_list):
+        if not isinstance(yaxis, dict):
+            print(f"[跳过yaxis] {log_prefix}[{j}] 不是对象，已移除")
+            continue
+        y_cid = str(yaxis.get("controlId", "")).strip()
+        if y_cid and y_cid not in valid_fids:
+            print(f"[跳过yaxis] {log_prefix}[{j}].controlId「{y_cid}」不在字段中，已移除该 yaxis")
+            continue
+        clean.append(yaxis)
+    return clean
+
+
+def _ensure_symmetric_right_axis(chart: dict, valid_fids: set[str], *, chart_label: str) -> None:
+    """对称条形图(reportType=11) 兜底：保证 rightY.yaxisList 至少有一个有效数值轴。"""
+    right_y = chart.get("rightY", {})
+    if isinstance(right_y, list):
+        right_y = {"yaxisList": right_y}
+    if not isinstance(right_y, dict):
+        right_y = {}
+
+    right_list = right_y.get("yaxisList", [])
+    if not isinstance(right_list, list):
+        right_list = []
+    clean_right = _sanitize_yaxis_list(
+        right_list,
+        valid_fids,
+        log_prefix=f"{chart_label} rightY.yaxisList",
+    )
+    if not clean_right:
+        print(f"  [自动补全] {chart_label} 方向2(数值)无有效字段，自动补全 record_count")
+        clean_right = [_default_record_count_yaxis("方向2记录数量")]
+
+    right_y["yaxisList"] = clean_right
+    if right_y.get("reportType") is None:
+        right_y["reportType"] = 2
+    chart["rightY"] = right_y
+    if chart.get("yreportType") is None:
+        chart["yreportType"] = 1
+
+
 def validate_chart_config_per_ws(
     raw: dict,
     worksheets_by_id: dict[str, dict],
@@ -500,6 +561,14 @@ def validate_chart_config_per_ws(
         if not isinstance(yaxis_list, list) or len(yaxis_list) == 0:
             raise ValueError(f"图表 {i+1} yaxisList 为空")
 
+        if worksheet_id and worksheet_id in worksheets_by_id and report_type == 11:
+            _ensure_symmetric_right_axis(
+                chart,
+                valid_fids,
+                chart_label=f"图表 {i+1}「{name}」",
+            )
+
+        _force_ctime_filter(chart)
         validated.append(chart)
 
     return validated
@@ -613,6 +682,14 @@ def validate_enhanced_plan(
         if not isinstance(yaxis_list, list) or len(yaxis_list) == 0:
             raise ValueError(f"图表 {i+1} yaxisList 为空")
 
+        if worksheet_id and worksheet_id in worksheets_by_id and report_type == 11:
+            _ensure_symmetric_right_axis(
+                chart,
+                valid_fids,
+                chart_label=f"图表 {i+1}「{name}」",
+            )
+
+        _force_ctime_filter(chart)
         validated.append(chart)
 
     return validated
