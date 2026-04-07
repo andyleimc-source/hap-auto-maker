@@ -152,7 +152,11 @@ def ask(label: str, default: str = "", required: bool = False, hint: str = "", i
         if is_pwd:
             val = get_password_masked(prompt_str).strip()
         else:
-            val = input(prompt_str).strip()
+            # 用 print 显示提示符（正确处理 CJK 双宽字符），再用 input() 读取输入
+            # 若直接 input(prompt_str)，readline 用字节数计算光标位置，CJK 字符
+            # 每个占 3 字节但显示 2 列，导致光标错位、乱码、无法输入。
+            print(prompt_str, end='', flush=True)
+            val = input()
             val = val.strip("\"'").strip("\u200b\u200c\u200d\ufeff")
             
         final = val if val else (default if not is_placeholder else "")
