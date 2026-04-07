@@ -612,10 +612,17 @@ def build_enhanced_prompt(
                 fids = ", ".join(f"{f['id']}({f['name']})" for f in cat_fields[:5])
                 lines.append(f"  [{label}] {fids}")
 
-        if suggestions:
-            lines.append("  推荐视图：")
-            for sg in suggestions:
-                lines.append(f"    - viewType={sg['viewType']} {sg['name']} ({sg['reason']})")
+        confirmed = [sg for sg in suggestions if not sg.get("candidate", True)]
+        candidates = [sg for sg in suggestions if sg.get("candidate", True)]
+
+        if confirmed:
+            lines.append("  确定推荐（有必要字段）：")
+            for sg in confirmed:
+                lines.append(f"    ✓ viewType={sg['viewType']} {sg['name']} — {sg['reason']}")
+        if candidates:
+            lines.append("  候选视图（请用上方判断标准决定是否采纳）：")
+            for sg in candidates:
+                lines.append(f"    ? viewType={sg['viewType']} {sg['name']} — {sg['reason']}")
 
         ws_sections.append("\n".join(lines))
 
@@ -625,8 +632,31 @@ def build_enhanced_prompt(
 
 {view_type_section}
 
+## 视图类型补充说明（7/8）
+
+  7. 资源视图 ✓ — 按成员/字段分组的时间线。需要成员字段 + 开始/结束日期字段。
+  8. 地图视图 ✓ — 地图标记。需要 type=40 定位字段（type=24 省市区字段不够）。
+
 ## 工作表与字段
 {"".join(ws_sections)}
+
+## 视图采纳判断标准
+
+**看板(1)**：仅当字段语义是「阶段流转」时采纳。
+  ✅ 适合：审批状态（待审/审批中/已通过）、项目阶段（规划/开发/测试/上线）
+  ❌ 不适合：优先级（高/中/低）、类型（合同类/服务类）、来源（官网/转介绍）
+
+**日历(4)**：仅当数据有「时间维度上的分布」意义时采纳。
+  ✅ 适合：会议记录、活动排期、任务截止日、排班记录
+  ❌ 不适合：员工档案（入职日期不是时间轴数据）、产品列表（上架日期不按日查看）
+
+**甘特图(5)**：仅当数据有「起止时间跨度」业务意义时采纳。
+  ✅ 适合：项目/任务/计划/排产/版本发布
+  ❌ 不适合：合同（有签约日+到期日，但不是项目执行时间线）
+
+**资源视图(7)**：仅当需要「查看某人在某时间段的工作安排」时采纳。
+  ✅ 适合：排班表、任务分配、项目资源排期
+  ❌ 不适合：普通任务表（有负责人和日期，但不需要按人查看时间线）
 
 ## 任务
 
