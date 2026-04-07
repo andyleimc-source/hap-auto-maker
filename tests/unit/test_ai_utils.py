@@ -41,6 +41,29 @@ class TestNormalizeProvider:
         with pytest.raises(ValueError, match="不支持的 AI 供应商"):
             normalize_provider("openai")
 
+    def test_minimax_variants(self):
+        assert normalize_provider("minimax") == "minimax"
+        assert normalize_provider("MiniMax") == "minimax"
+
+    def test_kimi_variants(self):
+        assert normalize_provider("kimi") == "kimi"
+        assert normalize_provider("moonshot") == "kimi"
+
+    def test_zhipu_variants(self):
+        assert normalize_provider("zhipu") == "zhipu"
+        assert normalize_provider("glm") == "zhipu"
+        assert normalize_provider("bigmodel") == "zhipu"
+
+    def test_doubao_variants(self):
+        assert normalize_provider("doubao") == "doubao"
+        assert normalize_provider("ark") == "doubao"
+        assert normalize_provider("volcengine") == "doubao"
+
+    def test_qwen_variants(self):
+        assert normalize_provider("qwen") == "qwen"
+        assert normalize_provider("qianwen") == "qwen"
+        assert normalize_provider("dashscope") == "qwen"
+
 
 # ---------------------------------------------------------------------------
 # parse_ai_json — 核心场景
@@ -154,3 +177,38 @@ class TestParseAiJsonEdge:
         raw = '// 以下是规划结果\n{"step": 1}'
         result = parse_ai_json(raw)
         assert result.get("step") == 1
+
+
+# ---------------------------------------------------------------------------
+# default_base_url_for_provider
+# ---------------------------------------------------------------------------
+
+
+class TestDefaultBaseUrl:
+    def test_gemini_has_no_base_url(self):
+        from ai_utils import default_base_url_for_provider
+        assert default_base_url_for_provider("gemini") == ""
+
+    def test_deepseek_base_url(self):
+        from ai_utils import default_base_url_for_provider
+        assert default_base_url_for_provider("deepseek") == "https://api.deepseek.com"
+
+    def test_minimax_base_url(self):
+        from ai_utils import default_base_url_for_provider
+        assert default_base_url_for_provider("minimax") == "https://api.minimaxi.com/v1"
+
+    def test_kimi_base_url(self):
+        from ai_utils import default_base_url_for_provider
+        assert default_base_url_for_provider("kimi") == "https://api.moonshot.cn/v1"
+
+    def test_zhipu_base_url(self):
+        from ai_utils import default_base_url_for_provider
+        assert default_base_url_for_provider("zhipu") == "https://open.bigmodel.cn/api/paas/v4"
+
+    def test_doubao_base_url(self):
+        from ai_utils import default_base_url_for_provider
+        assert default_base_url_for_provider("doubao") == "https://ark.cn-beijing.volces.com/api/v3"
+
+    def test_qwen_base_url(self):
+        from ai_utils import default_base_url_for_provider
+        assert default_base_url_for_provider("qwen") == "https://dashscope.aliyuncs.com/compatible-mode/v1"

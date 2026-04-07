@@ -19,7 +19,17 @@ AI_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "ai_auth.json"
 GEMINI_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "gemini_auth.json"
 DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 DEFAULT_DEEPSEEK_MODEL = "deepseek-chat"
-DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com"  # 向后兼容别名
+
+# 所有 OpenAI 兼容供应商的默认 base_url（Gemini 不在此表，使用 google-genai SDK）
+PROVIDER_BASE_URLS = {
+    "deepseek": "https://api.deepseek.com",
+    "minimax":  "https://api.minimaxi.com/v1",
+    "kimi":     "https://api.moonshot.cn/v1",
+    "zhipu":    "https://open.bigmodel.cn/api/paas/v4",
+    "doubao":   "https://ark.cn-beijing.volces.com/api/v3",
+    "qwen":     "https://dashscope.aliyuncs.com/compatible-mode/v1",
+}
 
 # RPD 使用量追踪（跨进程，按日期 + 模型统计）
 _RPD_USAGE_FILE = BASE_DIR / "config" / "gemini_rpd_usage.json"
@@ -84,9 +94,9 @@ def get_rpd_usage(model: str = None) -> Dict:
         }
     return {"date": today, "models": result}
 
-# 各供应商的默认模型（用户未配置时的 fallback）
+# Gemini/DeepSeek 保留 fallback；新供应商无预设模型，必须由用户选择
 DEFAULT_MODELS = {
-    "gemini": DEFAULT_GEMINI_MODEL,
+    "gemini":   DEFAULT_GEMINI_MODEL,
     "deepseek": DEFAULT_DEEPSEEK_MODEL,
 }
 
@@ -97,11 +107,23 @@ def normalize_provider(provider: str) -> str:
         return "gemini"
     if raw in {"deepseek", "deepseek-chat", "deepseek-reasoner"}:
         return "deepseek"
-    raise ValueError(f"不支持的 AI 供应商: {provider}")
+    if raw in {"minimax"}:
+        return "minimax"
+    if raw in {"kimi", "moonshot"}:
+        return "kimi"
+    if raw in {"zhipu", "glm", "bigmodel"}:
+        return "zhipu"
+    if raw in {"doubao", "ark", "volcengine"}:
+        return "doubao"
+    if raw in {"qwen", "qianwen", "dashscope"}:
+        return "qwen"
+    supported = "gemini / deepseek / minimax / kimi / zhipu / doubao / qwen"
+    raise ValueError(f"不支持的 AI 供应商: {provider}。支持的供应商: {supported}")
 
 
 def default_model_for_provider(provider: str) -> str:
-    return DEFAULT_MODELS.get(normalize_provider(provider), DEFAULT_GEMINI_MODEL)
+    """返回供应商的 fallback 模型名。新供应商无默认，返回空字符串。"""
+    return DEFAULT_MODELS.get(normalize_provider(provider), "")
 
 
 def list_models(provider: str, api_key: str, base_url: str = "") -> list:
@@ -143,7 +165,7 @@ def list_models(provider: str, api_key: str, base_url: str = "") -> list:
 
 
 def default_base_url_for_provider(provider: str) -> str:
-    return "" if normalize_provider(provider) == "gemini" else DEFAULT_DEEPSEEK_BASE_URL
+    return PROVIDER_BASE_URLS.get(normalize_provider(provider), "")
 
 
 def mask_secret(value: str, show: int = 4) -> str:
