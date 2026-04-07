@@ -61,9 +61,9 @@ CURRENT_AI_CONFIG: Dict[str, str] = {}
 
 APP_INFO_URL = "https://api.mingdao.com/v3/app"
 GET_CONTROLS_URL = "https://www.mingdao.com/api/Worksheet/GetWorksheetControls"
-ALLOWED_VIEW_TYPES = {"0", "1", "3", "4", "5", "7", "8"}
+ALLOWED_VIEW_TYPES = {"0", "1", "3", "4", "5", "7", "8"}  # 字符串类型，与 plan JSON 中的 viewType 字段比较
 
-# 看板字段语义约束（与 view_planner.suggest_views 保持一致）
+# 看板字段语义约束（与 view_planner.suggest_views 的 KANBAN_FLOW 保持一致，如需修改两处都要改）
 # 注意：优先级/紧急程度/风险等级等分级字段已移除，它们不是阶段流转字段
 KANBAN_FLOW_KEYWORDS = (
     "状态", "阶段", "进度", "步骤", "环节",
