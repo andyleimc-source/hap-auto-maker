@@ -208,63 +208,89 @@ def get_status_group():
 # --- 步骤执行 ---
 
 def step_ai(force=True):
-    from ai_utils import (AI_CONFIG_PATH, DEFAULT_DEEPSEEK_BASE_URL,
-                          DEFAULT_GEMINI_MODEL, DEFAULT_DEEPSEEK_MODEL,
-                          load_ai_config, list_models, normalize_provider)
+    from ai_utils import (AI_CONFIG_PATH, PROVIDER_BASE_URLS,
+                          load_ai_config, list_models, normalize_provider,
+                          default_base_url_for_provider)
     existing = {}
-    try: existing = load_ai_config()
-    except: pass
+    try:
+        existing = load_ai_config()
+    except Exception:
+        pass
+
     print_box("第 1 步：配置 AI 平台 (AI Provider)")
-    old_p = existing.get("provider", "deepseek")
-    p_choice = ask("AI 平台 (1=Gemini, 2=DeepSeek)", default="1" if old_p=="gemini" else "2", required=True, hint="Gemini" if old_p=="gemini" else "DeepSeek", choices=["1", "2"])
-    provider = "deepseek" if p_choice == "2" else "gemini"
+
+    # 供应商菜单
+    PROVIDERS = [
+        ("gemini",   "Gemini (Google)"),
+        ("deepseek", "DeepSeek"),
+        ("minimax",  "MiniMax"),
+        ("kimi",     "Kimi (Moonshot)"),
+        ("zhipu",    "智谱 GLM"),
+        ("doubao",   "豆包 (Doubao/Volcengine)"),
+        ("qwen",     "千问 (Qwen/Alibaba)"),
+    ]
+    old_p = existing.get("provider", "")
+    print("\n   可用 AI 供应商：")
+    for i, (key, label) in enumerate(PROVIDERS, 1):
+        marker = " [当前]" if key == old_p else ""
+        print(f"      {i}. {label}{marker}")
+
+    valid_choices = [str(i) for i in range(1, len(PROVIDERS) + 1)]
+    default_choice = next(
+        (str(i) for i, (key, _) in enumerate(PROVIDERS, 1) if key == old_p),
+        "1"
+    )
+    p_choice = ask(
+        "选择 AI 平台 (输入编号)",
+        default=default_choice,
+        required=True,
+        choices=valid_choices,
+    )
+    provider, provider_label = PROVIDERS[int(p_choice) - 1]
     provider_changed = provider != old_p
-    # 检查已存 key 是否属于当前 provider（格式不匹配则视为错误 key，强制重填）
+
+    # API Key
     existing_key = existing.get("api_key", "")
-    key_mismatch = (provider == "gemini" and existing_key.startswith("sk-")) or \
-                   (provider == "deepseek" and existing_key.startswith("AIza"))
-    key = ask(f"{provider.title()} API Key", default="" if (provider_changed or key_mismatch) else existing_key, required=True)
+    # 仅对 Gemini/DeepSeek 做 key 格式校验
+    key_mismatch = (
+        (provider == "gemini" and existing_key.startswith("sk-")) or
+        (provider == "deepseek" and existing_key.startswith("AIza"))
+    )
+    key = ask(
+        f"{provider_label} API Key",
+        default="" if (provider_changed or key_mismatch) else existing_key,
+        required=True,
+    )
 
-    # 根据供应商确定默认模型和 base_url
-    default_model = DEFAULT_GEMINI_MODEL if provider == "gemini" else DEFAULT_DEEPSEEK_MODEL
-    base_url = DEFAULT_DEEPSEEK_BASE_URL if provider == "deepseek" else ""
+    # 确定 base_url
+    base_url = default_base_url_for_provider(provider)
 
-    # 拉取可用模型列表供用户选择
-    print("\n   正在从 API 拉取可用模型列表...")
+    # 拉取可用模型列表
+    print(f"\n   正在从 {provider_label} API 拉取可用模型列表...")
     models = list_models(provider, key, base_url)
 
     if models:
-        # 找到默认模型在列表中的位置
-        default_idx = None
-        for i, m in enumerate(models):
-            if m == default_model:
-                default_idx = i + 1
-                break
         print(f"\n   可用模型 ({len(models)} 个):")
-        for i, m in enumerate(models):
-            marker = " [推荐]" if m == default_model else ""
-            print(f"      {i+1}. {m}{marker}")
-        hint = f"默认: {default_model}" if default_idx else f"推荐: {default_model}"
-        model_choice = ask(
-            f"选择模型 (输入编号或模型名)",
-            default=str(default_idx) if default_idx else default_model,
+        for i, m in enumerate(models, 1):
+            print(f"      {i}. {m}")
+        model_input = ask(
+            "选择模型 (输入编号或模型名)",
+            default="1",
             required=True,
-            hint=hint,
         )
-        # 解析用户输入：编号或模型名
-        if model_choice.isdigit():
-            idx = int(model_choice) - 1
+        if model_input.isdigit():
+            idx = int(model_input) - 1
             if 0 <= idx < len(models):
                 selected_model = models[idx]
             else:
-                print(f"   ⚠️  编号超出范围，使用默认模型: {default_model}")
-                selected_model = default_model
+                print(f"   ⚠️  编号超出范围，请手动输入模型名。")
+                selected_model = ask("模型名称", default="", required=True)
         else:
-            selected_model = model_choice.strip()
+            selected_model = model_input.strip()
     else:
         print("   ⚠️  无法拉取模型列表，请手动输入模型名称。")
-        old_model = existing.get("model", default_model) if not provider_changed else default_model
-        selected_model = ask("模型名称", default=old_model, required=True, hint=f"推荐: {default_model}")
+        old_model = existing.get("model", "") if not provider_changed else ""
+        selected_model = ask("模型名称", default=old_model, required=True)
 
     data = {
         "provider": provider,
@@ -273,10 +299,16 @@ def step_ai(force=True):
         "base_url": base_url,
     }
 
-    AI_CONFIG_PATH.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    AI_CONFIG_PATH.write_text(
+        json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    # 向后兼容：Gemini 同步写入 gemini_auth.json
     if provider == "gemini":
-        (CRED_DIR / "gemini_auth.json").write_text(json.dumps({"api_key": key, "model": selected_model}, indent=2), encoding="utf-8")
-    print(f"\n   ✔ AI 平台配置已完成 (供应商: {provider}, 模型: {selected_model})。")
+        (CRED_DIR / "gemini_auth.json").write_text(
+            json.dumps({"api_key": key, "model": selected_model}, indent=2),
+            encoding="utf-8",
+        )
+    print(f"\n   ✔ AI 平台配置已完成 (供应商: {provider_label}, 模型: {selected_model})。")
 
 def step_org_auth(force=True):
     dst = CRED_DIR / "organization_auth.json"
