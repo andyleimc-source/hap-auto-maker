@@ -129,6 +129,7 @@ def default_model_for_provider(provider: str) -> str:
 def list_models(provider: str, api_key: str, base_url: str = "") -> list:
     """
     从厂商 API 拉取可用模型列表。失败时返回空列表。
+    Gemini 使用 google-genai SDK；其余供应商均 OpenAI 兼容，统一使用 openai SDK。
     """
     p = normalize_provider(provider)
     try:
@@ -141,11 +142,9 @@ def list_models(provider: str, api_key: str, base_url: str = "") -> list:
                 short = name.replace("models/", "") if name.startswith("models/") else name
                 if not short:
                     continue
-                # 只保留支持 generateContent 的 gemini 系列模型
                 actions = [a.value if hasattr(a, "value") else str(a) for a in (m.supported_actions or [])]
                 if "generateContent" not in actions:
                     continue
-                # 排除非文本生成模型（gemma、embedding、tts、image-only、robotics 等）
                 if not short.startswith("gemini-"):
                     continue
                 skip_keywords = ("-tts", "-audio", "-robotics", "-image", "-live", "-computer-use")
@@ -153,12 +152,15 @@ def list_models(provider: str, api_key: str, base_url: str = "") -> list:
                     continue
                 models.append(short)
             return sorted(models)
-        if p == "deepseek":
+
+        # 所有 OpenAI 兼容供应商（deepseek / minimax / kimi / zhipu / doubao / qwen）
+        if p in PROVIDER_BASE_URLS:
             from openai import OpenAI
-            url = base_url or DEFAULT_DEEPSEEK_BASE_URL
-            client = OpenAI(api_key=api_key, base_url=url)
+            url = base_url or PROVIDER_BASE_URLS[p]
+            client = OpenAI(api_key=api_key, base_url=url, timeout=15.0)
             resp = client.models.list()
             return sorted(m.id for m in resp.data if m.id)
+
     except Exception as e:
         print(f"  ⚠️  拉取 {p} 模型列表失败: {e}")
     return []
@@ -398,11 +400,13 @@ def get_ai_client(config: Optional[Dict[str, str]] = None):
 
     if provider == "gemini":
         from google import genai
-
         raw_client = genai.Client(api_key=api_key)
         return _GeminiRpdWrapper(raw_client, model)
-    if provider == "deepseek":
+
+    # 所有 OpenAI 兼容供应商
+    if provider in PROVIDER_BASE_URLS:
         return GeminiCompatibilityClient(provider, api_key, model, config.get("base_url"))
+
     raise ValueError(f"不支持的 AI 供应商: {provider}")
 
 
