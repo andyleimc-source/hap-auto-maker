@@ -107,7 +107,7 @@ def normalize_provider(provider: str) -> str:
         return "gemini"
     if raw in {"deepseek", "deepseek-chat", "deepseek-reasoner"}:
         return "deepseek"
-    if raw in {"minimax"}:
+    if raw == "minimax":
         return "minimax"
     if raw in {"kimi", "moonshot"}:
         return "kimi"
