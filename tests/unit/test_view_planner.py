@@ -337,3 +337,74 @@ class TestSuggestViews:
         result = suggest_views(classified, "ws1", "门店管理")
         view_types = [s["viewType"] for s in result]
         assert 8 not in view_types
+
+
+class TestValidateStructurePlanFieldCheck:
+    """validate_structure_plan 应在字段不满足时丢弃视图（而非报错）。"""
+
+    def _ws_by_id(self, ws_id, fields):
+        return {ws_id: {"worksheetId": ws_id, "name": "test", "fields": fields}}
+
+    def test_resource_view_dropped_without_member_field(self):
+        """工作表无成员字段时，validate 应丢弃 viewType=7。"""
+        ws_by_id = self._ws_by_id("ws1", [
+            {"id": "d1", "type": 15, "name": "开始"},
+            {"id": "d2", "type": 15, "name": "结束"},
+        ])
+        plan = {"worksheets": [{"worksheetId": "ws1", "views": [
+            {"viewType": 7, "name": "资源视图"},
+        ]}]}
+        result = validate_structure_plan(plan, ws_by_id)
+        view_types = [v["viewType"] for v in result["worksheets"][0]["views"]]
+        assert 7 not in view_types
+
+    def test_resource_view_dropped_without_two_dates(self):
+        """工作表只有一个日期字段时，validate 应丢弃 viewType=7。"""
+        ws_by_id = self._ws_by_id("ws1", [
+            {"id": "m1", "type": 26, "name": "负责人"},
+            {"id": "d1", "type": 15, "name": "截止日期"},
+        ])
+        plan = {"worksheets": [{"worksheetId": "ws1", "views": [
+            {"viewType": 7, "name": "资源视图"},
+        ]}]}
+        result = validate_structure_plan(plan, ws_by_id)
+        view_types = [v["viewType"] for v in result["worksheets"][0]["views"]]
+        assert 7 not in view_types
+
+    def test_resource_view_kept_when_fields_present(self):
+        """成员字段 + 两日期字段时，viewType=7 应保留。"""
+        ws_by_id = self._ws_by_id("ws1", [
+            {"id": "m1", "type": 26, "name": "负责人"},
+            {"id": "d1", "type": 15, "name": "开始日期"},
+            {"id": "d2", "type": 15, "name": "结束日期"},
+        ])
+        plan = {"worksheets": [{"worksheetId": "ws1", "views": [
+            {"viewType": 7, "name": "资源视图"},
+        ]}]}
+        result = validate_structure_plan(plan, ws_by_id)
+        view_types = [v["viewType"] for v in result["worksheets"][0]["views"]]
+        assert 7 in view_types
+
+    def test_calendar_view_dropped_without_date_field(self):
+        """工作表无日期字段时，validate 应丢弃 viewType=4。"""
+        ws_by_id = self._ws_by_id("ws1", [
+            {"id": "f1", "type": 2, "name": "标题"},
+        ])
+        plan = {"worksheets": [{"worksheetId": "ws1", "views": [
+            {"viewType": 4, "name": "日历视图"},
+        ]}]}
+        result = validate_structure_plan(plan, ws_by_id)
+        view_types = [v["viewType"] for v in result["worksheets"][0]["views"]]
+        assert 4 not in view_types
+
+    def test_gantt_view_dropped_without_two_dates(self):
+        """工作表只有一个日期字段时，validate 应丢弃 viewType=5。"""
+        ws_by_id = self._ws_by_id("ws1", [
+            {"id": "d1", "type": 15, "name": "截止日期"},
+        ])
+        plan = {"worksheets": [{"worksheetId": "ws1", "views": [
+            {"viewType": 5, "name": "甘特图"},
+        ]}]}
+        result = validate_structure_plan(plan, ws_by_id)
+        view_types = [v["viewType"] for v in result["worksheets"][0]["views"]]
+        assert 5 not in view_types

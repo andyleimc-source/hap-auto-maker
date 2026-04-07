@@ -305,6 +305,34 @@ def validate_structure_plan(
             # 统一写回整数
             view["viewType"] = vt_int
 
+        # ── 字段存在性校验：字段不满足的视图静默丢弃 ──────────────────────────
+        ws_info = worksheets_by_id.get(ws_id) if worksheets_by_id else None
+        if ws_info:
+            fields = ws_info.get("fields", [])
+            classified = classify_fields(fields)
+            dates = classified.get("date", [])
+            members = [f for f in classified.get("user", []) if f.get("type") == 26]
+
+            filtered_views = []
+            for view in views:
+                vt = view["viewType"]
+                keep = True
+                if vt == 4:  # 日历：需要至少一个日期字段
+                    if not dates:
+                        print(f"[validate] ws={ws_id} 丢弃 viewType=4（无日期字段）")
+                        keep = False
+                elif vt == 5:  # 甘特：需要至少两个日期字段
+                    if len(dates) < 2:
+                        print(f"[validate] ws={ws_id} 丢弃 viewType=5（日期字段不足2个）")
+                        keep = False
+                elif vt == 7:  # 资源：需要成员字段 + 至少两个日期字段
+                    if not members or len(dates) < 2:
+                        print(f"[validate] ws={ws_id} 丢弃 viewType=7（缺成员字段或日期字段不足）")
+                        keep = False
+                if keep:
+                    filtered_views.append(view)
+            ws["views"] = filtered_views
+
     return raw
 
 
