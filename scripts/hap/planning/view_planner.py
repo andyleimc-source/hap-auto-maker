@@ -40,89 +40,68 @@ def suggest_views(
     worksheet_id: str = "",
     worksheet_name: str = "",
 ) -> list[dict]:
-    """根据字段分类和工作表名语义推荐适合的视图类型。
+    """根据字段分类推荐视图候选，供 AI 做最终语义判断。
 
-    看板：仅限「状态/流程/优先级」语义的单选字段，排除纯分类/类型字段。
-    日历：仅限排期/事件/预约语义的工作表。
-    甘特图：仅限项目/任务/计划语义的工作表 + 有开始+结束两个日期字段。
+    规则（字段层过滤）：
+    - 看板(1)：type=9/11 字段名含 KANBAN_FLOW（阶段流转关键词）。
+               优先级/等级/风险等级等分级词已从触发词中移除。
+    - 日历(4)：有任意日期字段即为候选，AI 判断是否有时间轴意义。
+    - 甘特(5)：有 ≥2 个日期字段即为候选，AI 判断是否有起止跨度。
+    - 资源(7)：有 type=26 成员字段 + ≥2 个日期字段，AI 判断人员时间线场景。
+    - 地图(8)：必须有 type=40 定位字段（type=24 地区字段不够），直接推荐。
+    - 画廊(3)：有 type=14 附件字段，直接推荐。
     """
     suggestions = []
 
-    # ── 看板：字段名必须有「流转/优先级」语义 ──────────────────────────────────
-    # 适合看板：状态流转型 + 有序分级型
-    KANBAN_FIELD_KEYWORDS = {
-        # 状态流转
+    # ── 看板：只有真正「阶段流转」语义的单选字段才触发 ──────────────────────────
+    # 注意：「优先级/紧急程度/风险等级」等分级字段已移除，它们不流转
+    KANBAN_FLOW = {
         "状态", "阶段", "进度", "步骤", "环节",
-        # 审批/流程
         "审批", "审核", "审查", "审定",
-        # 有序分级
-        "优先级", "紧急程度", "严重程度", "风险等级", "紧急级别",
-        "重要程度", "危急程度",
     }
-    # 排除：纯分类/类型/方式/来源，这类字段没有流转语义
-    KANBAN_EXCLUDE_KEYWORDS = {
+    KANBAN_EXCLUDE = {
         "类型", "分类", "方式", "来源", "渠道", "性别",
         "行业", "地区", "部门", "岗位", "职位", "职级",
     }
-
     KANBAN_SUITABLE_TYPES = {9, 11}
     selects = [f for f in classified_fields.get("select", []) if f.get("type") in KANBAN_SUITABLE_TYPES]
 
     kanban_field = None
     for f in selects:
         fname = f.get("name", "")
-        # 包含流转关键词
-        has_flow = any(kw in fname for kw in KANBAN_FIELD_KEYWORDS)
-        # 不含排除关键词（或含流转关键词的优先保留，如「合同状态」）
-        has_exclude = any(kw in fname for kw in KANBAN_EXCLUDE_KEYWORDS)
+        has_flow = any(kw in fname for kw in KANBAN_FLOW)
+        has_exclude = any(kw in fname for kw in KANBAN_EXCLUDE)
         if has_flow and not has_exclude:
             kanban_field = f
             break
-        # 兜底：字段名直接是「状态」「阶段」「优先级」等单词（精确匹配）
-        if fname in KANBAN_FIELD_KEYWORDS:
+        if fname in KANBAN_FLOW:
             kanban_field = f
             break
 
     if kanban_field:
         suggestions.append({
             "viewType": 1, "name": f"按{kanban_field['name']}看板",
-            "reason": f"字段「{kanban_field['name']}」有状态流转/优先级语义，适合看板",
+            "reason": f"字段「{kanban_field['name']}」有阶段流转语义，适合看板",
             "viewControl": kanban_field["id"],
+            "candidate": True,
         })
         suggestions.append({
             "viewType": 0, "name": f"按{kanban_field['name']}分组",
             "reason": "分组表格视图",
+            "candidate": False,
         })
 
-    # ── 日历：工作表名必须有排期/事件语义 ─────────────────────────────────────
-    CALENDAR_WS_KEYWORDS = {
-        # 排期/预约
-        "活动", "日程", "排期", "预约", "预订", "排班", "班次",
-        # 事件/会议
-        "事件", "会议", "培训", "考勤", "假期", "出差", "值班",
-        # 计划/安排
-        "计划", "安排", "档期", "节假日",
-    }
+    # ── 日历(4)：有任意日期字段即候选，AI 判断时间轴意义 ─────────────────────────
     dates = classified_fields.get("date", [])
-    ws_is_calendar = any(kw in worksheet_name for kw in CALENDAR_WS_KEYWORDS)
-
-    if dates and ws_is_calendar:
+    if dates:
         suggestions.append({
             "viewType": 4, "name": "日历视图",
-            "reason": f"工作表「{worksheet_name}」有排期/事件语义，字段「{dates[0]['name']}」",
+            "reason": f"有日期字段「{dates[0]['name']}」，请 AI 判断是否有时间轴业务意义",
             "calendarcid": dates[0]["id"],
+            "candidate": True,
         })
 
-    # ── 甘特图：工作表名有项目/任务语义 + 有开始+结束两个日期字段 ────────────
-    GANTT_WS_KEYWORDS = {
-        # 项目/任务
-        "项目", "任务", "里程碑", "迭代", "冲刺", "需求", "工单",
-        # 计划执行
-        "计划", "工期", "排产", "路线图", "roadmap", "版本", "发布",
-    }
-    ws_is_gantt = any(kw in worksheet_name for kw in GANTT_WS_KEYWORDS)
-
-    # 找开始日期和结束日期字段（语义配对）
+    # ── 甘特图(5)：有 ≥2 个日期字段即候选，AI 判断起止跨度意义 ─────────────────
     BEGIN_DATE_KEYWORDS = {"开始", "启动", "立项", "计划开始", "预计开始"}
     END_DATE_KEYWORDS = {"结束", "截止", "完成", "交付", "到期", "计划完成", "预计完成"}
 
@@ -135,40 +114,52 @@ def suggest_views(
         elif end_field is None and any(kw in fname for kw in END_DATE_KEYWORDS):
             end_field = f
 
-    # 兜底：有任意两个日期字段
+    # 兜底：有任意两个不同日期字段
     if begin_field is None and len(dates) >= 1:
         begin_field = dates[0]
     if end_field is None and len(dates) >= 2:
         end_field = dates[1]
 
-    if ws_is_gantt and begin_field and end_field and begin_field["id"] != end_field["id"]:
+    if begin_field and end_field and begin_field["id"] != end_field["id"]:
         suggestions.append({
-            "viewType": 5, "name": "项目甘特图",
-            "reason": f"工作表「{worksheet_name}」有项目/任务语义，字段「{begin_field['name']}」→「{end_field['name']}」",
+            "viewType": 5, "name": "甘特图",
+            "reason": f"有「{begin_field['name']}」→「{end_field['name']}」两个日期字段，请 AI 判断是否有起止跨度业务意义",
             "begindate": begin_field["id"],
             "enddate": end_field["id"],
+            "candidate": True,
         })
 
-    # 层级视图(viewType=2) 已禁用 — 前端兼容性问题，跳过
+    # ── 资源视图(7)：成员字段(type=26) + ≥2 个日期字段 ──────────────────────────
+    members = [f for f in classified_fields.get("user", []) if f.get("type") == 26]
+    if members and begin_field and end_field and begin_field["id"] != end_field["id"]:
+        suggestions.append({
+            "viewType": 7, "name": "资源视图",
+            "reason": f"有成员字段「{members[0]['name']}」+ 两个日期字段，请 AI 判断是否有人员时间线场景",
+            "viewControl": members[0]["id"],
+            "begindate": begin_field["id"],
+            "enddate": end_field["id"],
+            "candidate": True,
+        })
 
-    # 画廊视图(viewType=3) — 有附件字段时推荐
+    # ── 画廊(3)：有附件字段直接推荐，无需 AI 判断 ────────────────────────────────
     attachments = classified_fields.get("attachment", [])
     if attachments:
         suggestions.append({
             "viewType": 3, "name": "图片画廊",
-            "reason": f"有附件字段「{attachments[0]['name']}」，适合以图片卡片形式浏览",
+            "reason": f"有附件字段「{attachments[0]['name']}」，适合卡片浏览",
             "coverCid": attachments[0]["id"],
+            "candidate": False,
         })
 
-    # 地图视图(viewType=8) — 必须有定位字段(type=40)，仅地区字段(type=24)不够
-    # 2026-04-04 抓包确认：地图视图需要 type=40 定位字段作为 viewControl
+    # ── 地图(8)：必须 type=40 定位字段，type=24 地区字段不够 ─────────────────────
     locations = classified_fields.get("location", [])
     location_40 = [f for f in locations if f.get("type") == 40]
     if location_40:
         suggestions.append({
             "viewType": 8, "name": "地图视图",
-            "reason": f"有定位字段「{location_40[0]['name']}」",
+            "reason": f"有定位字段「{location_40[0]['name']}」(type=40)",
             "latlng": location_40[0]["id"],
+            "candidate": False,
         })
 
     return suggestions
