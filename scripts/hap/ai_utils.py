@@ -21,6 +21,9 @@ DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 DEFAULT_DEEPSEEK_MODEL = "deepseek-chat"
 DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com"  # 向后兼容别名
 
+# 这些供应商只接受 temperature=1，传其他值会报 400
+_PROVIDERS_TEMPERATURE_FIXED_TO_1 = {"kimi"}
+
 # 所有 OpenAI 兼容供应商的默认 base_url（Gemini 不在此表，使用 google-genai SDK）
 PROVIDER_BASE_URLS = {
     "deepseek": "https://api.deepseek.com",
@@ -311,7 +314,7 @@ class GeminiCompatibilityClient:
         return self
 
     def create(self, model: str, config: Any = None) -> Any:
-        return FakeChat(self._openai_client, model or self.model, config)
+        return FakeChat(self._openai_client, model or self.model, config, provider=self.provider)
 
     def generate_content(self, model: str, contents: str, config: Any = None) -> Any:
         import time
@@ -336,6 +339,9 @@ class GeminiCompatibilityClient:
                 response_format = {"type": "json_object"}
                 if "JSON" not in contents.upper():
                     contents += "\nReturn JSON only."
+
+        if self.provider in _PROVIDERS_TEMPERATURE_FIXED_TO_1:
+            temperature = 1
 
         messages = [{"role": "user", "content": contents}]
 
@@ -378,10 +384,11 @@ class GeminiCompatibilityClient:
 
 
 class FakeChat:
-    def __init__(self, openai_client, model, config):
+    def __init__(self, openai_client, model, config, provider: str = ""):
         self.client = openai_client
         self.model = model
         self.config = config
+        self.provider = provider
         self.history = []
 
     def send_message(self, message: str) -> Any:
@@ -393,6 +400,9 @@ class FakeChat:
                 temperature = self.config.temperature or 0.2
             elif isinstance(self.config, dict):
                 temperature = self.config.get("temperature", 0.2)
+
+        if self.provider in _PROVIDERS_TEMPERATURE_FIXED_TO_1:
+            temperature = 1
 
         response = self.client.chat.completions.create(
             model=self.model,
