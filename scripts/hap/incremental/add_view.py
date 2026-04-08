@@ -54,11 +54,7 @@ for p in [str(SCRIPTS_HAP)]:
 import auth_retry
 from incremental.app_context import load_app_context, fetch_worksheet_detail
 from ai_utils import load_ai_config, get_ai_client, create_generation_config, parse_ai_json
-from planning.view_planner import (
-    build_structure_prompt,
-    validate_structure_plan,
-    suggest_views,
-)
+from planners.view_recommender import get_available_view_types
 from planning.constraints import classify_fields
 from views.view_types import VIEW_REGISTRY
 from create_views_from_plan import (
@@ -82,7 +78,7 @@ def _build_single_view_prompt(
 ) -> str:
     """为单个工作表规划单个视图。"""
     classified = classify_fields(fields)
-    suggestions = suggest_views(classified, ws_id)
+    available = get_available_view_types(fields)
 
     field_lines = []
     for cat, label in [("select", "单选/下拉"), ("date", "日期"),
@@ -93,8 +89,9 @@ def _build_single_view_prompt(
             field_lines.append(f"  [{label}] {fids}")
 
     suggestion_lines = []
-    for sg in suggestions:
-        suggestion_lines.append(f"  - viewType={sg['viewType']} {sg['name']}")
+    for vt, info in sorted(available.items()):
+        spec = VIEW_REGISTRY.get(vt, {})
+        suggestion_lines.append(f"  - viewType={vt} {spec.get('name', '')}")
 
     view_types_str = "\n".join(
         f"  {vt}: {spec['name']} — {spec['doc'][:60]}"
