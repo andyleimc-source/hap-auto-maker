@@ -78,12 +78,20 @@ def normalize_advanced_setting(view_type: str, value: Any) -> dict:
             # 表格视图分组字段必须是 JSON 数组字符串：
             # ✅ [{"controlId":"...","isAsc":true}]
             # ❌ {"controlId":"...","isAsc":true}
-            # 若写成对象字符串，前端打开工作表会出现「服务异常」。
+            # ❌ ["fieldId"]  ← AI 常见错误格式
+            # 若写成非法格式，前端打开工作表会出现「服务异常」。
             parsed = parse_json_loose(v)
             if isinstance(parsed, dict):
                 parsed = [parsed]
             if isinstance(parsed, list):
-                out["groupsetting"] = json.dumps(parsed, ensure_ascii=False, separators=(",", ":"))
+                # 修正 AI 生成的纯字符串数组：["fieldId"] → [{"controlId":"fieldId","isAsc":true}]
+                normalized = []
+                for item in parsed:
+                    if isinstance(item, str) and item.strip():
+                        normalized.append({"controlId": item.strip(), "isAsc": True})
+                    elif isinstance(item, dict):
+                        normalized.append(item)
+                out["groupsetting"] = json.dumps(normalized, ensure_ascii=False, separators=(",", ":"))
             elif isinstance(v, str):
                 out["groupsetting"] = v
             elif v is None:
