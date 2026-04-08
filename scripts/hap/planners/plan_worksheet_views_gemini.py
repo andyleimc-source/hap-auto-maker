@@ -591,6 +591,33 @@ def normalize_views(raw_views: Any, fields: List[dict], worksheet_id: str = "") 
                     print(f"    ⚠ 层级视图「{name}」未找到自关联字段，跳过该视图")
                     continue  # 没有自关联字段则不创建层级视图，否则前端会因 layersControlId 为空而崩溃
 
+        # 自动补全：日历视图缺 calendarcids 时自动匹配日期字段
+        if view_type == "4":
+            has_calendar = any(
+                isinstance(u, dict) and "calendarcids" in (u.get("editAdKeys") or [])
+                for u in (item.get("postCreateUpdates") or [])
+            )
+            if not has_calendar:
+                date_fids = _find_date_fields(fields)
+                if date_fids:
+                    begin_id = date_fids[0]
+                    end_id = date_fids[1] if len(date_fids) >= 2 else ""
+                    cids_val = json.dumps(
+                        [{"begin": begin_id, "end": end_id}],
+                        ensure_ascii=False, separators=(",", ":")
+                    )
+                    if not isinstance(item.get("postCreateUpdates"), list):
+                        item["postCreateUpdates"] = []
+                    item["postCreateUpdates"].append({
+                        "editAttrs": ["advancedSetting"],
+                        "editAdKeys": ["calendarcids"],
+                        "advancedSetting": {"calendarcids": cids_val},
+                    })
+                    print(f"    ⚠ 日历视图「{name}」自动补全 calendarcids begin={begin_id} end={end_id}")
+                else:
+                    print(f"    ⚠ 日历视图「{name}」未找到日期字段，跳过该视图")
+                    continue  # 没有日期字段则不创建日历视图
+
         post_updates = item.get("postCreateUpdates")
         if not isinstance(post_updates, list):
             post_updates = []

@@ -261,6 +261,21 @@ def auto_complete_post_updates(view: dict, ws_fields: list[dict] | None = None) 
         for upd in view.get("postCreateUpdates") or []:
             adv = upd.get("advancedSetting") or {}
             calendarcids = calendarcids or str(adv.get("calendarcids", "")).strip()
+        # 兜底：AI 没提供时从字段列表自动查找日期字段(type=15/16)
+        if not calendarcids and ws_fields:
+            date_field_ids = []
+            for f in ws_fields:
+                f_type = int(f.get("type", 0) or f.get("controlType", 0) or 0)
+                f_id = str(f.get("id", "") or f.get("controlId", "")).strip()
+                if f_type in (15, 16) and f_id:
+                    date_field_ids.append(f_id)
+            if date_field_ids:
+                begin_id = date_field_ids[0]
+                end_id = date_field_ids[1] if len(date_field_ids) >= 2 else ""
+                calendarcids = json.dumps(
+                    [{"begin": begin_id, "end": end_id}],
+                    ensure_ascii=False, separators=(",", ":")
+                )
         if not calendarcids:
             return []
         return [{
