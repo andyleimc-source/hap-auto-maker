@@ -21,6 +21,11 @@ DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 DEFAULT_DEEPSEEK_MODEL = "deepseek-chat"
 DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com"  # 向后兼容别名
 
+# DeepSeek 统一使用推理模型：deepseek-chat max_tokens 仅 8K，不够骨架规划等大输出场景，
+# deepseek-reasoner 支持 64K，统一切换避免截断。仅对 DeepSeek 生效，其他供应商不受影响。
+_DEEPSEEK_RUNTIME_MODEL = "deepseek-reasoner"
+_DEEPSEEK_RUNTIME_MAX_TOKENS = 65536  # deepseek-reasoner 上限 64K
+
 # 这些供应商只接受 temperature=1，传其他值会报 400
 _PROVIDERS_TEMPERATURE_FIXED_TO_1 = {"kimi"}
 
@@ -343,21 +348,28 @@ class GeminiCompatibilityClient:
         if self.provider in _PROVIDERS_TEMPERATURE_FIXED_TO_1:
             temperature = 1
 
+        # DeepSeek：运行时强制切换到推理模型，获得 64K 输出上限
+        effective_model = model or self.model
+        max_tok = 32768
+        if self.provider == "deepseek":
+            effective_model = _DEEPSEEK_RUNTIME_MODEL
+            max_tok = _DEEPSEEK_RUNTIME_MAX_TOKENS
+
         messages = [{"role": "user", "content": contents}]
 
         # 增加重试逻辑，应对推理模型长时间思考导致的连接中断
         max_retries = 3
         last_exception = None
-        
+
         for attempt in range(max_retries):
             try:
                 # 使用流式请求，逐 chunk 接收，避免大响应时服务端 chunked 连接中断
                 stream = self._openai_client.chat.completions.create(
-                    model=model or self.model,
+                    model=effective_model,
                     messages=messages,
                     temperature=temperature,
                     response_format=response_format,
-                    max_tokens=32768,
+                    max_tokens=max_tok,
                     stream=True,
                 )
                 chunks = []
@@ -404,10 +416,18 @@ class FakeChat:
         if self.provider in _PROVIDERS_TEMPERATURE_FIXED_TO_1:
             temperature = 1
 
+        # DeepSeek：运行时强制切换到推理模型
+        effective_model = self.model
+        max_tok = 32768
+        if self.provider == "deepseek":
+            effective_model = _DEEPSEEK_RUNTIME_MODEL
+            max_tok = _DEEPSEEK_RUNTIME_MAX_TOKENS
+
         response = self.client.chat.completions.create(
-            model=self.model,
+            model=effective_model,
             messages=self.history,
             temperature=temperature,
+            max_tokens=max_tok,
         )
 
         reply = response.choices[0].message.content or ""
