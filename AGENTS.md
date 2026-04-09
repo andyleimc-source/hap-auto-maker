@@ -1,5 +1,13 @@
 # AGENTS.md — HAP Auto Maker
 
+## Agent 快速上手（必须先读）
+
+当 Claude Code / Codex 首次进入仓库时，按以下顺序读取，禁止先全仓扫描：
+
+1. `AGENTS.md`（本文件）
+2. `README-QUICKSTART.md`（3 分钟启动）
+3. `RUNBOOK.md`（失败排障）
+
 ## 运行
 
 ```bash
@@ -13,7 +21,7 @@ python3 make_app.py --spec-json requirement_spec_latest.json  # 跳过 AI 生成
 ## AI 调用规范
 
 - 统一用 `ai_utils.py`：`load_ai_config`, `get_ai_client`, `parse_ai_json`
-- 默认 `fast` tier（gemini-2.5-flash / deepseek-chat），**不要切换到 reasoning**
+- 默认 fast 模式；DeepSeek 在运行时会强制使用 `deepseek-reasoner`（由 `ai_utils.py` 统一处理）
 - 所有 AI 输出须经 `repair_plan()` + `validate_*()` 校验
 
 ## API 响应成功标志
