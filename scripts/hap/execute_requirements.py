@@ -284,8 +284,20 @@ def main() -> None:
     )
     stats = get_token_stats()
     if stats:
-        total_in = sum(int(s.get("input", 0) or 0) for s in stats.values())
-        total_out = sum(int(s.get("output", 0) or 0) for s in stats.values())
+        total_in = int(stats.get("total_input", 0) or 0)
+        total_out = int(stats.get("total_output", 0) or 0)
+        if total_in == 0 and total_out == 0:
+            by_model = stats.get("by_model", {})
+            if isinstance(by_model, dict):
+                for model_stats in by_model.values():
+                    if not isinstance(model_stats, dict):
+                        continue
+                    total_in += int(
+                        model_stats.get("input_tokens", model_stats.get("input", 0)) or 0
+                    )
+                    total_out += int(
+                        model_stats.get("output_tokens", model_stats.get("output", 0)) or 0
+                    )
         cost = total_in / 1_000_000 * 0.15 + total_out / 1_000_000 * 0.60
         print(f"- AI tokens: 输入 {total_in:,} / 输出 {total_out:,}  估算费用: ${cost:.3f}")
     print(f"- 报告: {out}")
