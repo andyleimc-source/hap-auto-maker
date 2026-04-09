@@ -62,6 +62,7 @@ Rules:
 5. Section names must be concise English business labels, ideally 1-3 words.
 6. If a section would contain only one worksheet, merge it into the most related section.
 7. Inside each section, place primary worksheets before detail or helper worksheets.
+8. If one worksheet is literally named "{dashboard_name}", treat it as a normal worksheet and still assign it to a business section. Do not consume it with the reserved "{dashboard_name}" section.
 
 Return strict JSON only:
 {{
@@ -94,6 +95,7 @@ Return strict JSON only:
 5. 分组名称用 2-6 个中文字，简洁明了
 6. 如果某分组只剩 1 张工作表，将其合并到最相关的分组中
 7. 每个分组内，主表（核心业务表）排在前面，明细表/子表/辅助表排在后面
+8. 如果某张工作表的名称刚好也是"{dashboard_name}"，它仍然是普通工作表，必须分配到业务分组中，不能被保留分组吞掉。
 
 ## 输出格式（严格 JSON，不要任何解释文字）
 
@@ -122,7 +124,25 @@ def call_ai_plan(prompt: str, ai_config: dict, client) -> dict:
     return parse_ai_json(response.text)
 
 
-def validate_sections_plan(plan: dict, worksheet_names: Set[str]) -> None:
+def _ensure_fallback_business_section(sections: List[dict], dashboard_name: str, fallback_name: str) -> dict:
+    for sec in sections:
+        if str(sec.get("name", "")).strip() != dashboard_name:
+            if not isinstance(sec.get("worksheets"), list):
+                sec["worksheets"] = []
+            return sec
+    fallback = {"name": fallback_name, "worksheets": []}
+    sections.append(fallback)
+    return fallback
+
+
+def validate_sections_plan(
+    plan: dict,
+    worksheet_names: Set[str],
+    *,
+    ordered_worksheet_names: List[str],
+    dashboard_name: str,
+    fallback_name: str,
+) -> None:
     sections = plan.get("sections")
     if not isinstance(sections, list) or not sections:
         raise ValueError("sections_plan 缺少 sections 列表或为空")
@@ -148,21 +168,68 @@ def validate_sections_plan(plan: dict, worksheet_names: Set[str]) -> None:
             new_sections.append(sec)
     plan["sections"] = new_sections
 
+    fallback_section = _ensure_fallback_business_section(new_sections, dashboard_name, fallback_name)
+
     assigned: Set[str] = set()
+    seen_per_section: Dict[str, Set[str]] = {}
+    dashboard_section = next((sec for sec in new_sections if str(sec.get("name", "")).strip() == dashboard_name), None)
+    dashboard_misplaced: List[str] = []
+
     for i, sec in enumerate(new_sections):
         name = str(sec.get("name", "")).strip()
         ws_list = sec.get("worksheets", [])
+        normalized_ws: List[str] = []
+        seen_here = seen_per_section.setdefault(name, set())
         for ws_name in ws_list:
             ws_name = str(ws_name).strip()
             if ws_name not in worksheet_names:
                 # 工作表名不存在时跳过（AI 可能返回轻微不一致的名称），记录警告
                 print(f"[warn] 分组「{name}」中的工作表「{ws_name}」不在 worksheet_plan 中，已跳过", file=sys.stderr)
                 continue
+            if ws_name in seen_here:
+                continue
+            seen_here.add(ws_name)
+            if name == dashboard_name:
+                dashboard_misplaced.append(ws_name)
+                continue
+            normalized_ws.append(ws_name)
             assigned.add(ws_name)
+        sec["worksheets"] = normalized_ws if name == dashboard_name else normalized_ws
+
+    if dashboard_section is not None:
+        dashboard_section["worksheets"] = []
+
+    if dashboard_misplaced:
+        existing = {
+            str(ws).strip()
+            for ws in (fallback_section.get("worksheets") or [])
+            if str(ws).strip()
+        }
+        for ws_name in dashboard_misplaced:
+            if ws_name not in existing:
+                fallback_section["worksheets"].append(ws_name)
+                existing.add(ws_name)
+                assigned.add(ws_name)
+        print(f"[warn] 保留分组「{dashboard_name}」中出现工作表，已自动移入业务分组: {dashboard_misplaced}", file=sys.stderr)
 
     missing = worksheet_names - assigned
     if missing:
-        raise ValueError(f"以下工作表未被分配到任何分组: {missing}")
+        existing = {
+            str(ws).strip()
+            for ws in (fallback_section.get("worksheets") or [])
+            if str(ws).strip()
+        }
+        ordered_missing = [ws for ws in ordered_worksheet_names if ws in missing]
+        for ws_name in ordered_missing:
+            if ws_name not in existing:
+                fallback_section["worksheets"].append(ws_name)
+                existing.add(ws_name)
+                assigned.add(ws_name)
+        print(f"[warn] 以下工作表未被 AI 分配，已自动追加到分组「{fallback_section['name']}」: {ordered_missing}", file=sys.stderr)
+
+    still_missing = worksheet_names - assigned
+    if still_missing:
+        raise ValueError(f"以下工作表未被分配到任何分组: {still_missing}")
 
 
 # ---------------------------------------------------------------------------
@@ -191,7 +258,8 @@ def main() -> None:
         print("worksheet_plan 中没有工作表，跳过分组规划")
         sys.exit(0)
 
-    worksheet_names: Set[str] = {str(ws.get("name", "")).strip() for ws in worksheets if ws.get("name")}
+    ordered_worksheet_names = [str(ws.get("name", "")).strip() for ws in worksheets if str(ws.get("name", "")).strip()]
+    worksheet_names: Set[str] = set(ordered_worksheet_names)
 
     if len(worksheets) < 4:
         # 工作表数量不足以形成多分组，全部放一个默认分组；dashboard 分组排第一。
@@ -210,7 +278,13 @@ def main() -> None:
         print(f"[{datetime.now().strftime('%H:%M:%S')}] 调用 AI 规划分组（{len(worksheets)} 张工作表）...")
         plan_result = call_ai_plan(prompt, ai_config, client)
 
-        validate_sections_plan(plan_result, worksheet_names)
+        validate_sections_plan(
+            plan_result,
+            worksheet_names,
+            ordered_worksheet_names=ordered_worksheet_names,
+            dashboard_name=dashboard_name,
+            fallback_name=all_name,
+        )
         sections = plan_result["sections"]
         # 确保 dashboard 分组存在且排第一（防止 AI 不遵守）。
         dashboard = next((s for s in sections if s.get("name") == dashboard_name), None)
