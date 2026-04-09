@@ -41,3 +41,16 @@ def test_dual_axis_chart_keeps_multiple_left_yaxis():
     body = base_body(_chart_with_two_yaxis(report_type=7), app_id="app_1", report_type=7)
     assert body["reportType"] == 7
     assert len(body["yaxisList"]) == 2
+
+
+def test_scatter_chart_keeps_split_config():
+    chart = _chart_with_two_yaxis(report_type=12)
+    chart["split"] = {
+        "controlId": "category_id",
+        "controlType": 9,
+        "controlName": "类别",
+    }
+    body = base_body(chart, app_id="app_1", report_type=12)
+    assert body["split"]["controlId"] == "category_id"
+    assert body["split"]["controlName"] == "类别"
+    assert body["splitId"] == "category_id"

@@ -125,9 +125,18 @@ def base_body(chart: dict, app_id: str, report_type: int) -> dict:
     if report_type in _SINGLE_AXIS_REPORT_TYPES and len(yaxis_payload) > 1:
         yaxis_payload = yaxis_payload[:1]
 
+    split_cfg = chart.get("split", {})
+    if not isinstance(split_cfg, dict):
+        split_cfg = {}
+    split_id = chart.get("splitId", "")
+    if split_id is None:
+        split_id = ""
+    if not split_id and isinstance(split_cfg, dict):
+        split_id = str(split_cfg.get("controlId", "") or "")
+
     return {
-        "splitId": "",
-        "split": {},
+        "splitId": split_id,
+        "split": split_cfg,
         "displaySetup": base_display_setup(report_type, xaxes_raw),
         "name": name,
         "desc": desc,
