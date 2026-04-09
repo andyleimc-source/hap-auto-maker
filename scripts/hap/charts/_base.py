@@ -117,6 +117,14 @@ def base_body(chart: dict, app_id: str, report_type: int) -> dict:
     filter_cfg.setdefault("rangeValue", 0)
     filter_cfg.setdefault("today", False)
 
+    yaxis_payload = [build_yaxis(y) for y in yaxis_list_raw]
+    # HAR 证据（har/统计/双轴图配置错误.har，2026-04-09）：
+    # reportType=1 的图若携带多个 yaxis（如额外的 wfftime），前端会出现“无法形成图表”。
+    # 单轴图类型在构建层做最终兜底：只保留第一个 yaxis，避免 AI 误规划导致图表不可用。
+    _SINGLE_AXIS_REPORT_TYPES = {1, 2, 3, 4, 5, 6, 8, 9, 10, 13, 14, 15, 16, 17}
+    if report_type in _SINGLE_AXIS_REPORT_TYPES and len(yaxis_payload) > 1:
+        yaxis_payload = yaxis_payload[:1]
+
     return {
         "splitId": "",
         "split": {},
@@ -140,7 +148,7 @@ def base_body(chart: dict, app_id: str, report_type: int) -> dict:
         "views": chart.get("views", []),
         "auth": 1,
         "yreportType": None,
-        "yaxisList": [build_yaxis(y) for y in yaxis_list_raw],
+        "yaxisList": yaxis_payload,
         "xaxes": build_xaxes(xaxes_raw),
         "sourceType": 1,
         "isPublic": True,
