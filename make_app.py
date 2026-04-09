@@ -22,7 +22,7 @@ HAP_DIR = BASE_DIR / "scripts" / "hap"
 if str(HAP_DIR) not in sys.path:
     sys.path.insert(0, str(HAP_DIR))
 
-from ai_utils import AI_CONFIG_PATH, create_generation_config, get_ai_client, load_ai_config
+from ai_utils import AI_CONFIG_PATH, create_generation_config, get_ai_client, load_ai_config, resolve_effective_model_name
 from execute_requirements import normalize_spec
 from script_locator import resolve_script
 from utils import now_iso, now_ts
@@ -167,12 +167,25 @@ def build_spec_prompt(requirements: str) -> str:
 def generate_spec(requirements: str, ai_config: dict) -> dict:
     client = get_ai_client(ai_config)
     model = ai_config["model"]
+    provider = ai_config.get("provider", "")
+    effective_model = resolve_effective_model_name(provider, model)
     prompt = build_spec_prompt(requirements)
-    print(f"正在生成需求 spec（模型: {model}）...")
+    if effective_model != model:
+        print(f"正在生成需求 spec（配置模型: {model}，实际模型: {effective_model}）...")
+    else:
+        print(f"正在生成需求 spec（模型: {model}）...")
     resp = client.models.generate_content(
         model=model,
-        contents=prompt,
-        config=create_generation_config(ai_config, response_mime_type="application/json", temperature=0.2),
+        contents=prompt, 
+        config=create_generation_config(
+            ai_config,
+            response_mime_type="application/json",
+            temperature=0.2,
+            request_timeout_sec=300,
+            stream_idle_timeout_sec=60,
+            stream_total_timeout_sec=420,
+            stream_fallback_non_stream=True,
+        ),
     )
     raw = extract_json(resp.text or "")
     return normalize_spec(raw)

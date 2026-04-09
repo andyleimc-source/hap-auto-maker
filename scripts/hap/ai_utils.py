@@ -8,6 +8,7 @@ AI 模型统一调用工具。
 
 import fcntl
 import json
+import queue
 import re
 import threading
 import time
@@ -26,6 +27,11 @@ DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com"  # 向后兼容别名
 # deepseek-reasoner 支持 64K，统一切换避免截断。仅对 DeepSeek 生效，其他供应商不受影响。
 _DEEPSEEK_RUNTIME_MODEL = "deepseek-reasoner"
 _DEEPSEEK_RUNTIME_MAX_TOKENS = 65536  # deepseek-reasoner 上限 64K
+
+# OpenAI 兼容流式请求保护参数（可被 create_generation_config 覆盖）
+_OPENAI_STREAM_IDLE_TIMEOUT_SEC = 60.0
+_OPENAI_STREAM_TOTAL_TIMEOUT_SEC = 420.0
+_OPENAI_STREAM_FALLBACK_NON_STREAM = True
 
 # 这些供应商只接受 temperature=1，传其他值会报 400
 _PROVIDERS_TEMPERATURE_FIXED_TO_1 = {"kimi"}
@@ -218,6 +224,101 @@ def _create_openai_usage_stream(openai_client, **kwargs):
         if not _should_retry_without_usage_stream_option(exc):
             raise
         return openai_client.chat.completions.create(**kwargs, stream=True)
+
+
+def _read_config_value(config: Any, key: str, default: Any) -> Any:
+    if config is None:
+        return default
+    if hasattr(config, key):
+        value = getattr(config, key, default)
+        return default if value is None else value
+    if isinstance(config, dict):
+        value = config.get(key, default)
+        return default if value is None else value
+    return default
+
+
+def _safe_float(value: Any, default: float, *, min_value: float = 0.1) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed >= min_value else default
+
+
+def _resolve_effective_model(provider: str, requested_model: str) -> tuple[str, int]:
+    """返回当前 provider 实际使用模型和 max_tokens。"""
+    effective_model = requested_model
+    max_tok = 32768
+    if provider == "deepseek":
+        effective_model = _DEEPSEEK_RUNTIME_MODEL
+        max_tok = _DEEPSEEK_RUNTIME_MAX_TOKENS
+    return effective_model, max_tok
+
+
+def resolve_effective_model_name(provider: str, requested_model: str) -> str:
+    """
+    对外暴露“实际调用模型”解析，便于入口日志打印，避免用户误判卡在哪个模型。
+    """
+    return _resolve_effective_model(normalize_provider(provider), requested_model)[0]
+
+
+def _consume_stream_with_watchdog(
+    stream: Any,
+    *,
+    idle_timeout_sec: float,
+    total_timeout_sec: float,
+) -> tuple[list[str], Any]:
+    """
+    用后台线程消费流，主线程通过队列监督空闲/总时长。
+    解决 stream 连接不断开但长时间无有效输出时主线程永久阻塞的问题。
+    """
+    event_q: queue.Queue[tuple[str, Any]] = queue.Queue()
+    stop_event = threading.Event()
+
+    def _worker() -> None:
+        try:
+            for chunk in stream:
+                if stop_event.is_set():
+                    break
+                event_q.put(("chunk", chunk))
+            event_q.put(("done", None))
+        except Exception as exc:  # pragma: no cover - 通过外层行为验证
+            event_q.put(("error", exc))
+
+    worker = threading.Thread(target=_worker, daemon=True)
+    worker.start()
+
+    started_at = time.monotonic()
+    chunks: list[str] = []
+    usage = None
+
+    while True:
+        elapsed = time.monotonic() - started_at
+        remaining_total = total_timeout_sec - elapsed
+        if remaining_total <= 0:
+            stop_event.set()
+            raise TimeoutError(f"流式响应超过总时限 {total_timeout_sec:.1f}s")
+
+        wait_timeout = min(idle_timeout_sec, remaining_total)
+        try:
+            event_type, payload = event_q.get(timeout=wait_timeout)
+        except queue.Empty:
+            stop_event.set()
+            raise TimeoutError(f"流式响应空闲超过 {idle_timeout_sec:.1f}s")
+
+        if event_type == "error":
+            raise payload
+        if event_type == "done":
+            return chunks, usage
+
+        chunk = payload
+        chunk_usage = getattr(chunk, "usage", None)
+        if chunk_usage:
+            usage = chunk_usage
+        delta = chunk.choices[0].delta.content if chunk.choices else None
+        if delta:
+            chunks.append(delta)
 
 
 def _record_rpd(model: str) -> Dict[str, int]:
@@ -456,13 +557,24 @@ class GeminiCompatibilityClient:
             temperature = 1
 
         # DeepSeek：运行时强制切换到推理模型，获得 64K 输出上限
-        effective_model = model or self.model
-        max_tok = 32768
-        if self.provider == "deepseek":
-            effective_model = _DEEPSEEK_RUNTIME_MODEL
-            max_tok = _DEEPSEEK_RUNTIME_MAX_TOKENS
+        effective_model, max_tok = _resolve_effective_model(self.provider, model or self.model)
 
         messages = [{"role": "user", "content": contents}]
+        request_timeout_sec = _safe_float(
+            _read_config_value(config, "request_timeout_sec", 300.0),
+            300.0,
+        )
+        stream_idle_timeout_sec = _safe_float(
+            _read_config_value(config, "stream_idle_timeout_sec", _OPENAI_STREAM_IDLE_TIMEOUT_SEC),
+            _OPENAI_STREAM_IDLE_TIMEOUT_SEC,
+        )
+        stream_total_timeout_sec = _safe_float(
+            _read_config_value(config, "stream_total_timeout_sec", _OPENAI_STREAM_TOTAL_TIMEOUT_SEC),
+            _OPENAI_STREAM_TOTAL_TIMEOUT_SEC,
+        )
+        fallback_non_stream = bool(
+            _read_config_value(config, "stream_fallback_non_stream", _OPENAI_STREAM_FALLBACK_NON_STREAM)
+        )
 
         # 增加重试逻辑，应对推理模型长时间思考导致的连接中断
         max_retries = 3
@@ -478,16 +590,13 @@ class GeminiCompatibilityClient:
                     temperature=temperature,
                     response_format=response_format,
                     max_tokens=max_tok,
+                    timeout=request_timeout_sec,
                 )
-                chunks = []
-                usage = None
-                for chunk in stream:
-                    chunk_usage = getattr(chunk, "usage", None)
-                    if chunk_usage:
-                        usage = chunk_usage
-                    delta = chunk.choices[0].delta.content if chunk.choices else None
-                    if delta:
-                        chunks.append(delta)
+                chunks, usage = _consume_stream_with_watchdog(
+                    stream,
+                    idle_timeout_sec=stream_idle_timeout_sec,
+                    total_timeout_sec=stream_total_timeout_sec,
+                )
                 _safe_record_response_usage(effective_model, usage)
 
                 class FakeResponse:
@@ -495,7 +604,7 @@ class GeminiCompatibilityClient:
                         self.text = text
 
                 return FakeResponse("".join(chunks))
-            except (openai.APIConnectionError, openai.APITimeoutError) as e:
+            except (openai.APIConnectionError, openai.APITimeoutError, TimeoutError) as e:
                 last_exception = e
                 wait_time = (attempt + 1) * 5
                 print(f"\n      ⚠️  AI 连接异常 ({type(e).__name__})，正在进行第 {attempt+1}/{max_retries} 次重试，等待 {wait_time}s...")
@@ -504,7 +613,37 @@ class GeminiCompatibilityClient:
                 # 其他异常直接抛出
                 raise e
 
-        raise last_exception or RuntimeError("AI 请求多次重试后依然失败")
+        if fallback_non_stream:
+            try:
+                print("\n      ↪️  流式模式失败，回退到非流式请求重试一次...")
+                resp = self._openai_client.chat.completions.create(
+                    model=effective_model,
+                    messages=messages,
+                    temperature=temperature,
+                    response_format=response_format,
+                    max_tokens=max_tok,
+                    timeout=request_timeout_sec,
+                )
+                _safe_record_response_usage(effective_model, getattr(resp, "usage", None))
+                text = resp.choices[0].message.content or ""
+
+                class FakeResponse:
+                    def __init__(self, text):
+                        self.text = text
+
+                return FakeResponse(text)
+            except Exception as fallback_exc:
+                last_exception = fallback_exc
+
+        detail = (
+            f"AI 请求失败(provider={self.provider}, configured_model={model or self.model}, "
+            f"effective_model={effective_model}, request_timeout={request_timeout_sec}s, "
+            f"stream_idle_timeout={stream_idle_timeout_sec}s, stream_total_timeout={stream_total_timeout_sec}s, "
+            f"retries={max_retries}, fallback_non_stream={fallback_non_stream})"
+        )
+        if last_exception:
+            raise RuntimeError(f"{detail}，last_error={type(last_exception).__name__}: {last_exception}") from last_exception
+        raise RuntimeError(detail)
 
 
 class FakeChat:
@@ -529,11 +668,7 @@ class FakeChat:
             temperature = 1
 
         # DeepSeek：运行时强制切换到推理模型
-        effective_model = self.model
-        max_tok = 32768
-        if self.provider == "deepseek":
-            effective_model = _DEEPSEEK_RUNTIME_MODEL
-            max_tok = _DEEPSEEK_RUNTIME_MAX_TOKENS
+        effective_model, max_tok = _resolve_effective_model(self.provider, self.model)
 
         response = self.client.chat.completions.create(
             model=effective_model,
@@ -627,6 +762,10 @@ def create_generation_config(
     temperature: float = 0.2,
     seed: Optional[int] = None,
     thinking_budget: Optional[int] = None,
+    request_timeout_sec: Optional[float] = None,
+    stream_idle_timeout_sec: Optional[float] = None,
+    stream_total_timeout_sec: Optional[float] = None,
+    stream_fallback_non_stream: Optional[bool] = None,
 ) -> Any:
     provider = normalize_provider(config.get("provider", "gemini"))
     if provider == "gemini":
@@ -653,6 +792,14 @@ def create_generation_config(
         payload["response_mime_type"] = response_mime_type
     if seed is not None:
         payload["seed"] = seed
+    if request_timeout_sec is not None:
+        payload["request_timeout_sec"] = request_timeout_sec
+    if stream_idle_timeout_sec is not None:
+        payload["stream_idle_timeout_sec"] = stream_idle_timeout_sec
+    if stream_total_timeout_sec is not None:
+        payload["stream_total_timeout_sec"] = stream_total_timeout_sec
+    if stream_fallback_non_stream is not None:
+        payload["stream_fallback_non_stream"] = stream_fallback_non_stream
     return payload
 
 

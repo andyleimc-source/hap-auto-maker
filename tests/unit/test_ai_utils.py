@@ -15,6 +15,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts" / "hap"))
 
 from ai_utils import (
+    GeminiCompatibilityClient,
     normalize_provider,
     parse_ai_json,
 )
@@ -212,3 +213,133 @@ class TestDefaultBaseUrl:
     def test_qwen_base_url(self):
         from ai_utils import default_base_url_for_provider
         assert default_base_url_for_provider("qwen") == "https://dashscope.aliyuncs.com/compatible-mode/v1"
+
+
+class _Delta:
+    def __init__(self, content):
+        self.content = content
+
+
+class _Choice:
+    def __init__(self, content):
+        self.delta = _Delta(content)
+
+
+class _Chunk:
+    def __init__(self, content, usage=None):
+        self.choices = [_Choice(content)]
+        self.usage = usage
+
+
+class _NeverEndingStream:
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        import time
+
+        time.sleep(10)
+        return _Chunk("")
+
+
+class _NonStreamResponse:
+    def __init__(self, text):
+        class _Message:
+            def __init__(self, content):
+                self.content = content
+
+        class _ResponseChoice:
+            def __init__(self, content):
+                self.message = _Message(content)
+
+        self.choices = [_ResponseChoice(text)]
+        self.usage = None
+
+
+class TestGeminiCompatibilityClient:
+    def test_deepseek_force_reasoner_model(self):
+        captured = []
+
+        def fake_create(**kwargs):
+            captured.append(kwargs)
+            return [_Chunk('{"ok":1}')]
+
+        client = GeminiCompatibilityClient(
+            provider="deepseek",
+            api_key="test",
+            model="deepseek-chat",
+            base_url="https://api.deepseek.com",
+        )
+        client._openai_client.chat.completions.create = fake_create
+        resp = client.generate_content(
+            model="deepseek-chat",
+            contents="JSON only",
+            config={"response_mime_type": "application/json"},
+        )
+
+        assert resp.text == '{"ok":1}'
+        assert captured[0]["model"] == "deepseek-reasoner"
+        assert captured[0]["max_tokens"] == 65536
+
+    def test_stream_timeout_has_bounded_failure(self, monkeypatch):
+        monkeypatch.setattr("ai_utils.time.sleep", lambda *_args, **_kwargs: None)
+
+        client = GeminiCompatibilityClient(
+            provider="deepseek",
+            api_key="test",
+            model="deepseek-chat",
+            base_url="https://api.deepseek.com",
+        )
+        client._openai_client.chat.completions.create = lambda **_kwargs: _NeverEndingStream()
+
+        with pytest.raises(RuntimeError) as exc_info:
+            client.generate_content(
+                model="deepseek-chat",
+                contents="JSON only",
+                config={
+                    "response_mime_type": "application/json",
+                    "stream_idle_timeout_sec": 0.2,
+                    "stream_total_timeout_sec": 0.3,
+                    "stream_fallback_non_stream": False,
+                },
+            )
+
+        error_text = str(exc_info.value)
+        assert "provider=deepseek" in error_text
+        assert "configured_model=deepseek-chat" in error_text
+        assert "effective_model=deepseek-reasoner" in error_text
+        assert "stream_idle_timeout=0.2s" in error_text
+        assert "stream_total_timeout=0.3s" in error_text
+
+    def test_stream_timeout_fallback_to_non_stream_once(self, monkeypatch):
+        monkeypatch.setattr("ai_utils.time.sleep", lambda *_args, **_kwargs: None)
+        calls = []
+
+        def fake_create(**kwargs):
+            calls.append(kwargs)
+            if kwargs.get("stream"):
+                return _NeverEndingStream()
+            return _NonStreamResponse('{"via":"fallback"}')
+
+        client = GeminiCompatibilityClient(
+            provider="deepseek",
+            api_key="test",
+            model="deepseek-chat",
+            base_url="https://api.deepseek.com",
+        )
+        client._openai_client.chat.completions.create = fake_create
+
+        resp = client.generate_content(
+            model="deepseek-chat",
+            contents="JSON only",
+            config={
+                "response_mime_type": "application/json",
+                "stream_idle_timeout_sec": 0.2,
+                "stream_total_timeout_sec": 0.3,
+                "stream_fallback_non_stream": True,
+            },
+        )
+
+        assert resp.text == '{"via":"fallback"}'
+        assert any(call.get("stream") is True for call in calls)
+        assert any(call.get("stream") is None for call in calls)
