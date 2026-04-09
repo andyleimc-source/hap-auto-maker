@@ -368,28 +368,18 @@ def normalize_view_plan(
     # fastFilters
     need_fast = bool(item.get("needFastFilters", False))
     fast_filters = []
+    seen_fast_ids: set[str] = set()
     for f in (item.get("fastFilters") or []):
         if not isinstance(f, dict):
             continue
         cid = norm_cid(f.get("controlId", ""))
-        if not cid:
+        if not cid or cid in seen_fast_ids:
             continue
-        fout: dict = {"controlId": cid}
-        dt = f.get("dataType")
-        if isinstance(dt, int):
-            fout["dataType"] = dt
-        else:
-            mapped = field_map[cid].get("type")
-            if isinstance(mapped, int):
-                fout["dataType"] = mapped
-        if "filterType" in f:
-            try:
-                fout["filterType"] = int(f["filterType"])
-            except Exception:
-                pass
-        if isinstance(f.get("advancedSetting"), dict):
-            fout["advancedSetting"] = f["advancedSetting"]
-        fast_filters.append(fout)
+        seen_fast_ids.add(cid)
+        # HAR 证据（har/工作表/快速筛选配置.har，2026-04-09）显示稳定可用结构仅需 controlId。
+        # 透传 AI 生成的 filterType / advancedSetting 会导致“允许选择数量/显示方式”配置不完整，
+        # 在部分视图出现加载异常。这里统一收敛为最小稳定结构。
+        fast_filters.append({"controlId": cid})
     if view_type not in FAST_SUPPORTED_VIEW_TYPES:
         need_fast = False
         fast_filters = []
@@ -507,12 +497,19 @@ def save_view_fast_filters(app_id: str, worksheet_id: str, view_id: str, plan: d
                            auth_config_path: Path, dry_run: bool) -> dict:
     """保存快速筛选（fastFilters）。"""
     payload = {
-        "appId": app_id, "worksheetId": worksheet_id, "viewId": view_id,
-        "editAttrs": ["fastFilters", "advancedSetting"],
+        "appId": app_id,
+        "worksheetId": worksheet_id,
+        "viewId": view_id,
+        "editAttrs": ["fastFilters"],
         "fastFilters": plan.get("fastFilters") if isinstance(plan.get("fastFilters"), list) else [],
-        "advancedSetting": to_adv_str_dict(plan.get("fastAdvancedSetting")),
-        "editAdKeys": plan.get("fastEditAdKeys") if isinstance(plan.get("fastEditAdKeys"), list) else [],
     }
+    fast_adv = to_adv_str_dict(plan.get("fastAdvancedSetting"))
+    fast_edit_keys = plan.get("fastEditAdKeys") if isinstance(plan.get("fastEditAdKeys"), list) else []
+    # 仅当确实有可写入项时再提交 advancedSetting，避免空配置污染默认 UI 行为。
+    if fast_adv and fast_edit_keys:
+        payload["editAttrs"] = ["fastFilters", "advancedSetting"]
+        payload["advancedSetting"] = fast_adv
+        payload["editAdKeys"] = fast_edit_keys
     return _save_view_request(app_id, worksheet_id, view_id, payload, auth_config_path, dry_run)
 
 
