@@ -478,7 +478,6 @@ def run_all_waves(
             cmd2b.append("--no-skip-existing")
         if page_registry_output:
             cmd2b.extend(["--page-registry", page_registry_output])
-        import os
         if page_registry_output:
             os.environ["AUTH_CONFIG_PATH"] = str(config_web_auth)
         ok2b = _exec(2, "worksheets_create", "创建工作表", cmd2b, uses_gemini=False)
