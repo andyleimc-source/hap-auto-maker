@@ -188,13 +188,18 @@ def validate_skeleton_plan(
     plan: dict,
     min_worksheets: int = 0,
     max_worksheets: int = 0,
+    language: str = "zh",
 ) -> list[str]:
     """校验骨架 plan：表名、关联关系、creation_order、核心字段类型。"""
     errors = []
+    lang = normalize_language(language)
 
     app_name = str(plan.get("app_name", "")).strip()
-    if app_name and len(app_name) > 10:
-        errors.append(f"app_name 过长: 「{app_name}」({len(app_name)}字)")
+    if app_name:
+        if lang == "en" and len(app_name) > 40:
+            errors.append(f'app_name too long: "{app_name}" ({len(app_name)} chars), must be <= 40 characters')
+        if lang != "en" and len(app_name) > 10:
+            errors.append(f"app_name 过长: 「{app_name}」({len(app_name)}字)")
 
     worksheets = plan.get("worksheets", [])
     if not isinstance(worksheets, list):
@@ -606,14 +611,23 @@ Constraints:
 12) Number/Money 字段必须设 unit（如 % 元 天 小时）和 dot（小数位数），进度/百分比字段 unit="%"、dot=1{count_rule}"""
 
 
-def validate_worksheet_plan(plan: dict, min_worksheets: int = 0, max_worksheets: int = 0) -> list[str]:
+def validate_worksheet_plan(
+    plan: dict,
+    min_worksheets: int = 0,
+    max_worksheets: int = 0,
+    language: str = "zh",
+) -> list[str]:
     """增强版校验，利用注册中心检查字段类型。"""
     errors = []
+    lang = normalize_language(language)
 
     # 校验 app_name 长度
     app_name = str(plan.get("app_name", "")).strip()
-    if app_name and len(app_name) > 10:
-        errors.append(f"app_name 过长: 「{app_name}」({len(app_name)}字)，必须 <= 10 个中文字")
+    if app_name:
+        if lang == "en" and len(app_name) > 40:
+            errors.append(f'app_name too long: "{app_name}" ({len(app_name)} chars), must be <= 40 characters')
+        if lang != "en" and len(app_name) > 10:
+            errors.append(f"app_name 过长: 「{app_name}」({len(app_name)}字)，必须 <= 10 个中文字")
 
     worksheets = plan.get("worksheets", [])
     if not isinstance(worksheets, list):

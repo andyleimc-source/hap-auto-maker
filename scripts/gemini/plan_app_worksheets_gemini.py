@@ -407,7 +407,12 @@ def plan_skeleton(
 
         plan = extract_json(raw_text)
         repair_skeleton_plan(plan)
-        validation_errors = validate_skeleton_plan(plan, min_worksheets=min_worksheet_count, max_worksheets=max_worksheet_count)
+        validation_errors = validate_skeleton_plan(
+            plan,
+            min_worksheets=min_worksheet_count,
+            max_worksheets=max_worksheet_count,
+            language=language,
+        )
         if validation_errors:
             print(f"[skeleton validate attempt={attempt}] {len(validation_errors)} 个错误: {validation_errors}")
         if not validation_errors:
@@ -634,7 +639,12 @@ def _run_layered_mode(client, model_name, ai_config, args, min_worksheet_count, 
         extra_requirements=args.requirements,
         language=args.language,
     )
-    validation_errors = validate_worksheet_plan(full_plan, min_worksheets=min_worksheet_count, max_worksheets=max_worksheet_count)
+    validation_errors = validate_worksheet_plan(
+        full_plan,
+        min_worksheets=min_worksheet_count,
+        max_worksheets=max_worksheet_count,
+        language=args.language,
+    )
     if validation_errors:
         print(f"[layered] 合并后校验发现 {len(validation_errors)} 个错误: {validation_errors}", file=sys.stderr)
         # 不抛异常，允许带部分错误通过（下游 create 脚本有自己的容错）
