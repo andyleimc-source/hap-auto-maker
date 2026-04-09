@@ -42,6 +42,7 @@ SUPPORTED_VIEW_TYPES = {"0", "1", "3", "4"}
 NAV_SUPPORTED_VIEW_TYPES = {"0", "3"}
 FAST_SUPPORTED_VIEW_TYPES = {"0", "1", "3"}
 VIEW_TYPE_LABELS = {"0": "表格视图", "1": "看板视图", "3": "画廊视图", "4": "日历视图"}
+DEFAULT_ALL_VIEW_NAMES = system_default_view_names()
 
 
 # ── 数据拉取 ──────────────────────────────────────────────────────────────────
@@ -841,4 +842,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-DEFAULT_ALL_VIEW_NAMES = system_default_view_names()
