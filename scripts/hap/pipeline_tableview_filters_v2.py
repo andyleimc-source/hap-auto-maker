@@ -318,6 +318,31 @@ def pick_best_dropdown_field(fields: List[dict]) -> str:
     return best_id
 
 
+def _normalize_field_type(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _build_fast_filter_item(cid: str, field_meta: dict) -> dict:
+    """按字段类型固化快速筛选配置，避免再次回退为缺少关键 UI 配置的最小结构。"""
+    field_type = _normalize_field_type(field_meta.get("type"))
+    if field_type in (9, 11):
+        return {
+            "controlId": cid,
+            "filterType": 2,
+            "advancedSetting": {"direction": "2", "allowitem": "1"},
+        }
+    if field_type == 10:
+        return {
+            "controlId": cid,
+            "filterType": 2,
+            "advancedSetting": {"direction": "2", "allowitem": "2"},
+        }
+    return {"controlId": cid}
+
+
 def normalize_view_plan(
     item: dict,
     field_map: Dict[str, dict],
@@ -376,10 +401,8 @@ def normalize_view_plan(
         if not cid or cid in seen_fast_ids:
             continue
         seen_fast_ids.add(cid)
-        # HAR 证据（har/工作表/快速筛选配置.har，2026-04-09）显示稳定可用结构仅需 controlId。
-        # 透传 AI 生成的 filterType / advancedSetting 会导致“允许选择数量/显示方式”配置不完整，
-        # 在部分视图出现加载异常。这里统一收敛为最小稳定结构。
-        fast_filters.append({"controlId": cid})
+        # 基于字段类型生成稳定默认配置，避免“允许选择数量 / 显示方式”再次丢失。
+        fast_filters.append(_build_fast_filter_item(cid, field_map.get(cid, {})))
     if view_type not in FAST_SUPPORTED_VIEW_TYPES:
         need_fast = False
         fast_filters = []
@@ -390,6 +413,10 @@ def normalize_view_plan(
     nav_edit_keys = [str(x).strip() for x in (item.get("navEditAdKeys") or []) if str(x).strip()]
     fast_adv = item.get("fastAdvancedSetting") if isinstance(item.get("fastAdvancedSetting"), dict) else {}
     fast_edit_keys = [str(x).strip() for x in (item.get("fastEditAdKeys") or []) if str(x).strip()]
+    if need_fast and fast_filters:
+        fast_adv = {"enablebtn": "1", **fast_adv}
+        if "enablebtn" not in fast_edit_keys:
+            fast_edit_keys = ["enablebtn", *fast_edit_keys]
 
     # color
     need_color = bool(item.get("needColor", False))

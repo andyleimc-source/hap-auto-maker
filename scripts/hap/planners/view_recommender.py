@@ -26,6 +26,7 @@ from typing import Any, Dict, List, Optional, Set
 
 from planning.constraints import classify_fields
 from ai_utils import load_ai_config, get_ai_client, create_generation_config, parse_ai_json
+from i18n import get_runtime_language, normalize_language
 
 # ── 画廊附件字段语义判断 ─────────────────────────────────────────────────────
 
@@ -176,6 +177,8 @@ def build_recommend_prompt(
 ) -> str:
     """构建 AI 推荐 prompt。"""
     from views.view_types import VIEW_REGISTRY
+    lang = normalize_language(get_runtime_language())
+    is_en = lang == "en"
 
     # 可选视图类型说明
     type_lines = []
@@ -186,9 +189,12 @@ def build_recommend_prompt(
         field_hints = ", ".join(
             f"{role}={f.get('name', '')}" for role, f in info.get("fields", {}).items()
         )
-        type_lines.append(f"  {vt}. {name} — {doc}\n     可用字段: {field_hints}")
+        if is_en:
+            type_lines.append(f"  {vt}. {name} — {doc}\n     Available fields: {field_hints}")
+        else:
+            type_lines.append(f"  {vt}. {name} — {doc}\n     可用字段: {field_hints}")
 
-    available_section = "\n".join(type_lines) if type_lines else "  （无可用视图类型）"
+    available_section = "\n".join(type_lines) if type_lines else ("  (no available view types)" if is_en else "  （无可用视图类型）")
 
     # 字段摘要
     field_lines = []
@@ -200,12 +206,56 @@ def build_recommend_prompt(
         opt_str = ""
         if opts and isinstance(opts, list):
             vals = [str(o.get("value", "")) for o in opts[:6] if isinstance(o, dict)]
-            opt_str = f" 选项: {', '.join(vals)}"
+            opt_str = f" Options: {', '.join(vals)}" if is_en else f" 选项: {', '.join(vals)}"
         field_lines.append(f"  {fid} | type={ftype} | {fname}{opt_str}")
 
     fields_section = "\n".join(field_lines)
 
-    other_ws = ", ".join(other_worksheet_names) if other_worksheet_names else "无"
+    other_ws = ", ".join(other_worksheet_names) if other_worksheet_names else ("none" if is_en else "无")
+
+    if is_en:
+        return f"""You are an enterprise app view design expert. Recommend the most valuable views for this worksheet based on the business context and available fields.
+
+## App context
+- App name: {app_name}
+- Business context: {app_background}
+- Other worksheets in the same app: {other_ws}
+
+## Current worksheet: {worksheet_name}
+
+### Fields
+{fields_section}
+
+### Available view types
+{available_section}
+
+## Task
+
+Choose the views that have clear business value. At most one per view type and no more than {MAX_VIEWS_PER_WORKSHEET} total.
+
+Evaluation rules:
+- Kanban (1): use only when the select field represents a real workflow or status transition.
+- Calendar (4): use only when the date field has real browsing value over time.
+- Gantt (5): use only when two date fields represent a meaningful start/end span.
+- Resource (7): use only when there is a scheduling or allocation scenario involving people and time.
+- Gallery (3): use only when browsing images is useful to the business.
+- Map (8): use only when location is a core business dimension.
+- Grouped table (0): use only when grouped browsing adds value beyond the default list.
+
+Do not force recommendations. If a view has no clear value, do not select it.
+
+## Output
+
+Return strict JSON only:
+{{
+  "views": [
+    {{
+      "viewType": 1,
+      "name": "English view name with clear business meaning",
+      "reason": "English reason describing the business value"
+    }}
+  ]
+}}"""
 
     return f"""你是一名企业软件视图设计专家。请根据业务背景和工作表字段，从可选视图类型中推荐最有业务价值的视图。
 
