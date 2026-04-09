@@ -91,3 +91,32 @@ class TestValidateConfig:
             for v in ads.values():
                 if isinstance(v, str) and v and not v.startswith("["):
                     assert v in FIELD_IDS or v == ""
+
+    def test_resource_post_create_keeps_non_field_advanced_setting_values(self):
+        from planners.view_configurator import validate_view_config
+        config = {
+            "viewType": 7,
+            "name": "资源视图",
+            "viewControl": "f_member",
+            "advancedSetting": {},
+            "postCreateUpdates": [
+                {
+                    "editAttrs": ["viewControl", "advancedSetting"],
+                    "viewControl": "f_member",
+                    "editAdKeys": ["navfilters", "navshow"],
+                    "advancedSetting": {"navshow": "0", "navfilters": "[]"},
+                },
+                {
+                    "editAttrs": ["advancedSetting"],
+                    "editAdKeys": ["begindate", "enddate"],
+                    "advancedSetting": {"begindate": "f_date1", "enddate": "f_date2"},
+                },
+            ],
+        }
+        result = validate_view_config(config, FIELD_IDS, FIELDS)
+        assert result is not None
+        pcu = result.get("postCreateUpdates", [])
+        assert len(pcu) == 2
+        assert pcu[0]["advancedSetting"]["navshow"] == "0"
+        assert pcu[0]["advancedSetting"]["navfilters"] == "[]"
+        assert pcu[0]["viewControl"] == "f_member"

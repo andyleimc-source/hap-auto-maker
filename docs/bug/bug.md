@@ -58,3 +58,38 @@
     - `View`
     - 空名
   - 只有当某工作表已经存在至少一个非系统视图时，才允许删除系统默认视图；否则保留，避免工作表无视图。
+
+## 2026-04-09 视图配置校验误删 postCreateUpdates，导致日历 / 甘特 / 资源视图未完成初始化
+
+- 症状：
+  - 自动创建出的日历、甘特图、资源视图只生成了视图壳子，打开后仍弹出“选择开始/结束/资源字段”的初始化面板。
+  - 同一问题在不同英文应用里重复出现，尤其是任务类工作表的 Calendar / Gantt / Resource 视图。
+- HAR 证据：
+  - [har/视图/日历视图.har](/Users/andy/Documents/coding/hap-auto-maker/har/视图/日历视图.har)
+  - [har/视图/甘特图配置.har](/Users/andy/Documents/coding/hap-auto-maker/har/视图/甘特图配置.har)
+  - [har/视图/资源视图.har](/Users/andy/Documents/coding/hap-auto-maker/har/视图/资源视图.har)
+- 根因：
+  - [view_configurator.py](/Users/andy/Documents/coding/hap-auto-maker/scripts/hap/planners/view_configurator.py) 的 `validate_view_config()` 曾把 `postCreateUpdates.advancedSetting` 中的所有字符串都当作“字段 ID 引用”检查。
+  - 这会把资源视图里合法的普通配置值，例如：
+    - `navshow = "0"`
+    - `navfilters = "[]"`
+    - `calendarType = "1"`
+  - 误判为非法字段引用，并直接删除整条 `postCreateUpdates`。
+  - 结果就是：
+    - 资源视图丢失 `viewControl + navshow/navfilters`
+    - 日历/甘特/资源视图的关键二次保存链被破坏
+- 固化规则：
+  - `postCreateUpdates` 校验只允许检查“真正应该是字段 ID”的键。
+  - 普通枚举/开关/布局值不得再按字段 ID 校验。
+  - 当前已识别的字段引用键包括：
+    - 顶层：`viewControl`、`coverCid`、`layersControlId`、`resourceId`
+    - `advancedSetting`：`begindate`、`enddate`、`startdate`、`resourceId`、`colorid`、`abstract`、`navtitle`、`milepost`、`latlng`
+    - 特殊包装字段：`viewtitle`（`$fieldId$`）
+  - 明确不是字段引用的键，例如：
+    - `navshow`
+    - `navfilters`
+    - `calendarType`
+    - `weekbegin`
+    - `showall`
+    - `hour24`
+  - 这些值必须原样保留，禁止再触发整条更新删除。

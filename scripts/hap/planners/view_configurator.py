@@ -27,6 +27,20 @@ from views.view_types import VIEW_REGISTRY
 from views.view_config_schema import VIEW_SCHEMA, COMMON_ADVANCED_KEYS
 from ai_utils import load_ai_config, get_ai_client, create_generation_config, parse_ai_json
 
+POST_UPDATE_TOP_LEVEL_FIELD_KEYS = {"viewControl", "coverCid", "layersControlId", "resourceId"}
+POST_UPDATE_ADVANCED_FIELD_KEYS = {
+    "begindate",
+    "enddate",
+    "startdate",
+    "resourceId",
+    "colorid",
+    "abstract",
+    "navtitle",
+    "milepost",
+    "latlng",
+}
+POST_UPDATE_ADVANCED_WRAPPED_FIELD_KEYS = {"viewtitle"}
+
 
 # ── Step 2.5: 配置校验 ───────────────────────────────────────────────────────
 
@@ -61,6 +75,32 @@ def _try_fix_field_ref(value: str, field_ids: set[str], fields: list[dict]) -> s
         if fname == value:
             return str(f.get("id", f.get("controlId", ""))).strip()
     return None
+
+
+def _validate_post_update_field_like_value(
+    key: str,
+    value: str,
+    field_ids: set[str],
+    fields: list[dict],
+) -> tuple[bool, str]:
+    """仅校验真正应该引用字段 ID 的键；普通配置值（如 navshow='0'）直接放行。"""
+    if not value or not isinstance(value, str):
+        return True, value
+
+    if key in POST_UPDATE_ADVANCED_WRAPPED_FIELD_KEYS:
+        inner = value[1:-1] if value.startswith("$") and value.endswith("$") else value
+        fixed = _try_fix_field_ref(inner, field_ids, fields)
+        if fixed is None:
+            return False, value
+        return True, f"${fixed}$" if value.startswith("$") and value.endswith("$") else fixed
+
+    if key not in POST_UPDATE_ADVANCED_FIELD_KEYS and key not in POST_UPDATE_TOP_LEVEL_FIELD_KEYS:
+        return True, value
+
+    fixed = _try_fix_field_ref(value, field_ids, fields)
+    if fixed is None:
+        return False, value
+    return True, fixed
 
 
 def validate_view_config(
@@ -107,18 +147,36 @@ def validate_view_config(
             entry_ad = entry.get("advancedSetting", {})
             entry_fields = entry.get("fields", {})
 
-            # 检查 advancedSetting 中的字段引用
+            # 只校验真正是字段引用的 advancedSetting 键。
+            # 像 navshow='0'、calendarType='1' 这类普通配置值不能再误判为字段 ID。
             bad = False
             if isinstance(entry_ad, dict):
                 for k, v in list(entry_ad.items()):
-                    if isinstance(v, str) and v and not v.startswith("[") and not v.startswith("{"):
-                        if not _check_field_ref(v, field_ids):
-                            fixed = _try_fix_field_ref(v, field_ids, fields)
-                            if fixed is None:
-                                print(f"  [validate_config] postCreateUpdates 字段引用 {k}={v!r} 不存在，移除条目")
-                                bad = True
-                                break
-                            entry_ad[k] = fixed
+                    if not isinstance(v, str) or not v:
+                        continue
+                    if v.startswith("[") or v.startswith("{"):
+                        continue
+                    ok, fixed = _validate_post_update_field_like_value(k, v, field_ids, fields)
+                    if not ok:
+                        print(f"  [validate_config] postCreateUpdates 字段引用 {k}={v!r} 不存在，移除条目")
+                        bad = True
+                        break
+                    entry_ad[k] = fixed
+
+            # 检查 postCreateUpdates 顶层字段引用
+            if not bad:
+                for k in list(entry.keys()):
+                    if k in ("advancedSetting", "fields", "editAttrs", "editAdKeys"):
+                        continue
+                    v = entry.get(k)
+                    if not isinstance(v, str) or not v:
+                        continue
+                    ok, fixed = _validate_post_update_field_like_value(k, v, field_ids, fields)
+                    if not ok:
+                        print(f"  [validate_config] postCreateUpdates 顶层字段引用 {k}={v!r} 不存在，移除条目")
+                        bad = True
+                        break
+                    entry[k] = fixed
 
             # 检查 fields 中的字段引用
             if not bad and isinstance(entry_fields, dict):
