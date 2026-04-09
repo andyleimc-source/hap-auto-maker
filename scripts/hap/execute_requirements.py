@@ -130,6 +130,7 @@ def normalize_spec(raw: dict) -> dict:
 
     ws = spec.get("worksheets") if isinstance(spec.get("worksheets"), dict) else {}
     ws.setdefault("enabled", True)
+    ws.setdefault("skip_existing", True)
     ws.setdefault("business_context", "通用企业管理场景")
     ws.setdefault("requirements", "")
     icon_update = ws.get("icon_update") if isinstance(ws.get("icon_update"), dict) else {}
@@ -176,6 +177,8 @@ def normalize_spec(raw: dict) -> dict:
 
     pages = spec.get("pages") if isinstance(spec.get("pages"), dict) else {}
     pages.setdefault("enabled", True)
+    pages.setdefault("skip_existing", True)
+    pages.setdefault("chart_skip_existing", True)
     spec["pages"] = pages
 
     execution = spec.get("execution") if isinstance(spec.get("execution"), dict) else {}

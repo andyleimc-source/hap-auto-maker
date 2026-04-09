@@ -31,6 +31,7 @@ CHART_CREATE_DIR = OUTPUT_ROOT / "chart_create_results"
 AUTH_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "auth_config.py"
 
 SAVE_REPORT_URL = "https://api.mingdao.com/report/reportConfig/saveReportConfig"
+GET_REPORTS_BY_PAGE_URL = "https://api.mingdao.com/report/reportConfig/getReportsByPageId"
 SAVE_PAGE_URL = "https://api.mingdao.com/report/custom/savePage"
 
 from charts import CHART_REGISTRY, REPORT_TYPE_NAMES, build_report_body as _charts_build_report_body
@@ -306,6 +307,53 @@ def save_report_config(body: dict, auth_config_path: Path, referer: str = "") ->
     return resp.json()
 
 
+def fetch_existing_chart_names(page_id: str, auth_config_path: Path, referer: str = "") -> set[str]:
+    """读取页面下现有图表名称；失败时降级为空集合，不阻断创建流程。"""
+    page_id = str(page_id or "").strip()
+    if not page_id:
+        return set()
+
+    url = f"{GET_REPORTS_BY_PAGE_URL}?pageId={page_id}"
+    try:
+        resp = auth_retry.hap_web_get(url, auth_config_path, referer=referer, timeout=30)
+        resp.raise_for_status()
+        payload = resp.json()
+    except Exception as exc:
+        print(f"[WARN] 获取页面现有图表失败，退化为不跳过: pageId={page_id}, error={exc}")
+        return set()
+
+    is_success = (
+        payload.get("state") == 1
+        or payload.get("resultCode") == 1
+        or payload.get("status") == 1
+        or payload.get("success") is True
+    )
+    if not is_success:
+        print(f"[WARN] getReportsByPageId 返回异常，退化为不跳过: pageId={page_id}, response={payload}")
+        return set()
+
+    data = payload.get("data", [])
+    if isinstance(data, list):
+        items = data
+    elif isinstance(data, dict):
+        for key in ("reports", "list", "items", "data"):
+            value = data.get(key)
+            if isinstance(value, list):
+                items = value
+                break
+        else:
+            items = []
+    else:
+        items = []
+
+    names = {
+        str(item.get("name", "")).strip()
+        for item in items
+        if isinstance(item, dict) and str(item.get("name", "")).strip()
+    }
+    return names
+
+
 GET_PAGE_URL = "https://api.mingdao.com/report/custom/getPage"
 
 
@@ -406,6 +454,9 @@ def main() -> None:
     parser.add_argument("--page-id", default="", help="统计图 Page ID（URL 最后一段），用于 savePage 布局")
     parser.add_argument("--dry-run", action="store_true", help="仅打印请求体，不实际调用")
     parser.add_argument("--max-workers", type=int, default=16, help="并发创建图表数（默认 16）")
+    parser.set_defaults(skip_existing=True)
+    parser.add_argument("--skip-existing", dest="skip_existing", action="store_true", help="创建前查询页面已有同名图表并跳过（默认开启）")
+    parser.add_argument("--no-skip-existing", dest="skip_existing", action="store_false", help="关闭同名图表跳过逻辑")
     args = parser.parse_args()
 
     plan_path = resolve_plan_path(args.plan_json)
@@ -425,9 +476,19 @@ def main() -> None:
     if page_id:
         chart_referer = f"https://www.mingdao.com/app/{app_id}/{page_id}"
 
+    existing_chart_names = (
+        fetch_existing_chart_names(page_id, auth_config_path, referer=chart_referer)
+        if args.skip_existing else set()
+    )
+    existing_chart_names_lock = threading.Lock()
+
     print(f"应用: {app_name} ({app_id})")
     print(f"规划文件: {plan_path}")
     print(f"准备创建 {len(charts)} 个统计图\n")
+    if args.skip_existing:
+        print(f"同名跳过: 开启，已发现 {len(existing_chart_names)} 个现有图表")
+    else:
+        print("同名跳过: 关闭")
 
     indexed_results: dict = {}
 
@@ -436,6 +497,19 @@ def main() -> None:
         chart_name = str(chart.get("name", f"图表{i + 1}"))
         report_type = int(chart.get("reportType", 1))
         type_name = REPORT_TYPE_NAMES.get(report_type, str(report_type))
+
+        if args.skip_existing:
+            with existing_chart_names_lock:
+                if chart_name in existing_chart_names:
+                    print(f"  [{i + 1}/{len(charts)}] [跳过] {chart_name}（{type_name}）已存在")
+                    return i, {
+                        "chartName": chart_name,
+                        "reportType": report_type,
+                        "worksheetId": str(chart.get("worksheetId", "")),
+                        "status": "skipped",
+                        "reason": "existing_chart_name",
+                    }
+
         body = build_report_body(chart, app_id)
 
         if args.dry_run:
@@ -458,6 +532,9 @@ def main() -> None:
             )
             status = "success" if is_success else "failed"
             print(f"  [{i + 1}/{len(charts)}] {chart_name}（{type_name}）-> {status}，reportId={report_id}")
+            if status == "success" and args.skip_existing:
+                with existing_chart_names_lock:
+                    existing_chart_names.add(chart_name)
             return i, {
                 "chartName": chart_name,
                 "reportType": report_type,
@@ -485,6 +562,7 @@ def main() -> None:
         "planFile": str(plan_path),
         "totalCharts": len(charts),
         "successCount": sum(1 for r in results if r.get("status") == "success"),
+        "skippedCount": sum(1 for r in results if r.get("status") == "skipped"),
         "results": results,
     }
 

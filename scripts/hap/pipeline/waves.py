@@ -307,6 +307,10 @@ def run_all_waves(
             "--auth-config", str(config_web_auth),
             "--output", str(page_registry_path),
         ]
+        if bool(pages_cfg.get("skip_existing", True)):
+            cmd_pages_early.append("--skip-existing")
+        else:
+            cmd_pages_early.append("--no-skip-existing")
         if execution_dry_run:
             cmd_pages_early.append("--dry-run")
         ok_pages_early = _exec(14, "pages_early", "提前创建统计分析 Pages", cmd_pages_early, uses_gemini=True)
@@ -346,6 +350,10 @@ def run_all_waves(
             "--app-auth-json", str(app_auth_json),
             "--semaphore-value", str(_sem_value_2b),
         ]
+        if bool(ws.get("skip_existing", True)):
+            cmd2b.append("--skip-existing")
+        else:
+            cmd2b.append("--no-skip-existing")
         if page_registry_output:
             cmd2b.extend(["--page-registry", page_registry_output])
         import os
