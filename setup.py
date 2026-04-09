@@ -331,9 +331,11 @@ def step_ai(force=True):
     models = list_models(provider, key, base_url)
 
     if models:
-        # DeepSeek：隐藏 deepseek-reasoner（运行时自动切换，用户无需手动选择）
+        # DeepSeek：交互页仅展示推理模型，避免误选 deepseek-chat。
         if provider == "deepseek":
-            models = [m for m in models if m != "deepseek-reasoner"]
+            models = [m for m in models if m == "deepseek-reasoner"]
+            if not models:
+                models = ["deepseek-reasoner"]
         old_model = existing.get("model", "") if not provider_changed else ""
         default_model_idx = next((i for i, m in enumerate(models) if m == old_model), 0)
         print(f"\n   可用模型（共 {len(models)} 个）：")
