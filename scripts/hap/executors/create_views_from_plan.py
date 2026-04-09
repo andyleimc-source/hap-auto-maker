@@ -288,6 +288,8 @@ def auto_complete_post_updates(view: dict, ws_fields: list[dict] | None = None) 
     if view_type == 5:
         begindate = str(view.get("begindate", "") or "").strip()
         enddate = str(view.get("enddate", "") or "").strip()
+        display_controls = view.get("displayControls") if isinstance(view.get("displayControls"), list) else []
+        display_controls = [str(x).strip() for x in display_controls if str(x).strip()]
         # 也从 postCreateUpdates 旧格式中提取
         for upd in pcu_list:
             if not isinstance(upd, dict):
@@ -304,11 +306,26 @@ def auto_complete_post_updates(view: dict, ws_fields: list[dict] | None = None) 
                 enddate = date_field_ids[1] if len(date_field_ids) >= 2 else date_field_ids[0]
         if not begindate:
             return []
-        return [{
+        # HAR 证据（har/视图/甘特图配置.har, 2026-04-09）：
+        # 仅一次带 editAdKeys 的保存在部分场景下会出现 UI 未回填日期选择。
+        # 采用双写入：
+        # 1) 按 begindate/enddate 键显式提交；
+        # 2) 再做一次纯 advancedSetting 持久化，确保前端读取稳定。
+        first_update = {
             "editAttrs": ["advancedSetting"],
             "editAdKeys": ["begindate", "enddate"],
             "advancedSetting": {"begindate": begindate, "enddate": enddate},
-        }]
+        }
+        if display_controls:
+            first_update["editAttrs"] = ["advancedSetting", "displayControls"]
+            first_update["displayControls"] = display_controls
+        return [
+            first_update,
+            {
+                "editAttrs": ["advancedSetting"],
+                "advancedSetting": {"begindate": begindate, "enddate": enddate},
+            },
+        ]
 
     # ── 层级视图(2): viewControl + childType ────────────────────────────────
     # 抓包确认（2026-04-04）：保存时用 viewControl='create' 让 HAP 自动创建
@@ -566,6 +583,13 @@ def build_update_payload(app_id: str, worksheet_id: str, view_id: str, update: d
         else:
             payload.pop("editAdKeys", None)
             payload["_skip_reason"] = "无有效 editAdKeys，跳过本次 postCreateUpdate"
+    # 甘特图关键字段兼容：部分版本会从顶层读取 begindate/enddate。
+    adv = payload.get("advancedSetting")
+    if isinstance(adv, dict):
+        for k in ("begindate", "enddate"):
+            v = str(adv.get(k, "") or "").strip()
+            if v:
+                payload[k] = v
     return payload
 
 
