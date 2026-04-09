@@ -36,6 +36,7 @@ VIEW_PLAN_DIR = OUTPUT_ROOT / "view_plans"
 VIEW_CREATE_RESULT_DIR = OUTPUT_ROOT / "view_create_results"
 AUTH_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "auth_config.py"
 SAVE_VIEW_URL = "https://www.mingdao.com/api/Worksheet/SaveWorksheetView"
+SYSTEM_FIELD_IDS = {"ctime", "utime", "ownerid", "caid", "record_count", "wfctime"}
 
 
 
@@ -181,6 +182,77 @@ def normalize_calendarcids(value: Any) -> str:
     return json.dumps(normalized, ensure_ascii=False, separators=(",", ":"))
 
 
+def _iter_field_dicts(ws_fields: list | None) -> list[dict]:
+    if not isinstance(ws_fields, list):
+        return []
+    return [f for f in ws_fields if isinstance(f, dict)]
+
+
+def _field_id(field: dict) -> str:
+    return str(field.get("id", "") or field.get("controlId", "")).strip()
+
+
+def _field_type(field: dict) -> int:
+    try:
+        return int(field.get("type", 0) or field.get("controlType", 0) or 0)
+    except Exception:
+        return 0
+
+
+def _is_system_field(field: dict) -> bool:
+    fid = _field_id(field)
+    if fid in SYSTEM_FIELD_IDS:
+        return True
+    if bool(field.get("isSystem", False) or field.get("isSystemControl", False)):
+        return True
+    try:
+        return int(field.get("attribute", 0) or 0) == 1
+    except Exception:
+        return False
+
+
+def _pick_date_fields(ws_fields: list | None) -> list[str]:
+    """优先返回非系统日期字段(type=15/16)，无可用时再回退系统日期字段。"""
+    custom: list[str] = []
+    system: list[str] = []
+    for f in _iter_field_dicts(ws_fields):
+        f_id = _field_id(f)
+        if not f_id:
+            continue
+        if _field_type(f) not in (15, 16):
+            continue
+        if _is_system_field(f):
+            system.append(f_id)
+        else:
+            custom.append(f_id)
+    return custom or system
+
+
+def _pick_resource_group_field(ws_fields: list | None) -> str:
+    """资源视图分组字段：优先协作人(26/27)，其次可枚举分组字段(9/10)。"""
+    custom_collab: list[str] = []
+    system_collab: list[str] = []
+    fallback = ""
+    for f in _iter_field_dicts(ws_fields):
+        f_id = _field_id(f)
+        if not f_id:
+            continue
+        f_type = _field_type(f)
+        if f_type in (26, 27):
+            if _is_system_field(f):
+                system_collab.append(f_id)
+            else:
+                custom_collab.append(f_id)
+            continue
+        if not fallback and f_type in (9, 10):
+            fallback = f_id
+    if custom_collab:
+        return custom_collab[0]
+    if system_collab:
+        return system_collab[0]
+    return fallback
+
+
 def auto_complete_post_updates(view: dict, ws_fields: list[dict] | None = None) -> list[dict]:
     """从注册中心自动生成 postCreateUpdates，补全 AI 未填写的关键配置。
 
@@ -207,23 +279,26 @@ def auto_complete_post_updates(view: dict, ws_fields: list[dict] | None = None) 
     edit_attrs = post_create.get("editAttrs", [])
     edit_ad_keys = post_create.get("editAdKeys", [])
 
+    pcu_list = view.get("postCreateUpdates")
+    if not isinstance(pcu_list, list):
+        pcu_list = []
+    fields = _iter_field_dicts(ws_fields)
+
     # ── 甘特图(5): begindate + enddate ──────────────────────────────────────
     if view_type == 5:
         begindate = str(view.get("begindate", "") or "").strip()
         enddate = str(view.get("enddate", "") or "").strip()
         # 也从 postCreateUpdates 旧格式中提取
-        for upd in view.get("postCreateUpdates") or []:
+        for upd in pcu_list:
+            if not isinstance(upd, dict):
+                continue
             adv = upd.get("advancedSetting") or {}
             begindate = begindate or str(adv.get("begindate", "")).strip()
             enddate = enddate or str(adv.get("enddate", "")).strip()
-        # 如果 AI 没有提供日期字段 ID，从工作表字段列表中自动查找日期字段(type=15/16)
-        if not begindate and ws_fields:
-            date_field_ids = []
-            for f in ws_fields:
-                f_type = int(f.get("type", 0) or f.get("controlType", 0) or 0)
-                f_id = str(f.get("id", "") or f.get("controlId", "")).strip()
-                if f_type in (15, 16) and f_id:
-                    date_field_ids.append(f_id)
+        # 如果 AI 没有提供日期字段 ID，从工作表字段列表中自动查找日期字段(type=15/16)。
+        # 优先使用用户创建字段，避免 ctime/utime 抢占。
+        if not begindate:
+            date_field_ids = _pick_date_fields(fields)
             if date_field_ids:
                 begindate = date_field_ids[0]
                 enddate = date_field_ids[1] if len(date_field_ids) >= 2 else date_field_ids[0]
@@ -242,15 +317,17 @@ def auto_complete_post_updates(view: dict, ws_fields: list[dict] | None = None) 
     #    禁止用 "create" 重复创建，否则每次跑都会新建一对父/子字段。
     if view_type == 2:
         layers_id = str(view.get("layersControlId", "") or "").strip()
-        for upd in view.get("postCreateUpdates") or []:
+        for upd in pcu_list:
+            if not isinstance(upd, dict):
+                continue
             layers_id = layers_id or str(upd.get("layersControlId", "")).strip()
         # 如果 AI 没有提供字段 ID，从工作表字段列表中查找已有的自关联字段
-        if not layers_id and ws_fields:
+        if not layers_id and fields:
             ws_id_self = str(view.get("_worksheetId", "") or "").strip()
-            for f in ws_fields:
-                f_type = int(f.get("type", 0) or f.get("controlType", 0) or 0)
+            for f in fields:
+                f_type = _field_type(f)
                 f_datasource = str(f.get("dataSource", "")).strip()
-                f_id = str(f.get("id", "") or f.get("controlId", "")).strip()
+                f_id = _field_id(f)
                 # 自关联：type=29 且 dataSource 是本表
                 if f_type == 29 and f_datasource and (not ws_id_self or f_datasource == ws_id_self):
                     layers_id = f_id
@@ -266,17 +343,15 @@ def auto_complete_post_updates(view: dict, ws_fields: list[dict] | None = None) 
     # ── 日历视图(4): calendarcids ────────────────────────────────────────────
     if view_type == 4:
         calendarcids = str(view.get("calendarcids", "") or "").strip()
-        for upd in view.get("postCreateUpdates") or []:
+        for upd in pcu_list:
+            if not isinstance(upd, dict):
+                continue
             adv = upd.get("advancedSetting") or {}
             calendarcids = calendarcids or str(adv.get("calendarcids", "")).strip()
-        # 兜底：AI 没提供时从字段列表自动查找日期字段(type=15/16)
-        if not calendarcids and ws_fields:
-            date_field_ids = []
-            for f in ws_fields:
-                f_type = int(f.get("type", 0) or f.get("controlType", 0) or 0)
-                f_id = str(f.get("id", "") or f.get("controlId", "")).strip()
-                if f_type in (15, 16) and f_id:
-                    date_field_ids.append(f_id)
+        # 兜底：AI 没提供时从字段列表自动查找日期字段(type=15/16)。
+        # 优先使用用户创建字段，避免默认落到 ctime/utime。
+        if not calendarcids:
+            date_field_ids = _pick_date_fields(fields)
             if date_field_ids:
                 begin_id = date_field_ids[0]
                 end_id = date_field_ids[1] if len(date_field_ids) >= 2 else ""
@@ -292,12 +367,62 @@ def auto_complete_post_updates(view: dict, ws_fields: list[dict] | None = None) 
             "advancedSetting": {"calendarcids": calendarcids},
         }]
 
-    # ── 资源视图(9): resourceId + startdate + enddate ────────────────────────
+    # ── 资源视图(7): viewControl + begindate + enddate ───────────────────────
+    # 2026-04-09 HAR 验证：资源视图为 viewType=7，字段配置使用 viewControl + begindate/enddate。
+    if view_type == 7:
+        view_control = str(view.get("viewControl", "") or "").strip()
+        begindate = str(view.get("begindate", "") or "").strip()
+        enddate = str(view.get("enddate", "") or "").strip()
+        navshow = str(view.get("navshow", "") or "").strip()
+        navfilters = str(view.get("navfilters", "") or "").strip()
+        for upd in pcu_list:
+            if not isinstance(upd, dict):
+                continue
+            adv = upd.get("advancedSetting") or {}
+            view_control = view_control or str(upd.get("viewControl", "")).strip()
+            begindate = begindate or str(adv.get("begindate", "")).strip()
+            enddate = enddate or str(adv.get("enddate", "")).strip()
+            navshow = navshow or str(adv.get("navshow", "")).strip()
+            navfilters = navfilters or str(adv.get("navfilters", "")).strip()
+        if not view_control:
+            view_control = _pick_resource_group_field(fields)
+        if not begindate:
+            date_field_ids = _pick_date_fields(fields)
+            if date_field_ids:
+                begindate = date_field_ids[0]
+                enddate = enddate or (date_field_ids[1] if len(date_field_ids) >= 2 else "")
+        if not view_control or not begindate:
+            return []
+        updates: list[dict] = [{
+            "editAttrs": ["viewControl", "advancedSetting"],
+            "viewControl": view_control,
+            "editAdKeys": ["navfilters", "navshow"],
+            "advancedSetting": {
+                "navshow": navshow or "1",
+                "navfilters": navfilters or "[]",
+            },
+        }]
+        updates.append({
+            "editAttrs": ["advancedSetting"],
+            "editAdKeys": ["begindate"],
+            "advancedSetting": {"begindate": begindate},
+        })
+        if enddate:
+            updates.append({
+                "editAttrs": ["advancedSetting"],
+                "editAdKeys": ["enddate"],
+                "advancedSetting": {"enddate": enddate},
+            })
+        return updates
+
+    # ── 兼容旧资源视图(9): resourceId + startdate + enddate ───────────────────
     if view_type == 9:
         resource_id = str(view.get("resourceId", "") or "").strip()
         startdate = str(view.get("startdate", "") or "").strip()
         enddate = str(view.get("enddate", "") or "").strip()
-        for upd in view.get("postCreateUpdates") or []:
+        for upd in pcu_list:
+            if not isinstance(upd, dict):
+                continue
             adv = upd.get("advancedSetting") or {}
             resource_id = resource_id or str(adv.get("resourceId", "")).strip()
             startdate = startdate or str(adv.get("startdate", "")).strip()
@@ -331,6 +456,8 @@ def merge_post_updates(ai_updates: list, auto_updates: list, view_type: int) -> 
     # 提取 AI 配置中的关键值（用于判断是否有效）
     def _has_valid_keys(updates: list, keys: list[str]) -> bool:
         for upd in updates:
+            if not isinstance(upd, dict):
+                continue
             adv = upd.get("advancedSetting") or {}
             top = upd
             for k in keys:
@@ -343,6 +470,7 @@ def merge_post_updates(ai_updates: list, auto_updates: list, view_type: int) -> 
         5: ["begindate"],
         2: ["layersControlId"],
         4: ["calendarcids"],
+        7: ["viewControl", "begindate"],
         9: ["resourceId", "startdate"],
     }
     keys = need_keys.get(view_type, [])
@@ -387,8 +515,8 @@ def build_create_payload(app_id: str, worksheet_id: str, view: dict) -> dict:
     if view_control:
         payload["viewControl"] = view_control
 
-    # 地图视图(7)：latlng 写入 advancedSetting
-    if str(view_type) == "7":
+    # 地图视图(8)：latlng 写入 advancedSetting
+    if str(view_type) == "8":
         latlng = str(view.get("latlng", "") or "").strip()
         if latlng:
             payload["advancedSetting"]["latlng"] = latlng
