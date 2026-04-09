@@ -6,9 +6,8 @@
 
 ```bash
 cd /path/to/hap-auto-maker
-python3 -m venv .venv
+bash scripts/bootstrap.sh
 source .venv/bin/activate
-pip install -r requirements.txt
 ```
 
 ## 2) 首次配置（交互向导）
@@ -35,6 +34,19 @@ python3 make_app.py --requirements "$(cat examples/minimal_requirements.txt)" --
 
 ```bash
 python3 make_app.py --requirements "$(cat examples/minimal_requirements.txt)"
+```
+
+英文应用：
+
+```bash
+python3 make_app.py --requirements "$(cat examples/minimal_requirements.txt)" --language en
+```
+
+依赖策略（防环境不一致）：
+
+```bash
+python3 make_app.py --requirements "..." --deps-mode auto   # 默认：安全自动策略
+python3 make_app.py --requirements "..." --deps-mode check  # 仅检查，不自动安装
 ```
 
 ## 4) 只用已有 spec 执行

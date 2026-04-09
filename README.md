@@ -17,7 +17,8 @@
 ```bash
 git clone https://github.com/andyleimc-source/hap-auto-maker.git
 cd hap-auto-maker
-pip3 install -r requirements.txt
+bash scripts/bootstrap.sh
+source .venv/bin/activate
 ```
 
 **第二步：初始化配置（首次使用）**
@@ -46,11 +47,17 @@ python3 setup.py
 # 从需求文本全自动生成并执行
 python3 make_app.py --requirements "CRM客户关系管理系统，包含客户、联系人、商机、跟进记录、合同五张表"
 
+# 生成英文应用
+python3 make_app.py --requirements "Create an invoice app with customers, invoices and payments" --language en
+
 # 只生成 spec，不执行（预览用）
 python3 make_app.py --requirements "..." --no-execute
 
 # 使用已有 spec 文件跳过 AI 生成直接执行
 python3 make_app.py --spec-json path/to/spec.json
+
+# 依赖策略（默认 auto，建议保持）
+python3 make_app.py --requirements "..." --deps-mode auto
 ```
 
 ## 🎬 核心特性

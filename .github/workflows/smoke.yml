@@ -1,0 +1,38 @@
+name: Smoke
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+jobs:
+  smoke:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.12"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Bootstrap
+        run: bash scripts/bootstrap.sh
+
+      - name: Smoke help
+        run: |
+          source .venv/bin/activate
+          python make_app.py --help
+          python scripts/hap/execute_requirements.py --help
+
+      - name: Smoke no-execute
+        run: |
+          source .venv/bin/activate
+          python make_app.py --requirements "Create a simple CRM app with customer and contact worksheets" --no-execute --language en --deps-mode check

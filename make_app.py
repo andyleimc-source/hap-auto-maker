@@ -15,6 +15,7 @@ import importlib.util
 import json
 import subprocess
 import sys
+import sysconfig
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -230,19 +231,68 @@ def _find_missing_runtime_packages() -> list[str]:
     return missing
 
 
-def ensure_runtime_dependencies(auto_install: bool = True) -> None:
+def _in_virtualenv() -> bool:
+    return bool(getattr(sys, "real_prefix", None) or (hasattr(sys, "base_prefix") and sys.prefix != sys.base_prefix))
+
+
+def _is_externally_managed_environment() -> bool:
+    try:
+        stdlib = Path(sysconfig.get_path("stdlib") or "")
+    except Exception:
+        return False
+    if not stdlib:
+        return False
+    marker = stdlib / "EXTERNALLY-MANAGED"
+    return marker.exists()
+
+
+def _build_env_fix_hint() -> str:
+    return (
+        "建议使用虚拟环境：\n"
+        "  python3 -m venv .venv\n"
+        "  source .venv/bin/activate\n"
+        "  pip install -r requirements.txt"
+    )
+
+
+def ensure_runtime_dependencies(auto_install: bool = True, deps_mode: str = "auto") -> None:
     missing = _find_missing_runtime_packages()
     if not missing:
         return
 
     print(f"检测到缺少运行依赖：{', '.join(missing)}")
+    mode = (deps_mode or "auto").strip().lower()
+    if mode not in {"auto", "check", "install", "skip"}:
+        raise ValueError(f"未知 deps_mode: {deps_mode}")
+
+    if mode == "skip":
+        print("已按 --deps-mode=skip 跳过依赖安装检查，后续若报 ImportError 请先安装 requirements.txt")
+        return
+
+    if mode == "check":
+        raise RuntimeError("缺少运行依赖（check 模式不自动安装）。\n" + _build_env_fix_hint())
+
     if not auto_install:
         raise RuntimeError("缺少运行依赖，请先安装后重试。")
+
+    if mode == "auto" and (not _in_virtualenv()) and _is_externally_managed_environment():
+        raise RuntimeError(
+            "当前 Python 环境受 PEP 668 管理（externally-managed），为避免破坏系统环境，已停止自动安装依赖。\n"
+            f"当前解释器: {sys.executable}\n"
+            + _build_env_fix_hint()
+            + "\n如需强制安装，请显式传 --deps-mode install（不推荐）。"
+        )
 
     install_cmd = [sys.executable, "-m", "pip", "install", *missing]
     print(f"正在安装依赖: {' '.join(install_cmd)}")
     proc = subprocess.run(install_cmd, check=False)
     if proc.returncode != 0:
+        if _is_externally_managed_environment() and not _in_virtualenv():
+            raise RuntimeError(
+                f"依赖安装失败，退出码={proc.returncode}。\n"
+                "检测到 externally-managed 环境，无法在系统 Python 直接 pip install。\n"
+                + _build_env_fix_hint()
+            )
         raise RuntimeError(f"依赖安装失败，退出码={proc.returncode}")
 
     still_missing = _find_missing_runtime_packages()
@@ -260,6 +310,7 @@ def main():
     parser.add_argument("--output", default="", help="spec 输出路径（默认自动命名）")
     parser.add_argument("--config", default=str(AI_CONFIG_PATH), help="AI 配置 JSON 路径")
     parser.add_argument("--language", default="zh", choices=["zh", "en"], help="应用生成语言（zh/en）")
+    parser.add_argument("--deps-mode", default="auto", choices=["auto", "check", "install", "skip"], help="依赖处理策略")
     args = parser.parse_args()
     lang = normalize_language(args.language)
     set_runtime_language(lang)
@@ -289,7 +340,7 @@ def main():
         print("（--no-execute 模式，跳过执行）")
         return
 
-    ensure_runtime_dependencies(auto_install=True)
+    ensure_runtime_dependencies(auto_install=True, deps_mode=args.deps_mode)
 
     # 执行
     exec_cmd = [sys.executable, str(EXECUTE_SCRIPT), "--spec-json", str(spec_path)]
