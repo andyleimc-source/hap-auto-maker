@@ -59,6 +59,7 @@ def _scripts() -> dict:
         "layout":              resolve_script("pipeline_worksheet_layout_v2.py"),
         "views":               resolve_script("pipeline_views.py"),
         "view_filters":        resolve_script("pipeline_tableview_filters_v2.py"),
+        "repair_views":        resolve_script("repair_created_views.py"),
         "navi":                resolve_script("update_app_navi_style.py"),
         "mock_data":           resolve_script("pipeline_mock_data.py"),
         "chatbots":            resolve_script("pipeline_chatbots.py"),

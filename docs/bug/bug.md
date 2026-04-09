@@ -93,3 +93,30 @@
     - `showall`
     - `hour24`
   - 这些值必须原样保留，禁止再触发整条更新删除。
+
+## 2026-04-10 视图创建后又被后续步骤覆盖，导致日历 / 甘特 / 资源视图再次失效
+
+- 症状：
+  - 视图创建阶段显示成功，但最终打开应用时：
+    - 日历视图再次弹出日期字段选择面板；
+    - 甘特图再次弹出开始/结束字段选择面板；
+    - 资源视图再次弹出资源/时间字段选择面板；
+    - 个别表格自定义视图名称被冲成空串，最终只剩系统默认视图 `全部`。
+- 根因：
+  - [pipeline_tableview_filters_v2.py](/Users/andy/Documents/coding/hap-auto-maker/scripts/hap/pipeline_tableview_filters_v2.py) 会在视图创建后再次调用 `SaveWorksheetView`。
+  - `SaveWorksheetView` 对 `advancedSetting` 不是字段级 merge；若后续仅写入快筛/颜色等局部配置，可能覆盖掉创建阶段已经写入的关键字段。
+  - 尤其是日历视图若在该阶段再写 `fastFilters + enablebtn`，会把 `calendarcids / begindate / enddate` 覆盖掉。
+  - 同时，个别自定义表格视图会在后续保存后出现“名称变空串”的副作用，导致默认视图删除逻辑误判为“当前还没有非系统视图”。
+- 固化规则：
+  - `view_filters` 阶段禁止再对日历视图(type `4`) 写入快速筛选。
+  - 流水线必须增加“创建后完整性补修”步骤：
+    - 日历视图缺 `calendarcids` 时自动回填；
+    - 甘特图缺 `begindate/enddate` 时自动回填；
+    - 资源视图缺 `viewControl/begindate/enddate` 时自动回填；
+    - 自定义视图若名称为空，按视图创建结果中的计划名称回写。
+  - 英文应用只要某张表存在非系统视图，就必须删除残留系统默认视图：
+    - `全部`
+    - `All`
+    - `视图`
+    - `View`
+    - 空名

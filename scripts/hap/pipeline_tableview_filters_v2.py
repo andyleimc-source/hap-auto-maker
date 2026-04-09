@@ -40,6 +40,10 @@ SAVE_VIEW_URL = "https://www.mingdao.com/api/Worksheet/SaveWorksheetView"
 
 SUPPORTED_VIEW_TYPES = {"0", "1", "3", "4"}
 NAV_SUPPORTED_VIEW_TYPES = {"0", "3"}
+# 日历视图(4)会进入 AI 规划清单，但禁止在本阶段写入 fastFilters。
+# SaveWorksheetView 对 advancedSetting 不是字段级 merge，
+# 若只补 enablebtn 等快筛参数，可能覆盖创建阶段已落好的
+# calendarcids / begindate / enddate，导致再次弹出日历初始化面板。
 FAST_SUPPORTED_VIEW_TYPES = {"0", "1", "3"}
 VIEW_TYPE_LABELS = {"0": "表格视图", "1": "看板视图", "3": "画廊视图", "4": "日历视图"}
 DEFAULT_ALL_VIEW_NAMES = system_default_view_names()

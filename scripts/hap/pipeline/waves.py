@@ -1008,6 +1008,32 @@ def run_all_waves(
 
     run_step_7()
 
+    # Wave 5.5: 视图完整性补修
+    # 目的：
+    # 1) 日历/甘特/资源视图若在后续步骤后丢失关键字段，按创建规则自动回填；
+    # 2) 自定义视图若名称被冲成空串，按视图创建结果回写计划名称；
+    # 3) 英文应用存在非系统视图时，删除残留的系统默认视图。
+    if (
+        not execution_dry_run
+        and views.get("enabled", True)
+        and ctx.view_create_result_json
+        and Path(ctx.view_create_result_json).exists()
+    ):
+        print(f"\n-- Wave 5.5: 视图完整性补修 --- 总计 {time.time()-pipeline_start:.0f}s", flush=True)
+        cmd7b = [
+            sys.executable,
+            str(scripts["repair_views"]),
+            "--app-id", str(app_id),
+            "--app-auth-json", str(app_auth_json),
+            "--view-create-result", str(ctx.view_create_result_json),
+            "--auth-config", str(config_web_auth),
+            "--language", str(lang),
+        ]
+        _exec(71, "repair_views", "补修创建后视图关键配置", cmd7b)
+
+    if _abort_if_failed():
+        return ctx
+
     # Wave 6: 清理空名称视图（SaveWorksheetView postCreateUpdates 有时会产生空名称视图作为副作用）
     if not execution_dry_run and delete_default_views_cfg.get("enabled", True):
         print(f"\n-- Wave 6: 清理空名称视图 --- 总计 {time.time()-pipeline_start:.0f}s", flush=True)
