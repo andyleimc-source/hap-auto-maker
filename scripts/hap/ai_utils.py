@@ -9,6 +9,7 @@ AI 模型统一调用工具。
 import fcntl
 import json
 import re
+import threading
 import time
 from datetime import date
 from pathlib import Path
@@ -111,6 +112,114 @@ RPD_LIMITS = {
 }
 # 留 5% 安全余量
 RPD_SAFETY_MARGIN = 0.05
+
+# Token 使用量追踪（进程内线程安全聚合）
+_TOKEN_STATS_LOCK = threading.Lock()
+_TOKEN_STATS = {
+    "by_model": {},
+    "total_input": 0,
+    "total_output": 0,
+}
+
+
+def _coerce_token_int(value: Any) -> int:
+    try:
+        number = int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+    return number if number > 0 else 0
+
+
+def _read_usage_field(usage: Any, field: str) -> Any:
+    if usage is None:
+        return None
+    if isinstance(usage, dict):
+        return usage.get(field)
+    return getattr(usage, field, None)
+
+
+def _extract_token_usage(usage: Any) -> tuple[int, int]:
+    """兼容 Gemini/OpenAI 不同 usage 字段命名。"""
+    input_tokens = _coerce_token_int(
+        _read_usage_field(usage, "input_tokens")
+        or _read_usage_field(usage, "prompt_tokens")
+        or _read_usage_field(usage, "prompt_token_count")
+    )
+    output_tokens = _coerce_token_int(
+        _read_usage_field(usage, "output_tokens")
+        or _read_usage_field(usage, "completion_tokens")
+        or _read_usage_field(usage, "candidates_token_count")
+    )
+
+    if output_tokens == 0:
+        total_tokens = _coerce_token_int(
+            _read_usage_field(usage, "total_tokens")
+            or _read_usage_field(usage, "total_token_count")
+        )
+        if total_tokens > input_tokens:
+            output_tokens = total_tokens - input_tokens
+
+    return input_tokens, output_tokens
+
+
+def record_token_usage(model: str, input_tokens: Any, output_tokens: Any) -> None:
+    """记录 token 使用量，失败时由调用方自行兜底。"""
+    model_name = str(model or "").strip() or "(unknown)"
+    in_tokens = _coerce_token_int(input_tokens)
+    out_tokens = _coerce_token_int(output_tokens)
+    if in_tokens == 0 and out_tokens == 0:
+        return
+
+    with _TOKEN_STATS_LOCK:
+        model_stats = _TOKEN_STATS["by_model"].setdefault(
+            model_name,
+            {"input_tokens": 0, "output_tokens": 0},
+        )
+        model_stats["input_tokens"] += in_tokens
+        model_stats["output_tokens"] += out_tokens
+        _TOKEN_STATS["total_input"] += in_tokens
+        _TOKEN_STATS["total_output"] += out_tokens
+
+
+def get_token_stats() -> Dict[str, Any]:
+    with _TOKEN_STATS_LOCK:
+        return {
+            "by_model": {
+                model: {
+                    "input_tokens": stats["input_tokens"],
+                    "output_tokens": stats["output_tokens"],
+                }
+                for model, stats in _TOKEN_STATS["by_model"].items()
+            },
+            "total_input": _TOKEN_STATS["total_input"],
+            "total_output": _TOKEN_STATS["total_output"],
+        }
+
+
+def _safe_record_response_usage(model: str, usage: Any) -> None:
+    try:
+        input_tokens, output_tokens = _extract_token_usage(usage)
+        record_token_usage(model, input_tokens, output_tokens)
+    except Exception:
+        pass
+
+
+def _should_retry_without_usage_stream_option(exc: Exception) -> bool:
+    text = str(exc or "").lower()
+    return "stream_options" in text or "include_usage" in text
+
+
+def _create_openai_usage_stream(openai_client, **kwargs):
+    try:
+        return openai_client.chat.completions.create(
+            **kwargs,
+            stream=True,
+            stream_options={"include_usage": True},
+        )
+    except Exception as exc:
+        if not _should_retry_without_usage_stream_option(exc):
+            raise
+        return openai_client.chat.completions.create(**kwargs, stream=True)
 
 
 def _record_rpd(model: str) -> Dict[str, int]:
@@ -364,19 +473,24 @@ class GeminiCompatibilityClient:
         for attempt in range(max_retries):
             try:
                 # 使用流式请求，逐 chunk 接收，避免大响应时服务端 chunked 连接中断
-                stream = self._openai_client.chat.completions.create(
+                stream = _create_openai_usage_stream(
+                    self._openai_client,
                     model=effective_model,
                     messages=messages,
                     temperature=temperature,
                     response_format=response_format,
                     max_tokens=max_tok,
-                    stream=True,
                 )
                 chunks = []
+                usage = None
                 for chunk in stream:
+                    chunk_usage = getattr(chunk, "usage", None)
+                    if chunk_usage:
+                        usage = chunk_usage
                     delta = chunk.choices[0].delta.content if chunk.choices else None
                     if delta:
                         chunks.append(delta)
+                _safe_record_response_usage(effective_model, usage)
 
                 class FakeResponse:
                     def __init__(self, text):
@@ -429,6 +543,7 @@ class FakeChat:
             temperature=temperature,
             max_tokens=max_tok,
         )
+        _safe_record_response_usage(effective_model, getattr(response, "usage", None))
 
         reply = response.choices[0].message.content or ""
         self.history.append({"role": "assistant", "content": reply})
@@ -460,7 +575,9 @@ class _GeminiRpdWrapper:
 
     def generate_content(self, model: str, contents, config=None):
         _record_rpd(model or self._model)
-        return self._client.models.generate_content(model=model, contents=contents, config=config)
+        resp = self._client.models.generate_content(model=model, contents=contents, config=config)
+        _safe_record_response_usage(model or self._model, getattr(resp, "usage_metadata", None))
+        return resp
 
 
 class _GeminiChatsProxy:
@@ -479,7 +596,9 @@ class _GeminiChatWrapper:
 
     def send_message(self, message):
         _record_rpd(self._model)
-        return self._chat.send_message(message)
+        resp = self._chat.send_message(message)
+        _safe_record_response_usage(self._model, getattr(resp, "usage_metadata", None))
+        return resp
 
 
 def get_ai_client(config: Optional[Dict[str, str]] = None):

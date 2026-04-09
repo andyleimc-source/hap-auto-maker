@@ -95,6 +95,30 @@ class PipelineContext:
             if s.get("ok") is True or s.get("skipped") is True
         ])
         fail_count = len([s for s in self.steps_report if s.get("ok") is False])
+        token_usage = {
+            "by_model": {},
+            "total_input": 0,
+            "total_output": 0,
+            "estimated_cost_usd": 0.0,
+        }
+        try:
+            from ai_utils import get_token_stats
+
+            stats = get_token_stats()
+            total_input = int(stats.get("total_input", 0) or 0)
+            total_output = int(stats.get("total_output", 0) or 0)
+            token_usage = {
+                "by_model": stats.get("by_model", {}),
+                "total_input": total_input,
+                "total_output": total_output,
+                "estimated_cost_usd": round(
+                    total_input * 0.15 / 1_000_000 +
+                    total_output * 0.60 / 1_000_000,
+                    6,
+                ),
+            }
+        except Exception:
+            pass
         return {
             "schema_version": "hap_requirement_v1_execution_report",
             "created_at": now_iso(),
@@ -106,6 +130,7 @@ class PipelineContext:
                 "ok_or_skipped": ok_count,
                 "failed": fail_count,
             },
+            "token_usage": token_usage,
             "artifacts": self.as_artifacts_dict(),
             "context": self.as_legacy_dict(),
             "steps": self.steps_report,
