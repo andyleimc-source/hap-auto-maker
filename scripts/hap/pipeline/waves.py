@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 import sys
 import threading
 import time
@@ -78,6 +79,25 @@ def _find_auth_file_by_app_id(app_id: str, app_auth_dir: Path) -> Optional[Path]
     return None
 
 
+def _load_checkpoint(path: Path, validator_fn=None) -> Optional[dict]:
+    """若 checkpoint 文件存在且合法，返回其内容；否则返回 None。"""
+    if not path.exists():
+        return None
+    try:
+        data = load_json(path)
+        if validator_fn and not validator_fn(data):
+            return None
+        return data
+    except Exception:
+        return None
+
+
+def _sync_latest_output(source_path: Path, latest_path: Path) -> None:
+    """将本次输出同步到稳定 latest 文件。"""
+    latest_path.parent.mkdir(parents=True, exist_ok=True)
+    write_json(latest_path, load_json(source_path))
+
+
 def run_all_waves(
     spec: dict,
     spec_path: Path,
@@ -90,6 +110,8 @@ def run_all_waves(
     pipeline_start: float,
     scripts: dict,
     dirs: dict,
+    force_replan: bool = False,
+    rollback_on_failure: bool = False,
 ) -> PipelineContext:
     """执行全部 Wave，返回填充好的 PipelineContext。"""
     ctx = PipelineContext(
@@ -119,6 +141,26 @@ def run_all_waves(
         if fail_fast and ctx.has_failure():
             out = ctx.save_report()
             print(f"\n执行失败并终止，报告: {out}")
+            if (
+                rollback_on_failure
+                and not execution_dry_run
+                and app.get("target_mode") == "create_new"
+                and ctx.app_id
+            ):
+                try:
+                    cmd = [
+                        sys.executable,
+                        str(scripts["delete_app"]),
+                        "--app-id",
+                        str(ctx.app_id),
+                    ]
+                    proc = subprocess.run(cmd, check=False, capture_output=True, text=True)
+                    if proc.returncode == 0:
+                        print(f"  ↩ 回滚成功：已删除应用 {ctx.app_id}")
+                    else:
+                        print(f"  ⚠ 回滚失败（exit={proc.returncode}）: {proc.stderr.strip() or proc.stdout.strip()}")
+                except Exception as exc:
+                    print(f"  ⚠ 回滚异常: {exc}")
             return True
         return False
 
@@ -188,26 +230,49 @@ def run_all_waves(
     print(f"\n-- Wave 2: 工作表规划 / 角色（并行） --- 总计 {time.time()-pipeline_start:.0f}s", flush=True)
 
     worksheet_plan_dir: Path = dirs["worksheet_plan_dir"]
-    plan_output = (worksheet_plan_dir / f"worksheet_plan_{app_id}_{now_ts()}.json").resolve()
+    plan_output_ts = (worksheet_plan_dir / f"worksheet_plan_{app_id}_{now_ts()}.json").resolve()
+    plan_output_latest = (worksheet_plan_dir / f"worksheet_plan_{app_id}_latest.json").resolve()
+    plan_output = plan_output_ts
 
     def run_step_2a() -> bool:
+        nonlocal plan_output
         if not ws.get("enabled", True):
             with steps_lock:
                 steps_report.append({"step_id": 2, "step_key": "worksheets_plan", "title": "规划工作表", "skipped": True, "reason": "disabled_by_spec", "result": {}})
             return True
+        if not force_replan:
+            checkpoint = _load_checkpoint(
+                plan_output_latest,
+                lambda d: isinstance(d.get("worksheets"), list) and len(d.get("worksheets", [])) > 0,
+            )
+            if checkpoint is not None:
+                print(f"  [checkpoint] 使用已有工作表规划: {plan_output_latest}", flush=True)
+                plan_output = plan_output_latest
+                ctx.worksheet_plan_json = str(plan_output_latest)
+                with steps_lock:
+                    steps_report.append({
+                        "step_id": 2, "step_key": "worksheets_plan", "title": "规划工作表",
+                        "skipped": True, "reason": "checkpoint", "result": {"checkpoint": str(plan_output_latest)},
+                    })
+                return True
         cmd2a = [
             sys.executable, str(scripts["plan_worksheets"]),
             "--app-name", str(app.get("name", "CRM自动化应用")),
             "--business-context", str(ws.get("business_context", "通用企业管理场景")),
             "--requirements", str(ws.get("requirements", "")),
-            "--output", str(plan_output),
+            "--output", str(plan_output_ts),
         ]
         max_ws = int(ws.get("max_worksheets", 0) or 0)
         if max_ws > 0:
             cmd2a.extend(["--max-worksheets", str(max_ws)])
         sem_value = getattr(gemini_semaphore, '_value', 1000)
         cmd2a.extend(["--concurrency", str(sem_value)])
-        return _exec(2, "worksheets_plan", "规划工作表", cmd2a, uses_gemini=True)
+        ok = _exec(2, "worksheets_plan", "规划工作表", cmd2a, uses_gemini=True)
+        if ok and not execution_dry_run and plan_output_ts.exists():
+            _sync_latest_output(plan_output_ts, plan_output_latest)
+            plan_output = plan_output_latest
+            ctx.worksheet_plan_json = str(plan_output_latest)
+        return ok
 
     def run_step_3() -> bool:
         if not roles.get("enabled", True):
@@ -249,7 +314,9 @@ def run_all_waves(
 
     sections_plan_dir: Path = dirs["sections_plan_dir"]
     sections_create_result_dir: Path = dirs["sections_create_result_dir"]
-    sections_plan_output = (sections_plan_dir / f"sections_plan_{app_id}_{now_ts()}.json").resolve()
+    sections_plan_output_ts = (sections_plan_dir / f"sections_plan_{app_id}_{now_ts()}.json").resolve()
+    sections_plan_output_latest = (sections_plan_dir / f"sections_plan_{app_id}_latest.json").resolve()
+    sections_plan_output = sections_plan_output_ts
     sections_create_output = (
         sections_create_result_dir / f"sections_create_{app_id}_{now_ts()}.json"
     ).resolve()
@@ -259,14 +326,43 @@ def run_all_waves(
 
     if ws.get("enabled", True) and ok2a:
         ctx.worksheet_plan_json = str(plan_output)
-        cmd2c = [
-            sys.executable, str(scripts["plan_sections"]),
-            "--plan-json", str(plan_output),
-            "--output", str(sections_plan_output),
-        ]
-        ok2c = _exec(2, "sections_plan", "AI 规划工作表分组", cmd2c, uses_gemini=True)
-        if ok2c and not execution_dry_run:
-            ctx.sections_plan_json = str(sections_plan_output)
+        if not force_replan:
+            checkpoint = _load_checkpoint(
+                sections_plan_output_latest,
+                lambda d: isinstance(d.get("sections"), list) and len(d.get("sections", [])) > 0,
+            )
+            if checkpoint is not None:
+                print(f"  [checkpoint] 使用已有分组规划: {sections_plan_output_latest}", flush=True)
+                sections_plan_output = sections_plan_output_latest
+                ctx.sections_plan_json = str(sections_plan_output_latest)
+                with steps_lock:
+                    steps_report.append({
+                        "step_id": 2, "step_key": "sections_plan", "title": "AI 规划工作表分组",
+                        "skipped": True, "reason": "checkpoint", "result": {"checkpoint": str(sections_plan_output_latest)},
+                    })
+                ok2c = True
+            else:
+                cmd2c = [
+                    sys.executable, str(scripts["plan_sections"]),
+                    "--plan-json", str(plan_output),
+                    "--output", str(sections_plan_output_ts),
+                ]
+                ok2c = _exec(2, "sections_plan", "AI 规划工作表分组", cmd2c, uses_gemini=True)
+                if ok2c and not execution_dry_run and sections_plan_output_ts.exists():
+                    _sync_latest_output(sections_plan_output_ts, sections_plan_output_latest)
+                    sections_plan_output = sections_plan_output_latest
+                    ctx.sections_plan_json = str(sections_plan_output_latest)
+        else:
+            cmd2c = [
+                sys.executable, str(scripts["plan_sections"]),
+                "--plan-json", str(plan_output),
+                "--output", str(sections_plan_output_ts),
+            ]
+            ok2c = _exec(2, "sections_plan", "AI 规划工作表分组", cmd2c, uses_gemini=True)
+            if ok2c and not execution_dry_run and sections_plan_output_ts.exists():
+                _sync_latest_output(sections_plan_output_ts, sections_plan_output_latest)
+                sections_plan_output = sections_plan_output_latest
+                ctx.sections_plan_json = str(sections_plan_output_latest)
         if fail_fast and not ok2c:
             ctx.save_report()
             return ctx
@@ -299,24 +395,43 @@ def run_all_waves(
     # Wave 2.5b: 提前创建统计分析 Pages
     page_registry_output: Optional[str] = None
     if pages_cfg.get("enabled", True) and ok2a:
-        page_registry_path = (output_root / "page_registries" / f"page_registry_{app_id}_{now_ts()}.json").resolve()
-        cmd_pages_early = [
-            sys.executable, str(scripts["create_pages_early"]),
-            "--app-id", app_id,
-            "--worksheet-plan-json", str(plan_output),
-            "--auth-config", str(config_web_auth),
-            "--output", str(page_registry_path),
-        ]
-        if bool(pages_cfg.get("skip_existing", True)):
-            cmd_pages_early.append("--skip-existing")
-        else:
-            cmd_pages_early.append("--no-skip-existing")
-        if execution_dry_run:
-            cmd_pages_early.append("--dry-run")
-        ok_pages_early = _exec(14, "pages_early", "提前创建统计分析 Pages", cmd_pages_early, uses_gemini=True)
-        if ok_pages_early and not execution_dry_run:
-            page_registry_output = str(page_registry_path)
-            ctx.page_registry_json = page_registry_output
+        page_registry_path_ts = (output_root / "page_registries" / f"page_registry_{app_id}_{now_ts()}.json").resolve()
+        page_registry_path_latest = (output_root / "page_registries" / f"page_registry_{app_id}_latest.json").resolve()
+        checkpoint_hit = False
+        if not force_replan:
+            checkpoint = _load_checkpoint(
+                page_registry_path_latest,
+                lambda d: isinstance(d.get("pages"), list) and len(d.get("pages", [])) > 0,
+            )
+            if checkpoint is not None:
+                print(f"  [checkpoint] 使用已有 Pages 注册表: {page_registry_path_latest}", flush=True)
+                page_registry_output = str(page_registry_path_latest)
+                ctx.page_registry_json = page_registry_output
+                checkpoint_hit = True
+                with steps_lock:
+                    steps_report.append({
+                        "step_id": 14, "step_key": "pages_early", "title": "提前创建统计分析 Pages",
+                        "skipped": True, "reason": "checkpoint", "result": {"checkpoint": str(page_registry_path_latest)},
+                    })
+        if not checkpoint_hit:
+            cmd_pages_early = [
+                sys.executable, str(scripts["create_pages_early"]),
+                "--app-id", app_id,
+                "--worksheet-plan-json", str(plan_output),
+                "--auth-config", str(config_web_auth),
+                "--output", str(page_registry_path_ts),
+            ]
+            if bool(pages_cfg.get("skip_existing", True)):
+                cmd_pages_early.append("--skip-existing")
+            else:
+                cmd_pages_early.append("--no-skip-existing")
+            if execution_dry_run:
+                cmd_pages_early.append("--dry-run")
+            ok_pages_early = _exec(14, "pages_early", "提前创建统计分析 Pages", cmd_pages_early, uses_gemini=True)
+            if ok_pages_early and not execution_dry_run and page_registry_path_ts.exists():
+                _sync_latest_output(page_registry_path_ts, page_registry_path_latest)
+                page_registry_output = str(page_registry_path_latest)
+                ctx.page_registry_json = page_registry_output
 
     if _abort_if_failed():
         return ctx
@@ -704,11 +819,7 @@ def run_all_waves(
         flush=True,
     )
 
-    view_plan_dir: Path = dirs["view_plan_dir"]
     tableview_filter_result_dir: Path = dirs["tableview_filter_result_dir"]
-
-    view_plan_output = (view_plan_dir / f"view_plan_{app_id}_{now_ts()}.json").resolve()
-    view_create_output = (view_create_result_dir / f"view_create_result_{app_id}_{now_ts()}.json").resolve()
 
     def run_step_4() -> bool:
         if not ws["icon_update"].get("enabled", True):

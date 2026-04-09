@@ -33,6 +33,7 @@ from planning.constraints import (
     suggest_chart_types,
     SYSTEM_FIELDS,
     get_chart_constraints,
+    gate_chart_types_by_fields,
 )
 
 # 导入完整 schema（优先使用）
@@ -69,6 +70,23 @@ def build_enhanced_prompt(
         chart_type_section = get_ai_prompt_section()
     else:
         chart_type_section = build_chart_type_prompt_section()
+
+    global_fields: list[dict] = []
+    for ws in worksheets_info:
+        ws_fields = ws.get("fields", [])
+        if isinstance(ws_fields, list):
+            global_fields.extend(ws_fields)
+    forbidden_report_types = sorted(gate_chart_types_by_fields(global_fields))
+    forbidden_report_types_text = (
+        "无"
+        if not forbidden_report_types
+        else ", ".join(str(rt) for rt in forbidden_report_types)
+    )
+    forbidden_constraint_line = (
+        f"字段约束前置过滤：禁止使用 reportType 列表 [{forbidden_report_types_text}]。"
+        if forbidden_report_types
+        else "字段约束前置过滤：当前全局字段集合无额外禁用的 reportType。"
+    )
 
     # 2. 工作表 + 字段 + 推荐
     ws_sections = []
@@ -128,8 +146,9 @@ def build_enhanced_prompt(
 7. 折线图(2) xaxes 必须使用日期字段（type=15/16），设 particleSizeType=1(月)或4(日)，不能用季度(0)
 8. 关联字段(controlType=29/30/34) 绝对不能作为 xaxes 维度，无法聚合。改用该表的单选/文本字段
 9. 词云图(13) xaxes 必须使用单选/下拉字段（type=9/11），不能用普通文本(type=2)
-8. 图表名称 ≤10 个字，简洁有业务含义
-9. yaxisList 至少 1 项，可用 record_count（记录数量）或数值字段
+10. 图表名称 ≤10 个字，简洁有业务含义
+11. yaxisList 至少 1 项，可用 record_count（记录数量）或数值字段
+12. {forbidden_constraint_line}
 
 ## 输出格式（严格 JSON）
 
@@ -164,6 +183,36 @@ def build_enhanced_prompt(
     }}
   ]
 }}"""
+
+
+def _get_forbidden_report_types_for_worksheet(
+    worksheet_id: str,
+    worksheets_by_id: dict[str, dict],
+) -> set[int]:
+    ws_info = worksheets_by_id.get(worksheet_id, {}) if worksheet_id else {}
+    ws_fields = ws_info.get("fields", [])
+    if not isinstance(ws_fields, list):
+        return set()
+    return gate_chart_types_by_fields(ws_fields)
+
+
+def _reject_forbidden_report_type(
+    *,
+    chart_index: int,
+    chart_name: str,
+    report_type: int,
+    worksheet_id: str,
+    worksheets_by_id: dict[str, dict],
+) -> None:
+    forbidden_report_types = _get_forbidden_report_types_for_worksheet(
+        worksheet_id,
+        worksheets_by_id,
+    )
+    if report_type in forbidden_report_types:
+        raise ValueError(
+            f"[字段约束前置过滤] 图表 {chart_index}「{chart_name}」reportType={report_type} 命中字段约束前置过滤，"
+            f"worksheetId={worksheet_id!r} 的字段集合禁止该类型。"
+        )
 
 
 # ─── Phase 1: 图表结构规划（轻量 prompt，只决定图表分配）────────────────────────
@@ -287,6 +336,13 @@ def validate_chart_structure(
             raise ValueError(f"图表 {i+1}「{name}」缺少 worksheetId")
         if worksheet_id not in worksheets_by_id:
             raise ValueError(f"图表 {i+1}「{name}」worksheetId={worksheet_id!r} 不存在")
+        _reject_forbidden_report_type(
+            chart_index=i + 1,
+            chart_name=name,
+            report_type=report_type,
+            worksheet_id=worksheet_id,
+            worksheets_by_id=worksheets_by_id,
+        )
 
         validated.append(chart)
 
@@ -512,6 +568,14 @@ def validate_chart_config_per_ws(
         if worksheet_id and worksheet_id not in worksheets_by_id:
             print(f"[警告] 图表 {i+1} worksheetId 不存在，跳过: {worksheet_id}")
             continue
+        if worksheet_id:
+            _reject_forbidden_report_type(
+                chart_index=i + 1,
+                chart_name=name,
+                report_type=report_type,
+                worksheet_id=worksheet_id,
+                worksheets_by_id=worksheets_by_id,
+            )
 
         # 字段存在性校验
         if worksheet_id and worksheet_id in worksheets_by_id:
@@ -629,6 +693,14 @@ def validate_enhanced_plan(
         if worksheet_id and worksheet_id not in worksheets_by_id:
             print(f"[警告] 图表 {i+1} worksheetId 不存在，跳过: {worksheet_id}")
             continue
+        if worksheet_id:
+            _reject_forbidden_report_type(
+                chart_index=i + 1,
+                chart_name=name,
+                report_type=report_type,
+                worksheet_id=worksheet_id,
+                worksheets_by_id=worksheets_by_id,
+            )
 
         # 字段存在性校验
         if worksheet_id and worksheet_id in worksheets_by_id:

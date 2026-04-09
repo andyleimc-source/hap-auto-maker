@@ -26,7 +26,7 @@ CURRENT_DIR = Path(__file__).resolve().parent
 if str(CURRENT_DIR) not in sys.path:
     sys.path.insert(0, str(CURRENT_DIR))
 
-from ai_utils import AI_CONFIG_PATH
+from ai_utils import AI_CONFIG_PATH, get_token_stats
 from script_locator import resolve_script
 from utils import now_iso, load_json
 
@@ -54,6 +54,7 @@ def _scripts() -> dict:
         "navi":                resolve_script("update_app_navi_style.py"),
         "mock_data":           resolve_script("pipeline_mock_data.py"),
         "chatbots":            resolve_script("pipeline_chatbots.py"),
+        "delete_app":          resolve_script("delete_app.py"),
         "delete_default_views": resolve_script("delete_default_views.py"),
         "pages":               resolve_script("pipeline_pages.py"),
         "plan_pages":          resolve_script("plan_pages_gemini.py"),
@@ -178,12 +179,13 @@ def normalize_spec(raw: dict) -> dict:
     pages = spec.get("pages") if isinstance(spec.get("pages"), dict) else {}
     pages.setdefault("enabled", True)
     pages.setdefault("skip_existing", True)
-    pages.setdefault("chart_skip_existing", True)
     spec["pages"] = pages
 
     execution = spec.get("execution") if isinstance(spec.get("execution"), dict) else {}
     execution.setdefault("fail_fast", True)
     execution.setdefault("dry_run", False)
+    execution.setdefault("force_replan", False)
+    execution.setdefault("rollback_on_failure", False)
     spec["execution"] = execution
     return spec
 
@@ -229,6 +231,8 @@ def main() -> None:
     parser.add_argument("--verbose", action="store_true", help="打印子脚本完整输出")
     parser.add_argument("--gemini-concurrency", type=int, default=1000, help="Gemini API 最大并发调用数（默认 1000，付费账号 RPM=2000 自然限流）")
     parser.add_argument("--app-id", default="", help="已有应用 ID，跳过创建步骤")
+    parser.add_argument("--force-replan", action="store_true", help="忽略 checkpoint，强制重新调用 AI 规划")
+    parser.add_argument("--rollback-on-failure", action="store_true", help="执行失败时自动回滚删除本次创建的应用（仅 create_new 生效）")
     args = parser.parse_args()
 
     pipeline_start = time.time()
@@ -249,6 +253,8 @@ def main() -> None:
 
     execution_dry_run = bool(args.dry_run or spec["execution"].get("dry_run", False))
     fail_fast = bool(spec["execution"].get("fail_fast", True)) and (not args.continue_on_error)
+    force_replan = bool(args.force_replan or spec["execution"].get("force_replan", False))
+    rollback_on_failure = bool(args.rollback_on_failure or spec["execution"].get("rollback_on_failure", False))
     selected_steps = _parse_only_steps(args.only_steps)
     gemini_semaphore = threading.Semaphore(args.gemini_concurrency)
 
@@ -264,6 +270,8 @@ def main() -> None:
         pipeline_start=pipeline_start,
         scripts=scripts,
         dirs=_dirs(),
+        force_replan=force_replan,
+        rollback_on_failure=rollback_on_failure,
     )
 
     out = ctx.save_report()
@@ -274,6 +282,12 @@ def main() -> None:
         f"  失败: {report['summary']['failed']}  总耗时: {total_elapsed:.0f}s",
         flush=True,
     )
+    stats = get_token_stats()
+    if stats:
+        total_in = sum(int(s.get("input", 0) or 0) for s in stats.values())
+        total_out = sum(int(s.get("output", 0) or 0) for s in stats.values())
+        cost = total_in / 1_000_000 * 0.15 + total_out / 1_000_000 * 0.60
+        print(f"- AI tokens: 输入 {total_in:,} / 输出 {total_out:,}  估算费用: ${cost:.3f}")
     print(f"- 报告: {out}")
 
 

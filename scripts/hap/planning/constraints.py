@@ -93,26 +93,65 @@ FIELD_TYPE_CATEGORIES = {
 
 SYSTEM_FIELDS = {"ctime", "utime", "ownerid", "caid", "record_count"}
 
+# V3 API 返回的字符串类型名 → 整数编号映射
+_STR_TO_INT: dict[str, int] = {
+    "Text": 2, "Textarea": 3, "Phone": 3, "Number": 6, "Money": 8,
+    "SingleSelect": 9, "MultipleSelect": 10, "Dropdown": 11,
+    "Attachment": 14, "Date": 15, "DateTime": 16, "Time": 46,
+    "Location": 19, "Area": 24, "Link": 21, "Email": 5,
+    "Collaborator": 26, "Department": 27, "OrgRole": 48,
+    "Relation": 29, "Lookup": 30, "SubTable": 34, "Cascade": 35, "Rollup": 37,
+    "Checkbox": 36, "Rating": 28, "Score": 47, "Formula": 31,
+    "DateFormula": 38, "AutoNumber": 33, "RichText": 41,
+    "Signature": 42, "QRCode": 43, "Embed": 45, "Remark": 49,
+    "TextCombine": 32, "Section": 22,
+}
+
+
+def _normalize_field_type(raw_type: object) -> int:
+    """兼容 V3 API 字符串类型名与整数编号。"""
+    if isinstance(raw_type, str) and not raw_type.isdigit():
+        return _STR_TO_INT.get(raw_type, 0)
+    try:
+        return int(raw_type or 0)
+    except (ValueError, TypeError):
+        return 0
+
+
+def gate_chart_types_by_fields(fields: list[dict]) -> set[int]:
+    """基于字段能力返回必须前置禁用的 reportType 集合。
+
+    这里使用非系统字段做判断，避免 ctime/utime 等系统字段抬高字段能力。
+    """
+    forbidden: set[int] = set()
+    effective_fields: list[dict] = []
+    field_types: set[int] = set()
+
+    for field in fields:
+        fid = str(field.get("controlId", "") or field.get("id", "")).strip()
+        is_system = bool(field.get("isSystem", False)) or fid in SYSTEM_FIELDS
+        if is_system:
+            continue
+        effective_fields.append(field)
+        field_types.add(_normalize_field_type(field.get("type", 0) or field.get("controlType", 0) or 0))
+
+    if not ({15, 16} & field_types):
+        forbidden.add(2)
+    if not ({6, 8} & field_types):
+        forbidden.update({10, 14, 15})
+    if not ({9, 11} & field_types):
+        forbidden.update({3, 13})
+    if len(effective_fields) < 2:
+        forbidden.update({7, 8})
+
+    return forbidden
+
 
 def classify_fields(controls: list[dict]) -> dict[str, list[dict]]:
     """将字段按类型分类，返回 {category: [field_info]}。
 
     兼容 V3 API 字符串类型名（如 "Text", "SingleSelect"）和整数编号两种格式。
     """
-    # V3 API 返回的字符串类型名 → 整数编号映射
-    _STR_TO_INT: dict[str, int] = {
-        "Text": 2, "Textarea": 3, "Phone": 3, "Number": 6, "Money": 8,
-        "SingleSelect": 9, "MultipleSelect": 10, "Dropdown": 11,
-        "Attachment": 14, "Date": 15, "DateTime": 16, "Time": 46,
-        "Location": 19, "Area": 24, "Link": 21, "Email": 5,
-        "Collaborator": 26, "Department": 27, "OrgRole": 48,
-        "Relation": 29, "Lookup": 30, "SubTable": 34, "Cascade": 35, "Rollup": 37,
-        "Checkbox": 36, "Rating": 28, "Score": 47, "Formula": 31,
-        "DateFormula": 38, "AutoNumber": 33, "RichText": 41,
-        "Signature": 42, "QRCode": 43, "Embed": 45, "Remark": 49,
-        "TextCombine": 32, "Section": 22,
-    }
-
     result: dict[str, list[dict]] = {cat: [] for cat in FIELD_TYPE_CATEGORIES}
     result["system"] = []
     result["other"] = []
@@ -121,14 +160,7 @@ def classify_fields(controls: list[dict]) -> dict[str, list[dict]]:
         fid = str(f.get("controlId", "") or f.get("id", "")).strip()
         fname = str(f.get("controlName", "") or f.get("name", "")).strip()
         raw_type = f.get("type", 0) or f.get("controlType", 0) or 0
-        # 支持字符串类型名（V3 API）和整数类型编号两种格式
-        if isinstance(raw_type, str) and not raw_type.isdigit():
-            ftype = _STR_TO_INT.get(raw_type, 0)
-        else:
-            try:
-                ftype = int(raw_type)
-            except (ValueError, TypeError):
-                ftype = 0
+        ftype = _normalize_field_type(raw_type)
         is_system = bool(f.get("isSystem", False))
 
         info = {"id": fid, "name": fname, "type": ftype}

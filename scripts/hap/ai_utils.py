@@ -110,8 +110,6 @@ RPD_LIMITS = {
     "gemini-2.5-flash": 10000,
     "gemini-2.5-pro":   1000,
 }
-# 留 5% 安全余量
-RPD_SAFETY_MARGIN = 0.05
 
 # Token 使用量追踪（进程内线程安全聚合）
 _TOKEN_STATS_LOCK = threading.Lock()
