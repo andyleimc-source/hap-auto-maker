@@ -172,3 +172,77 @@ def test_validate_plan_non_11_chart_does_not_get_righty_injected():
     validated = validate_plan(raw, _worksheets_fixture())
     assert "rightY" not in validated[0]
 
+
+def test_validate_plan_dual_axis_downgrade_renames_chart_wording():
+    from planners.plan_charts_gemini import validate_plan
+
+    raw = {
+        "charts": [
+            {
+                "name": "状态与时间双轴",
+                "desc": "双轴对比状态与时间",
+                "reportType": 7,
+                "worksheetId": "ws1",
+                "xaxes": {"controlId": "f_type", "controlType": 9},
+                "yaxisList": [{"controlId": "record_count", "controlType": 10000000}],
+            },
+            {
+                "name": "销售趋势",
+                "reportType": 2,
+                "worksheetId": "ws1",
+                "xaxes": {"controlId": "f_date", "controlType": 16},
+                "yaxisList": [{"controlId": "record_count", "controlType": 10000000}],
+            },
+            {
+                "name": "类型占比",
+                "reportType": 3,
+                "worksheetId": "ws1",
+                "xaxes": {"controlId": "f_type", "controlType": 9},
+                "yaxisList": [{"controlId": "record_count", "controlType": 10000000}],
+            },
+        ]
+    }
+
+    validated = validate_plan(raw, _worksheets_fixture())
+    chart = validated[0]
+    assert chart["reportType"] == 1
+    assert "双轴" not in chart["name"]
+    assert "柱状" in chart["name"]
+    assert "双轴" not in (chart.get("desc") or "")
+
+
+def test_validate_plan_non_dual_type_removes_dual_axis_wording():
+    from planners.plan_charts_gemini import validate_plan
+
+    raw = {
+        "charts": [
+            {
+                "name": "客户状态双轴",
+                "desc": "双轴对比客户状态",
+                "reportType": 1,
+                "worksheetId": "ws1",
+                "xaxes": {"controlId": "f_type", "controlType": 9},
+                "yaxisList": [{"controlId": "record_count", "controlType": 10000000}],
+            },
+            {
+                "name": "销售趋势",
+                "reportType": 2,
+                "worksheetId": "ws1",
+                "xaxes": {"controlId": "f_date", "controlType": 16},
+                "yaxisList": [{"controlId": "record_count", "controlType": 10000000}],
+            },
+            {
+                "name": "类型占比",
+                "reportType": 3,
+                "worksheetId": "ws1",
+                "xaxes": {"controlId": "f_type", "controlType": 9},
+                "yaxisList": [{"controlId": "record_count", "controlType": 10000000}],
+            },
+        ]
+    }
+
+    validated = validate_plan(raw, _worksheets_fixture())
+    chart = validated[0]
+    assert chart["reportType"] == 1
+    assert "双轴" not in chart["name"]
+    assert "双轴" not in (chart.get("desc") or "")

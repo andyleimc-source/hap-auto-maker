@@ -356,6 +356,25 @@ def _default_record_count_yaxis(rename: str = "记录数量") -> dict:
     }
 
 
+def _strip_dual_axis_wording_if_not_dual(chart: dict, *, chart_label: str) -> None:
+    """当图表最终不是双轴图(reportType=7)时，清理名称/描述中的“双轴”措辞，避免语义与类型不一致。"""
+    report_type = int(chart.get("reportType", 0) or 0)
+    if report_type == 7:
+        return
+
+    name = str(chart.get("name", "") or "")
+    desc = str(chart.get("desc", "") or "")
+
+    if "双轴" in name:
+        new_name = name.replace("双轴", "柱状")
+        if new_name != name:
+            chart["name"] = new_name
+            print(f"[改名] {chart_label} 非双轴图(reportType={report_type})，名称已从「{name}」改为「{new_name}」")
+
+    if "双轴" in desc:
+        chart["desc"] = desc.replace("双轴", "柱状")
+
+
 def _sanitize_yaxis_list(yaxis_list: list, valid_fids: set[str], *, log_prefix: str) -> list[dict]:
     """过滤掉字段不存在的 y 轴项。"""
     clean: list[dict] = []
@@ -465,6 +484,7 @@ def validate_plan(raw: dict, worksheets_by_id: Dict[str, dict]) -> List[dict]:
                 chart["reportType"] = 1
                 chart.pop("yreportType", None)
                 chart.pop("rightY", None)
+                _strip_dual_axis_wording_if_not_dual(chart, chart_label=f"图表 {i+1}「{name}」")
 
         # 对称条形图(reportType=11) 必须保证方向2(数值)有可用字段
         if report_type == 11:
@@ -476,6 +496,7 @@ def validate_plan(raw: dict, worksheets_by_id: Dict[str, dict]) -> List[dict]:
 
         # 所有图表统一强制时间来源为 ctime
         _force_ctime_filter(chart)
+        _strip_dual_axis_wording_if_not_dual(chart, chart_label=f"图表 {i+1}「{chart.get('name', '')}」")
         validated.append(chart)
     if not validated:
         raise ValueError("所有图表均未通过校验，请重新规划")
