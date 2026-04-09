@@ -30,6 +30,7 @@ from typing import Any, Dict, List, Optional
 
 import auth_retry
 from ai_utils import create_generation_config, get_ai_client, load_ai_config
+from i18n import chart_record_count_label, chart_time_label, get_runtime_language
 from utils import now_ts, load_json, write_json
 from planning.chart_planner import build_enhanced_prompt as chart_planner_build_prompt
 
@@ -339,20 +340,22 @@ VALID_REPORT_TYPES = set(range(1, 18))  # reportType 1-17
 
 def _force_ctime_filter(chart: dict) -> None:
     """统一强制时间筛选来源为创建时间 ctime，保留原有时间范围设置。"""
+    lang = get_runtime_language()
     filter_cfg = chart.get("filter")
     if not isinstance(filter_cfg, dict):
         filter_cfg = {}
     filter_cfg["filterRangeId"] = "ctime"
-    filter_cfg["filterRangeName"] = "创建时间"
+    filter_cfg["filterRangeName"] = chart_time_label(lang)
     chart["filter"] = filter_cfg
 
 
 def _default_record_count_yaxis(rename: str = "记录数量") -> dict:
+    label = chart_record_count_label(get_runtime_language())
     return {
         "controlId": "record_count",
         "controlType": 10000000,
-        "controlName": "记录数量",
-        "rename": rename,
+        "controlName": label,
+        "rename": rename or label,
     }
 
 

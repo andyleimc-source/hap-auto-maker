@@ -35,6 +35,7 @@ from planning.constraints import (
     get_chart_constraints,
     gate_chart_types_by_fields,
 )
+from i18n import chart_record_count_label, chart_time_label, get_runtime_language, normalize_language
 
 # 导入完整 schema（优先使用）
 try:
@@ -57,6 +58,7 @@ def build_enhanced_prompt(
     app_name: str,
     worksheets_info: list[dict],
     target_count: int = 10,
+    language: Optional[str] = None,
 ) -> str:
     """生成增强版图表规划 prompt，包含类型约束和字段推荐。
 
@@ -65,11 +67,16 @@ def build_enhanced_prompt(
         worksheets_info: [{worksheetId, worksheetName, fields: [{controlId, controlName, type, options}]}]
         target_count: 目标图表数量 (8-12)
     """
+    lang = normalize_language(language or get_runtime_language())
+    is_en = lang == "en"
+    time_label = chart_time_label(lang)
+    record_count_label = chart_record_count_label(lang)
+
     # 1. 图表类型说明（优先使用完整 schema）
     if _HAS_SCHEMA:
-        chart_type_section = get_ai_prompt_section()
+        chart_type_section = get_ai_prompt_section(language=lang)
     else:
-        chart_type_section = build_chart_type_prompt_section()
+        chart_type_section = build_chart_type_prompt_section(language=lang)
 
     global_fields: list[dict] = []
     for ws in worksheets_info:
@@ -124,6 +131,64 @@ def build_enhanced_prompt(
         ws_sections.append("\n".join(lines))
 
     ws_detail = "\n".join(ws_sections)
+
+    if is_en:
+        return f"""You are a data visualization expert. Design charts for app \"{app_name}\".
+
+{chart_type_section}
+
+## Worksheets and fields
+{ws_detail}
+
+## Task
+Plan {target_count} charts with diverse report types and meaningful business insights.
+
+Rules:
+1. Every chart must have a clear analysis purpose.
+2. Use at least 6 different reportType values; include at least one KPI chart (10/14/15) and one non bar/pie chart (e.g. 6/7/8/16).
+3. Cover as many worksheets as possible.
+4. xaxes.controlId and yaxisList[].controlId must come from worksheet fields or system fields (ctime/utime/record_count).
+5. For reportType 10/14/15, xaxes.controlId must be an empty string.
+6. Pie chart (3): xaxes should use select/dropdown fields (type=9/11), not relation fields.
+7. Line chart (2): xaxes must use date fields (type=15/16), particleSizeType=1(month) or 4(day).
+8. Relation fields (29/30/34) cannot be xaxes.
+9. Word cloud (13): xaxes should use select/dropdown fields.
+10. Chart name should be concise (<= 24 chars).
+11. yaxisList must include at least one metric.
+12. {forbidden_constraint_line}
+
+Output strict JSON only:
+{{
+  "charts": [
+    {{
+      "name": "Chart name",
+      "desc": "One-line purpose",
+      "reportType": 1,
+      "worksheetId": "worksheet ID",
+      "xaxes": {{
+        "controlId": "fieldId or null type",
+        "controlType": 16,
+        "particleSizeType": 0,
+        "sortType": 0,
+        "emptyType": 0
+      }},
+      "yaxisList": [
+        {{
+          "controlId": "fieldId or record_count",
+          "controlType": 10000000,
+          "rename": "{record_count_label}"
+        }}
+      ],
+      "filter": {{
+        "filterRangeId": "ctime",
+        "filterRangeName": "{time_label}",
+        "rangeType": 0,
+        "rangeValue": 0,
+        "today": false
+      }}
+    }}
+  ]
+}}"""
 
     return f"""你是一名数据可视化专家，正在为「{app_name}」规划统计图表。
 
@@ -462,20 +527,24 @@ def build_chart_config_prompt_per_ws(
 
 def _force_ctime_filter(chart: dict) -> None:
     """统一强制时间筛选来源为创建时间 ctime，保留原有时间范围。"""
+    lang = get_runtime_language()
     filter_cfg = chart.get("filter")
     if not isinstance(filter_cfg, dict):
         filter_cfg = {}
     filter_cfg["filterRangeId"] = "ctime"
-    filter_cfg["filterRangeName"] = "创建时间"
+    filter_cfg["filterRangeName"] = chart_time_label(lang)
     chart["filter"] = filter_cfg
 
 
-def _default_record_count_yaxis(rename: str = "记录数量") -> dict:
+def _default_record_count_yaxis(rename: Optional[str] = None) -> dict:
+    lang = get_runtime_language()
+    default_name = chart_record_count_label(lang)
+    final_rename = rename or default_name
     return {
         "controlId": "record_count",
         "controlType": 10000000,
-        "controlName": "记录数量",
-        "rename": rename,
+        "controlName": default_name,
+        "rename": final_rename,
     }
 
 

@@ -36,6 +36,7 @@ from planning.worksheet_planner import (
     validate_fields_plan,
     build_field_type_prompt_section,
 )
+from i18n import default_business_context, normalize_language, set_runtime_language
 
 CONFIG_PATH = AI_CONFIG_PATH
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
@@ -168,6 +169,21 @@ def build_fallback_worksheet(name: str, scene: str) -> dict:
     }
 
 
+def build_fallback_worksheet_en(name: str, scene: str) -> dict:
+    return {
+        "name": name,
+        "purpose": f"Manage {scene} related business data",
+        "fields": [
+            {"name": "Name", "type": "Text", "required": True, "description": f"{scene} name", "relation_target": "", "option_values": []},
+            {"name": "Status", "type": "SingleSelect", "required": True, "description": f"{scene} status", "relation_target": "", "option_values": ["Draft", "In Progress", "Completed"]},
+            {"name": "Owner", "type": "Collaborator", "required": False, "description": f"{scene} owner", "relation_target": "", "option_values": []},
+            {"name": "Planned Date", "type": "Date", "required": False, "description": f"{scene} planned date", "relation_target": "", "option_values": []},
+            {"name": "Notes", "type": "Text", "required": False, "description": f"{scene} notes", "relation_target": "", "option_values": []},
+        ],
+        "depends_on": [],
+    }
+
+
 def extract_json(text: str) -> dict:
     # 统一使用 ai_utils 中的 robust 解析
     return parse_ai_json(text)
@@ -247,7 +263,9 @@ def ensure_minimum_worksheets(
     min_worksheet_count: int,
     business_context: str,
     extra_requirements: str,
+    language: str = "zh",
 ) -> None:
+    lang = normalize_language(language)
     if min_worksheet_count <= 0:
         return
     worksheets = plan.get("worksheets", [])
@@ -269,16 +287,16 @@ def ensure_minimum_worksheets(
         ws_name = normalize_scene_to_worksheet_name(scene)
         if not ws_name or ws_name in existing_names:
             continue
-        worksheets.append(build_fallback_worksheet(ws_name, scene))
+        worksheets.append(build_fallback_worksheet_en(ws_name, scene) if lang == "en" else build_fallback_worksheet(ws_name, scene))
         existing_names.add(ws_name)
 
     auto_index = 1
     while len(worksheets) < min_worksheet_count:
-        ws_name = f"扩展模块{auto_index}"
+        ws_name = f"Extension Module {auto_index}" if lang == "en" else f"扩展模块{auto_index}"
         auto_index += 1
         if ws_name in existing_names:
             continue
-        worksheets.append(build_fallback_worksheet(ws_name, ws_name))
+        worksheets.append(build_fallback_worksheet_en(ws_name, ws_name) if lang == "en" else build_fallback_worksheet(ws_name, ws_name))
         existing_names.add(ws_name)
 
     plan["worksheets"] = worksheets
@@ -355,6 +373,7 @@ def plan_skeleton(
     extra_requirements: str,
     min_worksheet_count: int,
     max_worksheet_count: int,
+    language: str = "zh",
     max_retries: int = MAX_PLAN_RETRIES,
 ) -> dict:
     """Step 1: 骨架规划 — 表名+用途+核心字段+关联关系。"""
@@ -364,6 +383,7 @@ def plan_skeleton(
         extra_requirements=extra_requirements,
         min_worksheets=min_worksheet_count,
         max_worksheets=max_worksheet_count,
+        language=language,
     )
     print(f"[skeleton] prompt 长度={len(prompt)}")
 
@@ -408,6 +428,7 @@ def plan_fields_per_ws(
     ws_id: str,
     existing_fields: list[dict],
     all_worksheets_summary: list[dict],
+    language: str = "zh",
     max_retries: int = MAX_PLAN_RETRIES,
 ) -> dict:
     """Step 3: 逐表字段细化 — 为单张表生成完整字段。"""
@@ -417,6 +438,7 @@ def plan_fields_per_ws(
         ws_id=ws_id,
         existing_fields=existing_fields,
         all_worksheets_summary=all_worksheets_summary,
+        language=language,
     )
 
     existing_names = {str(f.get("name", "")).strip() for f in existing_fields}
@@ -540,6 +562,7 @@ def _run_layered_mode(client, model_name, ai_config, args, min_worksheet_count, 
         extra_requirements=args.requirements,
         min_worksheet_count=min_worksheet_count,
         max_worksheet_count=max_worksheet_count,
+        language=args.language,
         max_retries=args.max_retries,
     )
 
@@ -585,6 +608,7 @@ def _run_layered_mode(client, model_name, ai_config, args, min_worksheet_count, 
                 ws_id="",  # 骨架模式下还没有真实 ID，逐表细化先用空
                 existing_fields=existing,
                 all_worksheets_summary=all_ws_summary,
+                language=args.language,
                 max_retries=args.max_retries,
             )
         return ws_name, result.get("fields", [])
@@ -608,6 +632,7 @@ def _run_layered_mode(client, model_name, ai_config, args, min_worksheet_count, 
         min_worksheet_count=min_worksheet_count,
         business_context=args.business_context,
         extra_requirements=args.requirements,
+        language=args.language,
     )
     validation_errors = validate_worksheet_plan(full_plan, min_worksheets=min_worksheet_count, max_worksheets=max_worksheet_count)
     if validation_errors:
@@ -620,14 +645,19 @@ def _run_layered_mode(client, model_name, ai_config, args, min_worksheet_count, 
 def main() -> None:
     parser = argparse.ArgumentParser(description="使用 AI 规划应用工作表结构并输出 JSON")
     parser.add_argument("--app-name", required=True, help="应用名称")
-    parser.add_argument("--business-context", default="通用企业管理场景", help="业务背景描述")
+    parser.add_argument("--business-context", default="", help="业务背景描述")
     parser.add_argument("--requirements", default="", help="额外要求")
     parser.add_argument("--config", default=str(CONFIG_PATH), help="AI 配置 JSON 路径")
     parser.add_argument("--output", default="", help="输出 JSON 文件路径")
     parser.add_argument("--max-retries", type=int, default=MAX_PLAN_RETRIES, help="规划校验失败后的最大重试次数")
     parser.add_argument("--max-worksheets", type=int, default=0, help="工作表数量上限（0=不限）")
     parser.add_argument("--concurrency", type=int, default=3, help="逐表字段细化的并发数")
+    parser.add_argument("--language", default="zh", choices=["zh", "en"], help="规划语言（zh/en）")
     args = parser.parse_args()
+    args.language = normalize_language(args.language)
+    set_runtime_language(args.language)
+    if not str(args.business_context or "").strip():
+        args.business_context = default_business_context(args.language)
 
     ai_config = load_ai_config(Path(args.config).expanduser().resolve())
     client = get_ai_client(ai_config)

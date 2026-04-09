@@ -24,6 +24,7 @@ from planning.constraints import (
     build_chart_type_prompt_section,
     SYSTEM_FIELDS,
 )
+from i18n import chart_record_count_label, chart_time_label, get_runtime_language, normalize_language
 
 # 导入完整 schema（优先使用）
 try:
@@ -38,7 +39,7 @@ _VALID_SYSTEM_XAXES = {"ctime", "utime", "record_count", ""}
 # 默认时间筛选器
 _DEFAULT_FILTER = {
     "filterRangeId": "ctime",
-    "filterRangeName": "创建时间",
+    "filterRangeName": chart_time_label(get_runtime_language()),
     "rangeType": 0,
     "rangeValue": 0,
     "today": False,
@@ -52,6 +53,7 @@ def build_single_ws_chart_prompt(
     ws_name: str,
     fields: list[dict],
     page_name: str = "",
+    language: str | None = None,
 ) -> str:
     """为单张工作表生成图表规划 prompt。
 
@@ -63,11 +65,16 @@ def build_single_ws_chart_prompt(
     Returns:
         完整的 AI prompt 字符串
     """
+    lang = normalize_language(language or get_runtime_language())
+    is_en = lang == "en"
+    time_label = chart_time_label(lang)
+    record_count_label = chart_record_count_label(lang)
+
     # 1. 图表类型说明
     if _HAS_SCHEMA:
-        chart_type_section = get_ai_prompt_section()
+        chart_type_section = get_ai_prompt_section(language=lang)
     else:
-        chart_type_section = build_chart_type_prompt_section()
+        chart_type_section = build_chart_type_prompt_section(language=lang)
 
     # 2. 字段列表
     field_lines = []
@@ -86,6 +93,60 @@ def build_single_ws_chart_prompt(
 
     # 3. 页面上下文
     page_hint = f"（所属页面：{page_name}）" if page_name else ""
+
+    if is_en:
+        return f"""You are a data visualization expert. Decide whether worksheet \"{ws_name}\" {page_hint} is suitable for charts. If suitable, design 1-3 charts.
+
+{chart_type_section}
+
+## Fields of worksheet \"{ws_name}\"
+{field_section}
+
+Rules:
+- reportType 10/14/15 must use xaxes.controlId=\"\"
+- Pie (3) should use select fields (type=9/11)
+- Line (2) must use date fields (type=15/16), particleSizeType=1 or 4
+- Relation fields (29/30/34) cannot be xaxes
+- Word cloud (13) should use select fields (type=9/11)
+- xaxes.controlId / yaxisList.controlId must come from fields or system fields (ctime/utime/record_count)
+- yaxisList must contain at least one metric
+- Chart names should be concise
+
+Output strict JSON:
+{{
+  "suitable": true,
+  "reason": "one-line reason",
+  "charts": [
+    {{
+      "name": "Chart name",
+      "desc": "Purpose",
+      "reportType": 1,
+      "xaxes": {{
+        "controlId": "fieldId or empty string",
+        "controlType": 16,
+        "particleSizeType": 0,
+        "sortType": 0,
+        "emptyType": 0
+      }},
+      "yaxisList": [
+        {{
+          "controlId": "fieldId or record_count",
+          "controlType": 10000000,
+          "rename": "{record_count_label}"
+        }}
+      ],
+      "filter": {{
+        "filterRangeId": "ctime",
+        "filterRangeName": "{time_label}",
+        "rangeType": 0,
+        "rangeValue": 0,
+        "today": false
+      }}
+    }}
+  ]
+}}
+If not suitable, return:
+{{"suitable": false, "reason": "reason", "charts": []}}"""
 
     return f"""你是一名数据可视化专家。请判断工作表「{ws_name}」{page_hint}是否适合创建统计图表，如果适合则规划 1-3 个图表。
 
@@ -227,10 +288,11 @@ def validate_single_ws_chart_plan(
 
         # fallback: 无有效 y 轴则用 record_count
         if not valid_y:
+            label = chart_record_count_label(get_runtime_language())
             valid_y = [{
                 "controlId": "record_count",
                 "controlType": 0,
-                "rename": "记录数量",
+                "rename": label,
             }]
 
         chart["yaxisList"] = valid_y
@@ -238,6 +300,7 @@ def validate_single_ws_chart_plan(
         # 默认 filter
         if not chart.get("filter") or not isinstance(chart.get("filter"), dict):
             chart["filter"] = dict(_DEFAULT_FILTER)
+            chart["filter"]["filterRangeName"] = chart_time_label(get_runtime_language())
 
         seen_types.add(rt)
         result.append(chart)

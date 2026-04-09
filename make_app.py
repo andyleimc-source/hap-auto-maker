@@ -24,6 +24,10 @@ if str(HAP_DIR) not in sys.path:
 
 from ai_utils import AI_CONFIG_PATH, create_generation_config, get_ai_client, load_ai_config, resolve_effective_model_name
 from execute_requirements import normalize_spec
+from i18n import (
+    normalize_language,
+    set_runtime_language,
+)
 from script_locator import resolve_script
 from utils import now_iso, now_ts
 
@@ -97,10 +101,38 @@ def save_spec(spec: dict, output=None) -> Path:
     return out
 
 
-def build_spec_prompt(requirements: str) -> str:
+def build_spec_prompt(requirements: str, language: str = "zh") -> str:
+    lang = normalize_language(language)
+    is_en = lang == "en"
     group_ids = _load_org_group_ids()
+    app_name_hint = "Extract from requirement, in English" if is_en else "【从需求提取】应用的完整名称，若未明确则根据业务场景推断合理名称"
+    biz_hint = "Describe business scenario in English (1-3 sentences)" if is_en else "【从需求提取】用1-3句话描述业务场景"
+    req_hint = "Worksheet quantity/functional requirements in English; empty string if not mentioned" if is_en else "【从需求提取】工作表数量/功能要求，若未提及则留空字符串"
+    layout_hint = "Layout requirements in English; empty string if not mentioned" if is_en else "【从需求提取】布局要求，若未提及则留空字符串"
+    summary_hint = "Summary in English within 100 chars" if is_en else "100字以内总结"
+    lang_rule = "All natural-language values must be English." if is_en else "自然语言字段默认中文。"
+    rules_block = (
+        "1. app.name must be replaced with a real app name.\n"
+        "2. worksheets.business_context must be replaced with real business context.\n"
+        "3. Replace all placeholder text; if not mentioned, use empty string.\n"
+        "4. If navigation is not specified, keep pcNaviStyle=1; if color not specified, keep color_mode=random.\n"
+        "5. Output JSON only (no markdown).\n"
+        "6. All natural-language fields must be in English."
+    ) if is_en else (
+        "1. app.name 必须替换为真实应用名称，禁止保留【从需求提取】字样。\n"
+        "2. worksheets.business_context 必须替换为真实业务场景描述。\n"
+        "3. 其余【从需求提取】占位符同理，无相关信息则填空字符串。\n"
+        "4. 若未提及导航布局，固定 pcNaviStyle=1；若未提及主题色，固定 color_mode=random。\n"
+        "5. 只输出 JSON，不要 markdown 代码块。"
+    )
+    intro = (
+        "You are a requirements structuring engine. Convert the user requirements into strict JSON. "
+        "schema_version must be workflow_requirement_v1."
+        if is_en
+        else "你是需求结构化引擎。请根据以下用户需求，输出严格 JSON，schema_version 必须为 workflow_requirement_v1。"
+    )
     return f"""
-你是需求结构化引擎。请根据以下用户需求，输出严格 JSON，schema_version 必须为 workflow_requirement_v1。
+{intro}
 
 用户需求：
 {requirements}
@@ -111,11 +143,12 @@ def build_spec_prompt(requirements: str) -> str:
   "meta": {{
     "created_at": "{now_iso()}",
     "source": "claude_code_chat",
-    "conversation_summary": "100字以内总结"
+    "conversation_summary": "{summary_hint}",
+    "language": "{lang}"
   }},
   "app": {{
     "target_mode": "create_new",
-    "name": "【从需求提取】应用的完整名称，若未明确则根据业务场景推断合理名称",
+    "name": "{app_name_hint}",
     "group_ids": "{group_ids}",
     "icon_mode": "ai_match",
     "color_mode": "random",
@@ -126,15 +159,15 @@ def build_spec_prompt(requirements: str) -> str:
   }},
   "worksheets": {{
     "enabled": true,
-    "business_context": "【从需求提取】用1-3句话描述业务场景",
-    "requirements": "【从需求提取】工作表数量/功能要求，若未提及则留空字符串",
+    "business_context": "{biz_hint}",
+    "requirements": "{req_hint}",
     "icon_update": {{
       "enabled": true,
       "refresh_auth": false
     }},
     "layout": {{
       "enabled": true,
-      "requirements": "【从需求提取】布局要求，若未提及则留空字符串",
+      "requirements": "{layout_hint}",
       "refresh_auth": false
     }}
   }},
@@ -156,20 +189,18 @@ def build_spec_prompt(requirements: str) -> str:
 }}
 
 规则：
-1. app.name 必须替换为真实应用名称，禁止保留【从需求提取】字样。
-2. worksheets.business_context 必须替换为真实业务场景描述。
-3. 其余【从需求提取】占位符同理，无相关信息则填空字符串。
-4. 若未提及导航布局，固定 pcNaviStyle=1；若未提及主题色，固定 color_mode=random。
-5. 只输出 JSON，不要 markdown 代码块。
+{rules_block}
+额外语言要求：{lang_rule}
 """.strip()
 
 
-def generate_spec(requirements: str, ai_config: dict) -> dict:
+def generate_spec(requirements: str, ai_config: dict, language: str = "zh") -> dict:
     client = get_ai_client(ai_config)
     model = ai_config["model"]
     provider = ai_config.get("provider", "")
     effective_model = resolve_effective_model_name(provider, model)
-    prompt = build_spec_prompt(requirements)
+    lang = normalize_language(language)
+    prompt = build_spec_prompt(requirements, language=lang)
     if effective_model != model:
         print(f"正在生成需求 spec（配置模型: {model}，实际模型: {effective_model}）...")
     else:
@@ -188,7 +219,7 @@ def generate_spec(requirements: str, ai_config: dict) -> dict:
         ),
     )
     raw = extract_json(resp.text or "")
-    return normalize_spec(raw)
+    return normalize_spec(raw, default_language=lang)
 
 
 def _find_missing_runtime_packages() -> list[str]:
@@ -228,7 +259,10 @@ def main():
     parser.add_argument("--spec-json", default="", help="跳过 AI 生成，直接执行已有 spec 文件路径")
     parser.add_argument("--output", default="", help="spec 输出路径（默认自动命名）")
     parser.add_argument("--config", default=str(AI_CONFIG_PATH), help="AI 配置 JSON 路径")
+    parser.add_argument("--language", default="zh", choices=["zh", "en"], help="应用生成语言（zh/en）")
     args = parser.parse_args()
+    lang = normalize_language(args.language)
+    set_runtime_language(lang)
 
     # 模式一：直接使用已有 spec 文件
     if args.spec_json:
@@ -245,7 +279,7 @@ def main():
             sys.exit(1)
 
         ai_config = load_ai_config(Path(args.config).expanduser().resolve())
-        spec = generate_spec(requirements, ai_config)
+        spec = generate_spec(requirements, ai_config, language=lang)
         output_path = Path(args.output).expanduser().resolve() if args.output else None
         spec_path = save_spec(spec, output=output_path)
         print(f"需求 spec 已生成: {spec_path}")
@@ -259,6 +293,7 @@ def main():
 
     # 执行
     exec_cmd = [sys.executable, str(EXECUTE_SCRIPT), "--spec-json", str(spec_path)]
+    exec_cmd.extend(["--language", lang])
     if args.dry_run:
         exec_cmd.append("--dry-run")
     print(f"\n开始执行需求...")

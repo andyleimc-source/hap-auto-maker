@@ -24,6 +24,13 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ai_utils import AI_CONFIG_PATH, create_generation_config, get_ai_client, load_ai_config, parse_ai_json
+from i18n import (
+    get_runtime_language,
+    location_example,
+    normalize_language,
+    record_summary_hint,
+    region_example,
+)
 
 from mock_data_common import (
     MOCK_BUNDLE_DIR,
@@ -84,6 +91,31 @@ def _split_faker_fields(writable_fields: list[dict]) -> tuple[list[dict], list[s
 
 
 def build_prompt(snapshot: dict) -> str:
+    lang = normalize_language(get_runtime_language())
+    is_en = lang == "en"
+    region_sample = region_example(lang)
+    location_sample = location_example(lang)
+    summary_hint = record_summary_hint(lang)
+    summary_rule = (
+        "Each record must contain an English recordSummary describing business meaning."
+        if is_en
+        else "每条记录都要有一句中文 recordSummary，描述该记录的业务含义。"
+    )
+    region_rule = (
+        f'Region field should use region text such as "{region_sample}".'
+        if is_en
+        else f'Region（地区）字段使用中文地址文本，例如 "{region_sample}"。'
+    )
+    location_rule = (
+        f'Location field should be a JSON object with address, such as {{"address": "{location_sample}"}}.'
+        if is_en
+        else f'Location（定位）字段使用 JSON 对象，包含 address 字段，例如 {{"address": "{location_sample}"}}。'
+    )
+    role_line = (
+        "You are an enterprise mock-data planning assistant. Return strict JSON only."
+        if is_en
+        else "你是企业应用造数规划助手。请基于给定应用结构，输出严格 JSON，不要 markdown，不要解释。"
+    )
     app = snapshot.get("app", {})
     worksheets = []
     all_faker_fields_info: list[str] = []  # 收集所有表的 Faker 字段信息
@@ -120,7 +152,7 @@ def build_prompt(snapshot: dict) -> str:
         )
 
     return f"""
-你是企业应用造数规划助手。请基于给定应用结构，输出严格 JSON，不要 markdown，不要解释。
+{role_line}
 
 目标：
 1. 按给定 tier/order 保持工作表造数顺序。
@@ -129,11 +161,11 @@ def build_prompt(snapshot: dict) -> str:
 4. SingleSelect / Dropdown 字段值必须是包含一个 key 字符串的数组，例如 ["key1"]，不要使用 value 文案，不要使用裸字符串。
 5. MultipleSelect 字段值必须是包含一个或多个 key 字符串的数组，例如 ["key1", "key2"]。绝对禁止将数组序列化为字符串后再放进外层数组，即禁止 ["[\"key1\", \"key2\"]"] 这种格式。
 6. Currency（金额）字段使用数字，例如 50000。
-7. Region（地区）字段使用中文地址文本，例如 "北京/北京市/朝阳区"。
-8. Location（定位）字段使用 JSON 对象，包含 address 字段，例如 {{"address": "上海市浦东新区张江高科技园区"}}。
+7. {region_rule}
+8. {location_rule}
 9. RichText（富文本）字段使用纯文本字符串。
 10. valuesByFieldId 的 key 必须是字段 ID。
-11. 每条记录都要有一句中文 recordSummary，描述该记录的业务含义。
+11. {summary_rule}
 12. ⚠️ 每个 writableField 都必须填值，禁止遗漏！只有 skippedFields 里的字段和系统自动生成的字段才可以不填。
 {faker_note}
 
@@ -160,7 +192,7 @@ def build_prompt(snapshot: dict) -> str:
       "skippedFields": [{{"fieldId": "字段ID", "reason": "原因"}}],
       "records": [
         {{
-          "recordSummary": "一句中文摘要",
+          "recordSummary": "{summary_hint}",
           "valuesByFieldId": {{
             "文本字段ID": "文本值",
             "数字字段ID": 100,
@@ -193,6 +225,31 @@ def build_prompt(snapshot: dict) -> str:
 
 def build_prompt_v2(app: dict, worksheets: List[dict]) -> str:
     """V2 Prompt: 支持单表或多表分片，结构更紧凑。"""
+    lang = normalize_language(get_runtime_language())
+    is_en = lang == "en"
+    region_sample = region_example(lang)
+    location_sample = location_example(lang)
+    summary_hint = record_summary_hint(lang)
+    summary_rule = (
+        "Each record must contain an English recordSummary."
+        if is_en
+        else "每条记录都要有一句中文 recordSummary。"
+    )
+    region_rule = (
+        f'Region field should use region text such as "{region_sample}".'
+        if is_en
+        else f'Region（地区）字段使用中文地址文本，例如 "{region_sample}"。'
+    )
+    location_rule = (
+        f'Location field should be a JSON object with address, such as {{"address": "{location_sample}"}}.'
+        if is_en
+        else f'Location（定位）字段使用 JSON 对象，包含 address 字段，例如 {{"address": "{location_sample}"}}。'
+    )
+    role_line = (
+        "You are an enterprise mock-data planning assistant. Return strict JSON only."
+        if is_en
+        else "你是企业应用造数规划助手。请基于给定应用结构，输出严格 JSON，不要 markdown，不要解释。"
+    )
     # 分离 Faker 可处理的字段，缩小 prompt 体积
     filtered_worksheets = []
     all_faker_fields_info: list[str] = []
@@ -214,7 +271,7 @@ def build_prompt_v2(app: dict, worksheets: List[dict]) -> str:
         )
 
     return f"""
-你是企业应用造数规划助手。请基于给定应用结构，输出严格 JSON，不要 markdown，不要解释。
+{role_line}
 
 目标：
 1. 为每张表生成指定数量的记录。
@@ -222,11 +279,11 @@ def build_prompt_v2(app: dict, worksheets: List[dict]) -> str:
 3. SingleSelect / Dropdown 字段值必须是包含一个 key 字符串的数组，例如 ["key1"]。
 4. MultipleSelect 字段值必须是包含一个或多个 key 字符串的数组，例如 ["key1", "key2"]。
 5. Currency（金额）字段使用数字，例如 50000。
-6. Region（地区）字段使用中文地址文本，例如 "北京/北京市/朝阳区"。
-7. Location（定位）字段使用 JSON 对象，包含 address 字段，例如 {{"address": "上海市浦东新区张江高科技园区"}}。
+6. {region_rule}
+7. {location_rule}
 8. RichText（富文本）字段使用纯文本字符串。
 9. valuesByFieldId 的 key 必须是字段 ID。
-10. 每条记录都要有一句中文 recordSummary。
+10. {summary_rule}
 11. ⚠️ 每个 writableField 都必须填值，禁止遗漏！系统自动生成的字段不需要填。
 {faker_note}
 
@@ -248,7 +305,7 @@ def build_prompt_v2(app: dict, worksheets: List[dict]) -> str:
       "recordCount": 5,
       "records": [
         {{
-          "recordSummary": "摘要",
+          "recordSummary": "{summary_hint}",
           "valuesByFieldId": {{
             "字段ID": "值"
           }}

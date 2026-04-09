@@ -26,6 +26,7 @@ from worksheets.field_types import (
     ALLOWED_FIELD_TYPES,
     OPTION_REQUIRED_TYPES,
 )
+from i18n import normalize_language
 
 
 def build_field_type_enum() -> str:
@@ -33,19 +34,20 @@ def build_field_type_enum() -> str:
     return "|".join(k for k, v in FIELD_REGISTRY.items() if not v.get("ai_disabled"))
 
 
-def build_field_type_prompt_section() -> str:
+def build_field_type_prompt_section(language: str = "zh") -> str:
     """生成 AI prompt 中的字段类型说明（排除 ai_disabled 类型）。"""
-    lines = ["可用字段类型："]
+    lang = normalize_language(language)
+    lines = ["Available field types:"] if lang == "en" else ["可用字段类型："]
     for name, spec in FIELD_REGISTRY.items():
         if spec.get("ai_disabled"):
             continue
         extra = ""
         if spec.get("requires_options"):
-            extra = " [需 option_values]"
+            extra = " [option_values required]" if lang == "en" else " [需 option_values]"
         if spec.get("requires_relation_target"):
-            extra = " [需 relation_target]"
+            extra = " [relation_target required]" if lang == "en" else " [需 relation_target]"
         if spec.get("force_not_required"):
-            extra += " [required 强制 false]"
+            extra += " [required must be false]" if lang == "en" else " [required 强制 false]"
         lines.append(f"  - {name} (controlType={spec['controlType']}) — {spec['name']}{extra}")
     return "\n".join(lines)
 
@@ -59,17 +61,70 @@ def build_skeleton_prompt(
     extra_requirements: str = "",
     min_worksheets: int = 0,
     max_worksheets: int = 0,
+    language: str = "zh",
 ) -> str:
     """Step 1 — 只规划表名、用途、核心字段（1-3 个）和关联关系。
 
     不要求 AI 设计完整字段列表，只关注业务建模和表间关系。
     输出的 skeleton plan 将传给 build_fields_prompt_per_ws() 进行逐表字段细化。
     """
+    lang = normalize_language(language)
     count_rule = ""
     if min_worksheets > 0:
         count_rule += f"\n10) worksheets 数量必须 >= {min_worksheets}。"
     if max_worksheets > 0:
         count_rule += f"\n11) worksheets 数量必须 <= {max_worksheets}，超出则合并相似业务表。"
+
+    if lang == "en":
+        return f"""You are an enterprise app architect. Design worksheet skeleton for app \"{app_name}\" and output strict JSON.
+
+Business context:
+{business_context}
+
+Extra requirements:
+{extra_requirements}
+
+Task:
+1. Plan worksheets (name + purpose)
+2. For each worksheet, provide 1-3 core fields
+3. Define relationships between worksheets
+
+Output strict JSON:
+{{
+  "app_name": "{app_name}",
+  "summary": "one-line summary",
+  "worksheets": [
+    {{
+      "name": "Worksheet name",
+      "purpose": "One-line purpose",
+      "core_fields": [
+        {{
+          "name": "Field name",
+          "type": "Text|Number|Money|SingleSelect|MultipleSelect|Dropdown|Date|DateTime|Collaborator|Phone|Email|RichText|Attachment|Rating|Checkbox",
+          "required": true,
+          "option_values": ["required for select/dropdown fields"],
+          "unit": "optional unit, e.g. USD, %, days",
+          "dot": "optional decimal places"
+        }}
+      ],
+      "depends_on": ["Worksheet names"]
+    }}
+  ],
+  "relationships": [
+    {{"from": "WorksheetA", "field": "Relation field", "to": "WorksheetB", "cardinality": "1-1|1-N", "description": "description"}}
+  ],
+  "creation_order": ["all worksheet names in topological order"]
+}}
+
+Constraints:
+1) core_fields should be 1-3 only
+2) first core field should be title field (Text + required=true)
+3) no Relation type in core_fields
+4) creation_order must include every worksheet
+5) no N-N relation, only 1-1 or 1-N
+6) for 1-N relation: from=1 side, to=N side; relation field is defined on to side
+7) select/dropdown fields must provide option_values (3-8 items)
+8) Collaborator required must be false{count_rule}"""
 
     return f"""你是企业应用架构师。请为应用《{app_name}》设计工作表结构骨架，输出严格 JSON。
 
@@ -248,6 +303,7 @@ def build_fields_prompt_per_ws(
     ws_id: str,
     existing_fields: list[dict],
     all_worksheets_summary: list[dict],
+    language: str = "zh",
 ) -> str:
     """Step 3 — 为单张工作表生成完整字段列表。
 
@@ -259,7 +315,8 @@ def build_fields_prompt_per_ws(
         all_worksheets_summary: 全局表名列表 [{name, purpose}]，轻量上下文
     """
     field_type_enum = build_field_type_enum()
-    field_type_section = build_field_type_prompt_section()
+    field_type_section = build_field_type_prompt_section(language=lang)
+    lang = normalize_language(language)
 
     existing_lines = "\n".join(
         f"  - {f['name']}（{f.get('type', '未知')}）"
@@ -270,6 +327,49 @@ def build_fields_prompt_per_ws(
         f"  - {ws['name']}: {ws.get('purpose', '')}"
         for ws in all_worksheets_summary
     )
+
+    if lang == "en":
+        return f"""You are an enterprise app field-design expert. Design additional business fields for worksheet \"{ws_name}\".
+
+## Worksheet info
+- Name: {ws_name}
+- Purpose: {ws_purpose}
+- worksheetId: {ws_id}
+
+## Existing fields (do not duplicate)
+{existing_lines}
+
+## Other worksheets (for context)
+{global_context_lines}
+
+{field_type_section}
+
+## Output strict JSON (no markdown)
+{{
+  "worksheetId": "{ws_id}",
+  "worksheetName": "{ws_name}",
+  "fields": [
+    {{
+      "name": "Field name",
+      "type": "{field_type_enum}",
+      "required": true,
+      "description": "description",
+      "option_values": ["required when select/dropdown, 3-8 items"],
+      "unit": "optional unit",
+      "dot": "optional decimals"
+    }}
+  ]
+}}
+
+Constraints:
+1) Do not generate Relation fields in this step
+2) Do not duplicate existing field names
+3) Field count should be 5-12
+4) type must be one of: {field_type_enum}
+5) Select/MultipleSelect/Dropdown must provide option_values
+6) Number/Money fields must provide unit and dot
+7) Collaborator required must be false
+8) Return valid JSON only"""
 
     return f"""你是企业应用字段设计专家。请为工作表「{ws_name}」设计完整的业务字段。
 
@@ -388,16 +488,68 @@ def build_enhanced_prompt(
     extra_requirements: str = "",
     min_worksheets: int = 0,
     max_worksheets: int = 0,
+    language: str = "zh",
 ) -> str:
     """生成增强版工作表规划 prompt。"""
+    lang = normalize_language(language)
     field_type_enum = build_field_type_enum()
-    field_type_section = build_field_type_prompt_section()
+    field_type_section = build_field_type_prompt_section(language=lang)
     count_rule = ""
     if min_worksheets > 0:
         count_rule += f"\n12) worksheets 数量必须 >= {min_worksheets}。"
     if max_worksheets > 0:
         count_rule += f"\n13) worksheets 数量必须 <= {max_worksheets}，超出则合并相似业务表。"
     count_rule += '\n14) app_name 必须为 10 个中文字以内的简洁名称，不要带「管理平台」「管理系统」等后缀。'
+
+    if lang == "en":
+        return f"""You are an enterprise app architect. Design worksheet structure for app \"{app_name}\" and output strict JSON.
+
+Business context:
+{business_context}
+
+Extra requirements:
+{extra_requirements}
+
+{field_type_section}
+
+Output strict JSON:
+{{
+  "app_name": "{app_name}",
+  "summary": "one-line summary",
+  "worksheets": [
+    {{
+      "name": "Worksheet name",
+      "purpose": "purpose",
+      "fields": [
+        {{
+          "name": "Field name",
+          "type": "{field_type_enum}",
+          "required": true,
+          "description": "description",
+          "relation_target": "",
+          "option_values": [],
+          "unit": "",
+          "dot": ""
+        }}
+      ],
+      "depends_on": ["dependencies"]
+    }}
+  ],
+  "relationships": [
+    {{"from": "WorksheetA", "field": "Relation field", "to": "WorksheetB", "cardinality": "1-1|1-N", "description": "description"}}
+  ],
+  "creation_order": ["all worksheet names in topological order"],
+  "notes": ["implementation notes"]
+}}
+
+Constraints:
+1) creation_order must include every worksheet and satisfy dependencies
+2) relation_target must exist in worksheets
+3) field type must be one of: {field_type_enum}
+4) select/dropdown fields must provide option_values
+5) no N-N relation, only 1-1 or 1-N
+6) Collaborator required must be false
+7) Number/Money fields must provide unit and dot{count_rule}"""
 
     return f"""你是企业应用架构师。请为应用《{app_name}》设计工作表结构，输出严格 JSON。
 

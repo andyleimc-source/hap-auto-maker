@@ -3,9 +3,18 @@
 from __future__ import annotations
 from datetime import datetime
 
+from i18n import (
+    chart_record_count_label,
+    chart_summary_label,
+    chart_time_label,
+    get_runtime_language,
+)
+
 
 def base_display_setup(report_type: int, xaxes: dict) -> dict:
     """通用 displaySetup，根据图表类型自动调整。"""
+    lang = get_runtime_language()
+    y_title = chart_record_count_label(lang)
     x_control_name = str(xaxes.get("controlName", "")).strip()
     setup = {
         "isPerPile": False,
@@ -44,7 +53,7 @@ def base_display_setup(report_type: int, xaxes: dict) -> dict:
         },
         "xaxisEmpty": False,
         "ydisplay": {
-            "showDial": True, "showTitle": False, "title": "记录数量",
+            "showDial": True, "showTitle": False, "title": y_title,
             "minValue": None, "maxValue": None, "lineStyle": 1, "showNumber": None,
         },
     }
@@ -83,8 +92,10 @@ def build_xaxes(xaxes: dict) -> dict:
 
 def build_yaxis(y: dict) -> dict:
     """构建单个 yaxis payload。"""
+    lang = get_runtime_language()
+    default_y_name = chart_record_count_label(lang)
     control_id = str(y.get("controlId", "record_count")).strip()
-    control_name = str(y.get("controlName", "记录数量")).strip()
+    control_name = str(y.get("controlName", default_y_name)).strip()
     control_type = int(y.get("controlType", 10000000) or 10000000)
     return {
         "controlId": control_id, "controlName": control_name, "controlType": control_type,
@@ -99,20 +110,23 @@ def build_yaxis(y: dict) -> dict:
 
 def base_body(chart: dict, app_id: str, report_type: int) -> dict:
     """构建所有图表类型共用的 saveReportConfig body。"""
+    lang = get_runtime_language()
+    default_time_name = chart_time_label(lang)
+    default_summary_name = chart_summary_label(lang)
     name = str(chart.get("name", "")).strip()
     desc = str(chart.get("desc", "") or "").strip()
     xaxes_raw = chart.get("xaxes", {})
     yaxis_list_raw = chart.get("yaxisList", [])
 
     _DEFAULT_FILTER = {
-        "filterRangeId": "ctime", "filterRangeName": "创建时间",
+        "filterRangeId": "ctime", "filterRangeName": default_time_name,
         "rangeType": 18, "rangeValue": 365, "today": True,
     }
     filter_cfg = chart.get("filter") or _DEFAULT_FILTER
     if not isinstance(filter_cfg, dict):
         filter_cfg = _DEFAULT_FILTER
     filter_cfg.setdefault("filterRangeId", "ctime")
-    filter_cfg.setdefault("filterRangeName", "创建时间")
+    filter_cfg.setdefault("filterRangeName", default_time_name)
     filter_cfg.setdefault("rangeType", 0)
     filter_cfg.setdefault("rangeValue", 0)
     filter_cfg.setdefault("today", False)
@@ -148,7 +162,7 @@ def base_body(chart: dict, app_id: str, report_type: int) -> dict:
         "appType": 1,
         "sorts": [],
         "summary": {
-            "controlId": "", "type": 1, "name": "总计", "number": True,
+            "controlId": "", "type": 1, "name": default_summary_name, "number": True,
             "percent": False, "sum": 0, "contrastSum": 0, "contrastMapSum": 0,
             "rename": "",
         },

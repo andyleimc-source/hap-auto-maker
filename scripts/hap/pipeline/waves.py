@@ -7,6 +7,7 @@ Wave 1-6 编排逻辑，从 execute_requirements.py 提取。
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -22,6 +23,7 @@ if str(_HAP_DIR) not in sys.path:
 
 from pipeline.step_runner import execute_step
 from pipeline.context import PipelineContext
+from i18n import default_app_name, default_business_context, normalize_language, set_runtime_language
 from utils import load_json, write_json, now_ts, log_summary
 
 
@@ -112,6 +114,7 @@ def run_all_waves(
     dirs: dict,
     force_replan: bool = False,
     rollback_on_failure: bool = False,
+    language: str = "zh",
 ) -> PipelineContext:
     """执行全部 Wave，返回填充好的 PipelineContext。"""
     ctx = PipelineContext(
@@ -165,6 +168,9 @@ def run_all_waves(
         return False
 
     app = spec["app"]
+    lang = normalize_language(language)
+    set_runtime_language(lang)
+    os.environ["HAP_LANGUAGE"] = lang
     ws = spec["worksheets"]
     roles = spec["roles"]
     views = spec["views"]
@@ -182,7 +188,7 @@ def run_all_waves(
     if app.get("target_mode") == "create_new":
         cmd1 = [
             sys.executable, str(scripts["create_app"]),
-            "--name", str(app.get("name", "CRM自动化应用")),
+            "--name", str(app.get("name", default_app_name(lang))),
             "--group-ids", str(app.get("group_ids", "")),
         ]
         if str(app.get("icon_mode", "gemini_match")) != "gemini_match":
@@ -258,9 +264,10 @@ def run_all_waves(
         cmd2a = [
             sys.executable, str(scripts["plan_worksheets"]),
             "--app-name", str(app.get("name", "CRM自动化应用")),
-            "--business-context", str(ws.get("business_context", "通用企业管理场景")),
+            "--business-context", str(ws.get("business_context", default_business_context(lang))),
             "--requirements", str(ws.get("requirements", "")),
             "--output", str(plan_output_ts),
+            "--language", lang,
         ]
         max_ws = int(ws.get("max_worksheets", 0) or 0)
         if max_ws > 0:
@@ -519,7 +526,7 @@ def run_all_waves(
         _name_to_id = ws_create_data.get("name_to_worksheet_id", {})
 
         _app_name_for_views = str(app.get("name", "")).strip()
-        _app_background = str(spec.get("worksheets", {}).get("business_context", "通用企业管理场景"))
+        _app_background = str(spec.get("worksheets", {}).get("business_context", default_business_context(lang)))
         _view_ai_config = _view_load_ai()
         _all_ws_names = list(_name_to_id.keys())
 

@@ -9,6 +9,7 @@
 from __future__ import annotations
 import sys
 from pathlib import Path
+from i18n import normalize_language
 
 # 确保能导入 charts/
 _BASE = Path(__file__).resolve().parents[1]
@@ -41,24 +42,42 @@ def get_chart_constraints() -> dict:
     }
 
 
-def build_chart_type_prompt_section() -> str:
+def build_chart_type_prompt_section(language: str = "zh") -> str:
     """生成 AI prompt 中的图表类型说明段落。"""
+    lang = normalize_language(language)
     c = get_chart_constraints()
-    lines = ["可用的图表类型（reportType）："]
+    if lang == "en":
+        lines = ["Available chart types (reportType):"]
+    else:
+        lines = ["可用的图表类型（reportType）："]
     for rt, spec in sorted(c["types"].items()):
-        v = "✓已验证" if spec["verified"] else ""
+        if lang == "en":
+            v = " [Verified]" if spec["verified"] else ""
+        else:
+            v = "✓已验证" if spec["verified"] else ""
         doc = spec["doc"]
-        lines.append(f"  {rt:2d}. {spec['name']} {v} — {doc}")
+        lines.append(f"  {rt:2d}. {spec['name']}{v} — {doc}")
     lines.append("")
-    lines.append("选型指南：")
-    lines.append("  - 趋势分析 → 折线图(2)，showChartType=2 为面积/区域图")
-    lines.append("  - 占比分析 → 饼图(3)，showChartType 区分饼/环")
-    lines.append("  - 对比分析 → 柱图(1)，showChartType=2 为横向条形图")
-    lines.append("  - 转化漏斗 → 漏斗图(6)")
-    lines.append("  - KPI 数字 → 数值图(10)")
-    lines.append("  - 排名 → 排行图(16)")
-    lines.append("  - 多维对比 → 透视表/雷达图(8)")
-    lines.append("  - 地理分布 → 行政区划图(9) 或 地图(17)")
+    if lang == "en":
+        lines.append("Selection guide:")
+        lines.append("  - Trend analysis -> Line chart (2)")
+        lines.append("  - Share analysis -> Pie chart (3)")
+        lines.append("  - Comparison -> Bar chart (1)")
+        lines.append("  - Funnel conversion -> Funnel chart (6)")
+        lines.append("  - KPI -> Numeric chart (10)")
+        lines.append("  - Ranking -> Rank chart (16)")
+        lines.append("  - Multi-dimensional -> Pivot table/Radar (8)")
+        lines.append("  - Geographic -> Region chart (9) or Map (17)")
+    else:
+        lines.append("选型指南：")
+        lines.append("  - 趋势分析 → 折线图(2)，showChartType=2 为面积/区域图")
+        lines.append("  - 占比分析 → 饼图(3)，showChartType 区分饼/环")
+        lines.append("  - 对比分析 → 柱图(1)，showChartType=2 为横向条形图")
+        lines.append("  - 转化漏斗 → 漏斗图(6)")
+        lines.append("  - KPI 数字 → 数值图(10)")
+        lines.append("  - 排名 → 排行图(16)")
+        lines.append("  - 多维对比 → 透视表/雷达图(8)")
+        lines.append("  - 地理分布 → 行政区划图(9) 或 地图(17)")
     return "\n".join(lines)
 
 

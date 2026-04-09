@@ -16,6 +16,7 @@
 """
 
 import argparse
+import os
 import sys
 import threading
 import time
@@ -27,6 +28,13 @@ if str(CURRENT_DIR) not in sys.path:
     sys.path.insert(0, str(CURRENT_DIR))
 
 from ai_utils import AI_CONFIG_PATH, get_token_stats
+from i18n import (
+    default_app_name,
+    default_business_context,
+    language_from_spec,
+    normalize_language,
+    set_runtime_language,
+)
 from script_locator import resolve_script
 from utils import now_iso, load_json
 
@@ -102,19 +110,21 @@ def _load_org_group_ids() -> str:
     return ""
 
 
-def normalize_spec(raw: dict) -> dict:
+def normalize_spec(raw: dict, default_language: str = "zh") -> dict:
     spec = dict(raw) if isinstance(raw, dict) else {}
     spec["schema_version"] = "workflow_requirement_v1"
 
     meta = spec.get("meta") if isinstance(spec.get("meta"), dict) else {}
+    lang = normalize_language(meta.get("language"), default=normalize_language(default_language))
     meta.setdefault("created_at", now_iso())
     meta.setdefault("source", "terminal_gemini_chat")
     meta.setdefault("conversation_summary", "")
+    meta["language"] = lang
     spec["meta"] = meta
 
     app = spec.get("app") if isinstance(spec.get("app"), dict) else {}
     app.setdefault("target_mode", "create_new")
-    app.setdefault("name", "CRM自动化应用")
+    app.setdefault("name", default_app_name(lang))
     app.setdefault("group_ids", _load_org_group_ids())
     app.setdefault("icon_mode", "gemini_match")
     app.setdefault("color_mode", "random")
@@ -132,7 +142,7 @@ def normalize_spec(raw: dict) -> dict:
     ws = spec.get("worksheets") if isinstance(spec.get("worksheets"), dict) else {}
     ws.setdefault("enabled", True)
     ws.setdefault("skip_existing", True)
-    ws.setdefault("business_context", "通用企业管理场景")
+    ws.setdefault("business_context", default_business_context(lang))
     ws.setdefault("requirements", "")
     icon_update = ws.get("icon_update") if isinstance(ws.get("icon_update"), dict) else {}
     icon_update.setdefault("enabled", True)
@@ -233,11 +243,17 @@ def main() -> None:
     parser.add_argument("--app-id", default="", help="已有应用 ID，跳过创建步骤")
     parser.add_argument("--force-replan", action="store_true", help="忽略 checkpoint，强制重新调用 AI 规划")
     parser.add_argument("--rollback-on-failure", action="store_true", help="执行失败时自动回滚删除本次创建的应用（仅 create_new 生效）")
+    parser.add_argument("--language", default="auto", choices=["auto", "zh", "en"], help="可选，覆盖 spec 的语言")
     args = parser.parse_args()
 
     pipeline_start = time.time()
     spec_path = Path(args.spec_json).expanduser().resolve()
-    spec = normalize_spec(load_json(spec_path))
+    default_lang = normalize_language("zh" if args.language == "auto" else args.language)
+    spec = normalize_spec(load_json(spec_path), default_language=default_lang)
+    lang = normalize_language(language_from_spec(spec) if args.language == "auto" else args.language)
+    spec["meta"]["language"] = lang
+    set_runtime_language(lang)
+    os.environ["HAP_LANGUAGE"] = lang
 
     if args.app_id.strip():
         spec["app"]["target_mode"] = "use_existing"
@@ -272,6 +288,7 @@ def main() -> None:
         dirs=_dirs(),
         force_replan=force_replan,
         rollback_on_failure=rollback_on_failure,
+        language=lang,
     )
 
     out = ctx.save_report()

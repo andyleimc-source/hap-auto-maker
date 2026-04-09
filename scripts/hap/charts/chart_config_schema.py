@@ -95,6 +95,7 @@ rangeType 时间范围：
 """
 
 from __future__ import annotations
+from i18n import normalize_language
 
 # ── 字段类型映射（controlType 值含义）───────────────────────────────────────────
 CONTROL_TYPE_NAMES: dict[int, str] = {
@@ -1189,14 +1190,28 @@ def get_schema(report_type: int) -> dict:
     return CHART_SCHEMA[report_type]
 
 
-def get_ai_prompt_section() -> str:
+def get_ai_prompt_section(language: str = "zh") -> str:
     """生成适合注入 AI prompt 的图表类型说明。"""
-    lines = ["可用统计图类型（reportType）："]
+    lang = normalize_language(language)
+    if lang == "en":
+        lines = ["Available chart types (reportType):"]
+    else:
+        lines = ["可用统计图类型（reportType）："]
     for rt, schema in sorted(CHART_SCHEMA.items()):
-        verified_tag = "【已验证】" if schema.get("verified") else ""
+        if lang == "en":
+            verified_tag = " [Verified]" if schema.get("verified") else ""
+        else:
+            verified_tag = "【已验证】" if schema.get("verified") else ""
         lines.append(f"  {rt:2d} = {schema['name']}{verified_tag} — {schema['description']}")
     lines.append("")
-    lines.append(AI_PLANNING_GUIDE)
+    if lang == "en":
+        lines.append(
+            "Hard constraints: for reportType 10/14/15 use empty xaxes.controlId; "
+            "for reportType 7/11 provide rightY and yreportType; yaxisList cannot be empty; "
+            "controlId must come from worksheet fields or system fields (ctime/utime/record_count)."
+        )
+    else:
+        lines.append(AI_PLANNING_GUIDE)
     return "\n".join(lines)
 
 
