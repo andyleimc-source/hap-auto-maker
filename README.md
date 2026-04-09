@@ -1,6 +1,6 @@
 # HAP Auto Maker
 
-基于 Gemini / DeepSeek + HAP 的自动化应用搭建引擎。
+基于多模型 AI（Gemini / DeepSeek / MiniMax / Kimi / 智谱 GLM / 豆包 / 千问）+ HAP 的自动化应用搭建引擎。
 通过自然语言描述需求，全自动完成从建表到上线的完整链路：**创建应用 → 工作表与字段 → 视图与筛选 → 统计图表页 → 智能机器人 → Mock 数据**，多步骤流水线并行执行，零人工干预。
 
 ---
@@ -53,31 +53,6 @@ python3 make_app.py --requirements "..." --no-execute
 python3 make_app.py --spec-json path/to/spec.json
 ```
 
-### 方式二：Claude Code Skills
-
-安装 [Claude Code](https://claude.ai/code) 后，在项目目录打开会话，直接使用以下指令：
-
-| 指令 | 说明 |
-|------|------|
-| `/hap-build` | **一键全流程搭建**（推荐入口） |
-| `/hap-modify` | 对已有应用进行增量调整（加字段、加视图等） |
-| `/hap-req` | 需求收集与结构化对话 |
-| `/hap-plan` | 预览工作表规划（AI 生成，可审查修改） |
-| `/hap-step` | 单独重跑任意一个步骤 |
-| `/hap-data` | 单独生成或补充测试数据 |
-| `/hap-view` | 配置视图与筛选规则 |
-| `/hap-chart` | 生成统计图表页 |
-| `/hap-role` | 配置角色与权限体系 |
-| `/hap-fix` | 故障诊断与修复建议 |
-
-**典型使用流程：**
-
-```
-/hap-build 帮我做一个项目管理应用，包含任务、成员和里程碑三张表
-```
-
----
-
 ## 🎬 核心特性
 
 - **Wave 并行引擎**：多步流水线分 Wave 并行调度，相互独立的步骤同时执行，大幅缩短总耗时。
@@ -108,7 +83,7 @@ python3 make_app.py --spec-json path/to/spec.json
 
 | 参数 | 用途 | 获取方式 |
 |------|------|------|
-| **Gemini API Key** | AI 规划引擎 | [Google AI Studio](https://aistudio.google.com/apikey) |
+| **AI API Key** | AI 规划引擎（支持 Gemini / DeepSeek / MiniMax / Kimi / 智谱 GLM / 豆包 / 千问） | 对应厂商开放平台控制台获取 |
 | **app_key / secret_key** | 调用明道云 OpenAPI | 组织管理 → 集成 → 其他 → 开放接口 → 密钥 |
 | **project_id** | 指定应用所属组织 | 组织管理 → 组织信息 → 编号 |
 | **owner_id** | 指定应用拥有者 | 个人头像 → 地址栏 `user_xxx` 的 `xxx` 部分 |
