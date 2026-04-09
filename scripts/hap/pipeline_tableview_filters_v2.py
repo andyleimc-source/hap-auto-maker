@@ -556,13 +556,15 @@ def save_view_color(app_id: str, worksheet_id: str, view_id: str, color_control_
 
 
 def save_view_group(app_id: str, worksheet_id: str, view_id: str, group_control_id: str,
+                    group_data_type: int,
                     auth_config_path: Path, dry_run: bool) -> dict:
     """保存分组配置。"""
     group_view_obj = {
         "viewId": view_id,
         "groupFilters": [{
             "controlId": group_control_id,
-            "values": [], "dataType": 11, "spliceType": 1, "filterType": 2,
+            # dataType 必须与真实单选字段类型一致；此前写死 11 会把 type=9 的视图保存坏。
+            "values": [], "dataType": int(group_data_type or 0), "spliceType": 1, "filterType": 2,
             "dateRange": 0, "minValue": "", "maxValue": "", "isGroup": True,
         }],
         "navShow": True,
@@ -681,11 +683,18 @@ def process_worksheet(
                 else:
                     print(f"    ⚠ color 保存失败 ({view_id}): {resp}")
             if plan.get("needGroup") and plan.get("groupControlId") and view_type == "0":
-                resp = save_view_group(app_id, ws_id, view_id, plan["groupControlId"], auth_config_path, dry_run)
-                if _ok(resp):
-                    saved += 1
+                group_data_type = _normalize_field_type(field_map.get(plan["groupControlId"], {}).get("type"))
+                if group_data_type not in (9, 11):
+                    print(f"    ⚠ group 跳过，字段类型非法 ({view_id}): {plan['groupControlId']} type={group_data_type}")
                 else:
-                    print(f"    ⚠ group 保存失败 ({view_id}): {resp}")
+                    resp = save_view_group(
+                        app_id, ws_id, view_id, plan["groupControlId"], group_data_type,
+                        auth_config_path, dry_run,
+                    )
+                    if _ok(resp):
+                        saved += 1
+                    else:
+                        print(f"    ⚠ group 保存失败 ({view_id}): {resp}")
             return saved
 
         needs_save = [p for p in view_plans if p.get("needNavGroup") or p.get("needFastFilters") or p.get("needColor") or p.get("needGroup")]

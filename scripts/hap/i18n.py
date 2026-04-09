@@ -51,6 +51,10 @@ def all_worksheets_section_name(lang: str) -> str:
     return "All Worksheets" if normalize_language(lang) == "en" else "全部"
 
 
+def default_all_view_name(lang: str | None = None) -> str:
+    return "All" if normalize_language(lang) == "en" else "全部"
+
+
 def system_default_view_names(lang: str | None = None) -> set[str]:
     names = {"全部", "All", "视图", "View", ""}
     if lang:

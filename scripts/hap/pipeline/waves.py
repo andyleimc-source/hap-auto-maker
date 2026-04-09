@@ -23,7 +23,14 @@ if str(_HAP_DIR) not in sys.path:
 
 from pipeline.step_runner import execute_step
 from pipeline.context import PipelineContext
-from i18n import default_app_name, default_business_context, normalize_language, set_runtime_language, system_default_view_names
+from i18n import (
+    default_all_view_name,
+    default_app_name,
+    default_business_context,
+    normalize_language,
+    set_runtime_language,
+    system_default_view_names,
+)
 from utils import load_json, write_json, now_ts, log_summary
 
 
@@ -669,6 +676,54 @@ def run_all_waves(
                 "worksheetName": str(_vr.get("worksheetName", "")).strip(),
                 "views": _compat_views,
             })
+
+        # 英文模式下，若某张表没有生成任何自定义视图，则至少把系统默认视图改名为 All，
+        # 避免界面残留中文「全部」。
+        if lang == "en":
+            try:
+                from pipeline_tableview_filters_v2 import fetch_worksheet_views, find_default_all_view
+                from executors.create_views_from_plan import update_default_view
+
+                _auth_data = load_json(Path(app_auth_json))
+                _auth_rows = _auth_data.get("data", [])
+                _auth_row = next(
+                    (r for r in _auth_rows if isinstance(r, dict) and r.get("appId") == app_id),
+                    _auth_rows[0] if _auth_rows else {},
+                )
+                _app_key = str(_auth_row.get("appKey", "")).strip()
+                _sign = str(_auth_row.get("sign", "")).strip()
+                _default_view_name = default_all_view_name(lang)
+
+                for _ws_item in _compat_worksheets:
+                    if _ws_item["views"]:
+                        continue
+                    _ws_id = _ws_item["worksheetId"]
+                    _raw_views = fetch_worksheet_views(_ws_id, _app_key, _sign)
+                    _default_view = find_default_all_view(_raw_views)
+                    if not _default_view:
+                        continue
+                    _rename_resp = update_default_view(
+                        app_id=app_id,
+                        worksheet_id=_ws_id,
+                        view_id=_default_view["viewId"],
+                        update_plan={"name": _default_view_name, "viewType": "0"},
+                        auth_config_path=config_web_auth,
+                        dry_run=execution_dry_run,
+                    )
+                    _state = int(_rename_resp.get("state", 0) or 0) if isinstance(_rename_resp, dict) else 0
+                    if execution_dry_run or _state == 1:
+                        _ws_item["views"].append({
+                            "name": _default_view_name,
+                            "viewType": "0",
+                            "createdViewId": _default_view["viewId"],
+                            "success": True,
+                        })
+                        print(f"  ✓ [{_ws_item['worksheetName']}] 默认视图已改名为 {_default_view_name}", flush=True)
+                    else:
+                        print(f"  ⚠ [{_ws_item['worksheetName']}] 默认视图改名失败: {_rename_resp}", flush=True)
+            except Exception as _default_view_exc:
+                print(f"  ⚠ 英文默认视图改名失败（非致命）: {_default_view_exc}", flush=True)
+
         write_json(_view_result_path, {
             "apps": [{
                 "appId": app_id,
