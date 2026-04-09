@@ -147,10 +147,10 @@ VIEW_REGISTRY = {
         "name": "画廊视图",
         "category": "basic",
         "verified": True,
-        "requires_fields": [],
+        "requires_fields": ["image_attachment"],
         "post_create": None,
         "auto_complete": None,
-        "doc": "卡片画廊。可设 coverCid（顶层）为图片/附件字段。advancedSetting.coverstyle 默认 '{\"position\":\"2\"}'。",
+        "doc": "卡片画廊。需要图片相关附件字段(type=14)，字段名含图片/照片/头像等关键词。排除文档/视频类附件。",
         "advancedSetting_keys": {
             "viewtitle": "标题字段 ID",
             "abstract": "摘要字段 ID",
@@ -267,33 +267,6 @@ VIEW_REGISTRY = {
             "showControls": "甘特条上显示的字段 ID 数组",
         },
     },
-    6: {
-        "name": "详情视图",
-        "category": "advanced",
-        "verified": True,
-        "requires_fields": [],
-        "post_create": None,
-        "auto_complete": None,
-        "doc": "单条记录详情/表单视图。适合数据录入场景。支持 PC 多列布局（showpc+showRows）。",
-        "advancedSetting_keys": {
-            "showtitle": "'0'=隐藏标题, ''=显示",
-            "showtoolbar": "'0'=隐藏工具栏, ''=显示",
-            "viewtitle": "标题字段 ID",
-            "abstract": "摘要字段 ID",
-            "cardwidth": "卡片宽度: '1'-'4'",
-            "maxlinenum": "最大行数: 2/3",
-            "refreshtime": "自动刷新秒数: '60'",
-            "colorid": "记录颜色字段 ID",
-            "coloritems": "颜色映射",
-            "colortype": "'0'=字段颜色, '1'=自定义, '2'=其他",
-            "enablerules": "'1'=启用颜色规则",
-            "detailbtns": "详情页按钮 JSON",
-            "listbtns": "列表操作按钮 JSON",
-        },
-        "top_level_extra": {
-            "childType": "1=单条详情, 2=列表+详情",
-        },
-    },
     7: {
         "name": "资源视图",
         "category": "advanced",
@@ -366,5 +339,5 @@ VIEW_REGISTRY = {
 ALLOWED_VIEW_TYPES: set[str] = {str(k) for k in VIEW_REGISTRY}
 VIEW_TYPE_NAMES: dict[int, str] = {k: v["name"] for k, v in VIEW_REGISTRY.items()}
 
-# AI 规划时应使用的视图子集（全部 9 种）
+# AI 规划时应使用的视图子集（全部 8 种，不含已移除的 viewType=6 详情视图）
 PLANNABLE_VIEWS: set[int] = set(VIEW_REGISTRY.keys())

@@ -26,6 +26,7 @@ from typing import Dict, List, Optional, Set, Tuple
 import os
 
 import requests
+from list_app_worksheets import fetch_worksheets
 from utils import latest_file, load_json, log_summary
 
 BASE_DIR = Path(__file__).resolve().parents[3]
@@ -764,6 +765,20 @@ def main() -> None:
     parser.add_argument("--page-registry", default="", help="page_registry.json 路径")
     parser.add_argument("--app-name", default="", help="应用名称（图表规划用）")
     parser.add_argument("--semaphore-value", type=int, default=1000, help="Gemini 并发限制（由 waves.py 传入）")
+    skip_existing_group = parser.add_mutually_exclusive_group()
+    skip_existing_group.add_argument(
+        "--skip-existing",
+        dest="skip_existing",
+        action="store_true",
+        help="创建前先检查现有工作表；若同名已存在则跳过创建并复用已有 worksheetId（默认开启）",
+    )
+    skip_existing_group.add_argument(
+        "--no-skip-existing",
+        dest="skip_existing",
+        action="store_false",
+        help="即使存在同名工作表也继续尝试创建",
+    )
+    parser.set_defaults(skip_existing=True)
     args = parser.parse_args()
 
     # 加载 page_registry（图表回调所需）
@@ -798,6 +813,14 @@ def main() -> None:
     worksheets = plan.get("worksheets", [])
     relationship_rules = build_relationship_rules(plan)
     normalized_relations = normalize_relation_plan(worksheets, relationship_rules)
+    existing_worksheets = [] if args.dry_run else fetch_worksheets(app_key=app_key, sign=sign)
+    existing_ws_map: Dict[str, dict] = {}
+    for ws_info in existing_worksheets:
+        if not isinstance(ws_info, dict):
+            continue
+        ws_name = str(ws_info.get("workSheetName", "")).strip()
+        if ws_name and ws_name not in existing_ws_map:
+            existing_ws_map[ws_name] = ws_info
 
     order = plan.get("creation_order", [])
     if isinstance(order, list) and order:
@@ -820,6 +843,7 @@ def main() -> None:
         name = str(ws.get("name", "")).strip() or "未命名工作表"
         fields = ws.get("fields", [])
         normal_fields, relation_fields, deferred_fields = split_fields(fields if isinstance(fields, list) else [])
+        existing_info = existing_ws_map.get(name)
         preview.append(
             {
                 "name": name,
@@ -827,6 +851,8 @@ def main() -> None:
                 "deferred_fields_count": len(deferred_fields),
                 "relation_fields_in_plan_count": len(relation_fields),
                 "relation_fields_to_create_count": len(relation_plan_by_source.get(name, [])),
+                "existing_worksheet_id": str(existing_info.get("workSheetId", "")).strip() if existing_info else "",
+                "will_skip_existing": bool(args.skip_existing and existing_info),
             }
         )
 
@@ -849,12 +875,23 @@ def main() -> None:
     name_to_id: Dict[str, str] = {}
     create_results = []
     relations_todo = []
+    skipped_results = []
 
     # Phase 1: 并发创建基础工作表（不含 Relation 和 deferred 字段）
     def _create_one_ws(ws):
         ws_name = str(ws.get("name", "")).strip() or "未命名工作表"
         fields = ws.get("fields", [])
         normal_fields, relation_fields, deferred_fields = split_fields(fields if isinstance(fields, list) else [])
+        existing_info = existing_ws_map.get(ws_name)
+        if args.skip_existing and existing_info:
+            worksheet_id = str(existing_info.get("workSheetId", "")).strip()
+            if not worksheet_id:
+                raise RuntimeError(f"已有工作表缺少 workSheetId: {ws_name} / {existing_info}")
+            return ws_name, worksheet_id, {
+                "success": True,
+                "skipped": True,
+                "existingWorksheet": existing_info,
+            }, relation_fields, deferred_fields
         result = create_worksheet(args.base_url, headers, ws_name, normal_fields)
         worksheet_id = result.get("data", {}).get("worksheetId")
         if not worksheet_id:
@@ -874,11 +911,30 @@ def main() -> None:
                     ftype = str(f.get("type", "")).strip()
                     if fname:
                         all_fields.append(f"{fname}({ftype})" if ftype else fname)
-            log_summary(f"✓ 工作表「{ws_name}」已创建（{len(all_fields)} 个字段）")
-            if all_fields:
-                log_summary(f"  {' | '.join(all_fields)}")
+            is_skipped = bool(result.get("skipped"))
+            if is_skipped:
+                print(f"[跳过] 工作表「{ws_name}」已存在，复用 worksheetId={worksheet_id}")
+                log_summary(f"[跳过] 工作表「{ws_name}」已存在，复用已有工作表")
+                skipped_results.append(
+                    {
+                        "name": ws_name,
+                        "worksheetId": worksheet_id,
+                        "existingWorksheet": result.get("existingWorksheet", {}),
+                    }
+                )
+            else:
+                log_summary(f"✓ 工作表「{ws_name}」已创建（{len(all_fields)} 个字段）")
+                if all_fields:
+                    log_summary(f"  {' | '.join(all_fields)}")
             name_to_id[ws_name] = worksheet_id
-            create_results.append({"name": ws_name, "worksheetId": worksheet_id, "result": result})
+            create_results.append(
+                {
+                    "name": ws_name,
+                    "worksheetId": worksheet_id,
+                    "skipped": is_skipped,
+                    "result": result,
+                }
+            )
             relations_todo.append({
                 "name": ws_name,
                 "worksheetId": worksheet_id,
@@ -992,7 +1048,10 @@ def main() -> None:
         "app_id": app_id,
         "plan_json": str(plan_path),
         "app_auth_json": str(auth_path),
+        "skip_existing": bool(args.skip_existing),
+        "existing_worksheets_count": len(existing_ws_map),
         "created_worksheets": create_results,
+        "skipped_worksheets": skipped_results,
         "normalized_relations": normalized_relations,
         "relation_updates": relation_results,
         "relation_verification": verification,

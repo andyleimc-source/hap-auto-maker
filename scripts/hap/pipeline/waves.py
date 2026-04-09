@@ -307,6 +307,10 @@ def run_all_waves(
             "--auth-config", str(config_web_auth),
             "--output", str(page_registry_path),
         ]
+        if bool(pages_cfg.get("skip_existing", True)):
+            cmd_pages_early.append("--skip-existing")
+        else:
+            cmd_pages_early.append("--no-skip-existing")
         if execution_dry_run:
             cmd_pages_early.append("--dry-run")
         ok_pages_early = _exec(14, "pages_early", "提前创建统计分析 Pages", cmd_pages_early, uses_gemini=True)
@@ -346,6 +350,10 @@ def run_all_waves(
             "--app-auth-json", str(app_auth_json),
             "--semaphore-value", str(_sem_value_2b),
         ]
+        if bool(ws.get("skip_existing", True)):
+            cmd2b.append("--skip-existing")
+        else:
+            cmd2b.append("--no-skip-existing")
         if page_registry_output:
             cmd2b.extend(["--page-registry", page_registry_output])
         import os
@@ -382,64 +390,133 @@ def run_all_waves(
     # 提前初始化 Wave 3.5 和 Wave 4 共用的目录变量
     view_create_result_dir: Path = dirs["view_create_result_dir"]
 
-    # Wave 3.5: 单表视图创建（每张表字段完成后立即触发）
+    # Wave 3.5: 单表视图创建（使用新推荐+配置+创建流水线，逐表并行）
     if views.get("enabled", True) and worksheet_create_result_path and not execution_dry_run:
-        from planners.plan_worksheet_views_gemini import plan_and_create_views_for_ws
-        from delete_default_views import fetch_views
-        from ai_utils import AI_CONFIG_PATH as _VIEW_AI_CFG_PATH, load_ai_config as _view_load_ai, get_ai_client as _view_get_client
+        from planners.view_recommender import recommend_views
+        from planners.view_configurator import configure_single_view
+        from planners.plan_worksheet_views_gemini import fetch_controls, simplify_field
+        from executors.create_views_from_plan import create_single_view_from_config
+        from ai_utils import load_ai_config as _view_load_ai
 
         print(f"\n-- Wave 3.5: 逐表创建视图 --- 总计 {time.time()-pipeline_start:.0f}s", flush=True)
 
         ws_create_data = load_json(Path(worksheet_create_result_path))
         _name_to_id = ws_create_data.get("name_to_worksheet_id", {})
 
-        app_auth_data = load_json(Path(app_auth_json))
-        _auth_rows = app_auth_data.get("data", [])
-        _auth_row = next((r for r in _auth_rows if isinstance(r, dict) and r.get("appId") == app_id), _auth_rows[0] if _auth_rows else {})
-        _app_key = str(_auth_row.get("appKey", "")).strip()
-        _app_sign = str(_auth_row.get("sign", "")).strip()
         _app_name_for_views = str(app.get("name", "")).strip()
-
-        _view_ai_config = _view_load_ai(_VIEW_AI_CFG_PATH)
-        _view_client = _view_get_client(_view_ai_config)
-        _view_model = _view_ai_config["model"]
+        _app_background = str(spec.get("worksheets", {}).get("business_context", "通用企业管理场景"))
+        _view_ai_config = _view_load_ai()
+        _all_ws_names = list(_name_to_id.keys())
 
         _view_results_all = []
         _view_lock = threading.Lock()
 
         def _do_views_for_ws(ws_name: str, ws_id: str):
+            """单表视图创建：推荐 → 配置 → 创建。"""
+            # 1. 拉取字段
             try:
-                ws_views = fetch_views(ws_id, _app_key, _app_sign)
-            except Exception:
-                ws_views = []
-            default_view_id = ""
-            for v in ws_views:
-                v_name = str(v.get("name", "")).strip()
-                if v_name in ("全部", "视图", ""):
-                    default_view_id = str(v.get("viewId", "") or v.get("id", "")).strip()
-                    break
-            # 兜底：未匹配到时取第一个视图（HAP 新建表必定有一个默认视图）
-            if not default_view_id and ws_views:
-                default_view_id = str(ws_views[0].get("viewId", "") or ws_views[0].get("id", "")).strip()
+                schema = fetch_controls(ws_id, config_web_auth)
+            except Exception as exc:
+                print(f"  ✗ [{ws_name}] 拉取字段失败: {exc}", file=sys.stderr)
+                return
 
+            raw_fields = schema.get("fields", [])
+            fields = [simplify_field(f) for f in raw_fields if isinstance(f, dict)]
+            field_ids = {str(f.get("id", "")).strip() for f in fields if str(f.get("id", "")).strip()}
+            other_names = [n for n in _all_ws_names if n != ws_name]
+
+            # 2. AI 推荐（受 Gemini 信号量限制）
             with gemini_semaphore:
-                r = plan_and_create_views_for_ws(
-                    client=_view_client,
-                    model=_view_model,
-                    app_id=app_id,
+                rec = recommend_views(
                     app_name=_app_name_for_views,
-                    worksheet_id=ws_id,
+                    app_background=_app_background,
                     worksheet_name=ws_name,
-                    default_view_id=default_view_id,
+                    worksheet_id=ws_id,
+                    fields=fields,
+                    other_worksheet_names=other_names,
+                    ai_config=_view_ai_config,
+                )
+
+            rec_views = rec.get("views", [])
+            if not rec_views:
+                log_summary(f"  [{ws_name}] 无推荐视图，跳过")
+                with _view_lock:
+                    _view_results_all.append({
+                        "worksheetId": ws_id, "worksheetName": ws_name,
+                        "new_views_results": [],
+                    })
+                return
+
+            # 3. 并行配置每个视图（受 Gemini 信号量限制）
+            configs = []
+            def _configure_one(v):
+                with gemini_semaphore:
+                    return configure_single_view(v, ws_name, fields, field_ids, _view_ai_config)
+
+            with ThreadPoolExecutor(max_workers=min(len(rec_views), 5)) as cfg_pool:
+                cfg_futures = {cfg_pool.submit(_configure_one, v): v for v in rec_views}
+                for fut in cfg_futures:
+                    v = cfg_futures[fut]
+                    try:
+                        cfg = fut.result()
+                        if cfg:
+                            configs.append(cfg)
+                        else:
+                            print(f"  ✗ [{ws_name}] 配置失败: {v.get('name', '')}", file=sys.stderr)
+                    except Exception as exc:
+                        print(f"  ✗ [{ws_name}] 配置异常 {v.get('name', '')}: {exc}", file=sys.stderr)
+
+            if not configs:
+                log_summary(f"  [{ws_name}] 所有视图配置失败，跳过创建")
+                with _view_lock:
+                    _view_results_all.append({
+                        "worksheetId": ws_id, "worksheetName": ws_name,
+                        "new_views_results": [],
+                    })
+                return
+
+            # 4. 并行创建每个视图
+            new_views_results = []
+            def _create_one(cfg):
+                view_data = {
+                    "name": cfg.get("name", ""),
+                    "viewType": str(cfg.get("viewType", "0")),
+                    "displayControls": cfg.get("displayControls", []),
+                    "viewControl": cfg.get("viewControl", ""),
+                    "coverCid": cfg.get("coverCid", ""),
+                    "advancedSetting": cfg.get("advancedSetting", {}),
+                    "postCreateUpdates": cfg.get("postCreateUpdates", []),
+                }
+                return create_single_view_from_config(
+                    worksheet_id=ws_id,
+                    app_id=app_id,
+                    view_config=view_data,
                     auth_config_path=config_web_auth,
+                    ws_fields=raw_fields,
                     dry_run=execution_dry_run,
                 )
-            new_count = len(r.get("new_views_results", []))
-            default_ok = 1 if isinstance(r.get("default_view_result"), dict) and r["default_view_result"].get("success") else 0
-            total_views = new_count + default_ok
-            log_summary(f"✓「{ws_name}」→ {total_views} 个视图已创建")
+
+            with ThreadPoolExecutor(max_workers=min(len(configs), 10)) as create_pool:
+                create_futures = {create_pool.submit(_create_one, c): c for c in configs}
+                for fut in create_futures:
+                    c = create_futures[fut]
+                    try:
+                        cr = fut.result()
+                        new_views_results.append(cr)
+                        status = "✓" if cr.get("success") else "✗"
+                        print(f"  {status} [{ws_name}] {c.get('name', '')} (viewType={c.get('viewType', '')})", file=sys.stderr)
+                    except Exception as exc:
+                        new_views_results.append({"name": c.get("name", ""), "success": False, "error": str(exc)})
+                        print(f"  ✗ [{ws_name}] 创建异常 {c.get('name', '')}: {exc}", file=sys.stderr)
+
+            ok_count = sum(1 for r in new_views_results if r.get("success"))
+            log_summary(f"✓「{ws_name}」→ {ok_count}/{len(new_views_results)} 个视图已创建")
             with _view_lock:
-                _view_results_all.append(r)
+                _view_results_all.append({
+                    "worksheetId": ws_id,
+                    "worksheetName": ws_name,
+                    "new_views_results": new_views_results,
+                })
 
         with ThreadPoolExecutor(max_workers=max(1, len(_name_to_id))) as pool:
             futures = [pool.submit(_do_views_for_ws, wn, wi) for wn, wi in _name_to_id.items()]
@@ -451,24 +528,16 @@ def run_all_waves(
 
         view_create_result_dir.mkdir(parents=True, exist_ok=True)
         _view_result_path = view_create_result_dir / f"view_create_result_{app_id}_{now_ts()}.json"
-        # 转换为兼容旧格式（load_view_targets 期望 worksheets[].views[].createdViewId）
+        # 转换为兼容格式（下游 load_view_targets 期望 worksheets[].views[].createdViewId）
         _compat_worksheets = []
         for _vr in _view_results_all:
             _compat_views = []
-            _dvr = _vr.get("default_view_result")
-            if isinstance(_dvr, dict) and _dvr.get("viewId"):
-                _compat_views.append({
-                    "name": str(_dvr.get("name", "")).strip(),
-                    "viewType": "0",
-                    "createdViewId": str(_dvr.get("viewId", "")).strip(),
-                    "success": bool(_dvr.get("success")),
-                })
             for _nvr in _vr.get("new_views_results", []):
                 if isinstance(_nvr, dict):
                     _compat_views.append({
                         "name": str(_nvr.get("name", "")).strip(),
                         "viewType": str(_nvr.get("viewType", "")).strip(),
-                        "createdViewId": str(_nvr.get("createdViewId", "")).strip(),
+                        "createdViewId": str(_nvr.get("viewId", "")).strip(),
                         "success": bool(_nvr.get("success")),
                     })
             _compat_worksheets.append({

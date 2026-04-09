@@ -502,6 +502,89 @@ def update_default_view(
     return post_web_api(SAVE_VIEW_URL, payload, auth_config_path, app_id=app_id, worksheet_id=worksheet_id, view_id=view_id)
 
 
+def create_single_view_from_config(
+    worksheet_id: str,
+    app_id: str,
+    view_config: dict,
+    auth_config_path: Path,
+    ws_fields: list | None = None,
+    dry_run: bool = False,
+) -> dict:
+    """创建单个视图。供 pipeline_views.py 并行调用。
+
+    Args:
+        worksheet_id: 工作表 ID
+        app_id: 应用 ID
+        view_config: {name, viewType, displayControls, viewControl, coverCid, advancedSetting, postCreateUpdates}
+        auth_config_path: auth_config.py 路径
+        ws_fields: 工作表原始字段列表（用于 auto_complete_post_updates）
+        dry_run: 是否仅演练
+
+    Returns:
+        {"success": bool, "viewId": str, "name": str, "viewType": str,
+         "error": str, "updates": list, "createResponse": dict}
+    """
+    if ws_fields is None:
+        ws_fields = []
+
+    create_payload = build_create_payload(app_id, worksheet_id, view_config)
+    create_resp = save_view(create_payload, auth_config_path, app_id, worksheet_id, dry_run)
+
+    result: dict = {
+        "name": create_payload.get("name", ""),
+        "viewType": str(create_payload.get("viewType", "")),
+        "createResponse": create_resp,
+        "viewId": "",
+        "updates": [],
+        "success": False,
+        "error": "",
+    }
+
+    # 提取 viewId
+    created_view_id = ""
+    final_success = False
+    if dry_run:
+        created_view_id = "__DRY_RUN_VIEW_ID__"
+        final_success = True
+    else:
+        if isinstance(create_resp, dict) and int(create_resp.get("state", 0) or 0) == 1:
+            created_view_id = str((create_resp.get("data") or {}).get("viewId", "")).strip()
+            final_success = bool(created_view_id)
+        if not final_success:
+            result["error"] = f"创建视图失败: state={create_resp.get('state') if isinstance(create_resp, dict) else create_resp}"
+
+    result["viewId"] = created_view_id
+
+    # 构建 postCreateUpdates
+    view_type_int = int(str(view_config.get("viewType", "0")).strip() or "0")
+    ai_updates = view_config.get("postCreateUpdates")
+    if not isinstance(ai_updates, list):
+        ai_updates = []
+    view_with_ws = dict(view_config)
+    view_with_ws["_worksheetId"] = worksheet_id
+    auto_updates = auto_complete_post_updates(view_with_ws, ws_fields)
+    post_updates = merge_post_updates(ai_updates, auto_updates, view_type_int)
+
+    if created_view_id and final_success:
+        for upd in post_updates:
+            if not isinstance(upd, dict):
+                continue
+            upd_payload = build_update_payload(app_id, worksheet_id, created_view_id, upd)
+            skip_reason = str(upd_payload.pop("_skip_reason", "")).strip()
+            if skip_reason:
+                result["updates"].append({"payload": upd_payload, "skipped": True, "reason": skip_reason})
+                continue
+            upd_resp = save_view(upd_payload, auth_config_path, app_id, worksheet_id, dry_run)
+            result["updates"].append({"payload": upd_payload, "response": upd_resp})
+            if not dry_run:
+                ok = isinstance(upd_resp, dict) and int(upd_resp.get("state", 0) or 0) == 1
+                if not ok:
+                    final_success = False
+
+    result["success"] = final_success
+    return result
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="执行视图规划 JSON，批量创建工作表视图")
     parser.add_argument("--plan-json", default="", help="视图规划 JSON 路径（默认取最新）")

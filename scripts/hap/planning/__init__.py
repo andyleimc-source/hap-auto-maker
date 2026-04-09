@@ -6,6 +6,6 @@
 模块:
   - constraints.py       — 共用约束生成器（字段校验、类型匹配）
   - worksheet_planner.py — 工作表+字段规划（利用 worksheets/ 注册中心）
-  - view_planner.py      — 视图规划+配置（利用 views/ 注册中心）
   - chart_planner.py     — 统计图规划（利用 charts/ 注册中心）
+  视图规划已迁移至 planners/view_recommender.py + planners/view_configurator.py
 """

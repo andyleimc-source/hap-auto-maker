@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import auth_retry
+import requests
 from ai_utils import (
     AI_CONFIG_PATH,
     create_generation_config,
@@ -41,8 +42,10 @@ from planning.page_planner import build_pages_prompt, validate_pages_plan
 from utils import load_json, log_summary, now_ts, write_json
 
 BASE_DIR = Path(__file__).resolve().parents[3]
+APP_AUTH_DIR = BASE_DIR / "data" / "outputs" / "app_authorizations"
 
 # API 端点
+V3_APP_URL = "https://api.mingdao.com/v3/app"
 GET_APP_URL = "https://www.mingdao.com/api/HomeApp/GetApp"
 GET_WORKSHEET_INFO_URL = "https://www.mingdao.com/api/Worksheet/GetWorksheetInfo"
 ADD_WORKSHEET_URL = "https://www.mingdao.com/api/AppManagement/AddWorkSheet"
@@ -119,6 +122,62 @@ def fetch_app_info(app_id: str, auth_config_path: Path) -> Dict[str, Any]:
         "projectId": project_id,
         "appSectionId": app_section_id,
     }
+
+
+def resolve_app_api_auth(app_id: str) -> tuple[str, str]:
+    """从 app_authorize_*.json 中解析指定 appId 的 v3 凭证。"""
+    files = sorted(APP_AUTH_DIR.glob("app_authorize_*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    for path in files:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        for row in data.get("data") or []:
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("appId", "")).strip() != app_id:
+                continue
+            app_key = str(row.get("appKey", "")).strip()
+            sign = str(row.get("sign", "")).strip()
+            if app_key and sign:
+                return app_key, sign
+    raise FileNotFoundError(f"未找到 appId={app_id} 的授权信息（目录: {APP_AUTH_DIR}）")
+
+
+def fetch_existing_pages_v3(app_id: str) -> Dict[str, str]:
+    """通过 v3/app 查询现有自定义页，并返回 pageName -> pageId。
+
+    真实链路中，v3/app.sections[].items 里 type=1 表示自定义页面。
+    """
+    app_key, sign = resolve_app_api_auth(app_id)
+    headers = {
+        "HAP-Appkey": app_key,
+        "HAP-Sign": sign,
+        "Accept": "application/json, text/plain, */*",
+    }
+    resp = requests.get(V3_APP_URL, headers=headers, timeout=30, proxies={})
+    resp.raise_for_status()
+    body = resp.json()
+    if not body.get("success"):
+        raise RuntimeError(f"v3/app 查询失败: {body}")
+
+    pages: Dict[str, str] = {}
+
+    def walk(section: dict) -> None:
+        for item in section.get("items", []) or []:
+            item_type = int(item.get("type", 0) or 0)
+            if item_type != 1:
+                continue
+            page_name = str(item.get("name", "") or item.get("workSheetName", "")).strip()
+            page_id = str(item.get("id", "") or item.get("pageId", "") or item.get("workSheetId", "")).strip()
+            if page_name and page_id and page_name not in pages:
+                pages[page_name] = page_id
+        for child in section.get("childSections", []) or []:
+            walk(child)
+
+    for section in body.get("data", {}).get("sections", []) or []:
+        walk(section)
+    return pages
 
 
 # ---------------------------------------------------------------------------
@@ -297,6 +356,12 @@ def main() -> None:
     parser.add_argument("--auth-config", required=True, help="auth_config.py 路径")
     parser.add_argument("--output", default="", help="输出 page_registry.json 路径")
     parser.add_argument("--dry-run", action="store_true", help="仅规划，不实际创建 Page")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--skip-existing", dest="skip_existing", action="store_true",
+                       help="若页面已存在则跳过 AddWorkSheet（默认）")
+    group.add_argument("--no-skip-existing", dest="skip_existing", action="store_false",
+                       help="即使页面已存在也继续调用 AddWorkSheet")
+    parser.set_defaults(skip_existing=True)
     args = parser.parse_args()
 
     app_id = args.app_id.strip()
@@ -326,6 +391,12 @@ def main() -> None:
     if not project_id or not app_section_id:
         print("✗ 缺少 projectId 或 appSectionId，无法创建 Page")
         sys.exit(1)
+
+    existing_pages: Dict[str, str] = {}
+    if args.skip_existing and not args.dry_run:
+        print(f"[2.5/4] 通过 v3/app 查询已有 Pages...")
+        existing_pages = fetch_existing_pages_v3(resolved_app_id)
+        print(f"  已发现 {len(existing_pages)} 个已有 Page")
 
     # Step 3: AI 规划 Pages
     print(f"[3/4] AI 规划 Pages...")
@@ -364,6 +435,16 @@ def main() -> None:
             pages_result.append(page_entry)
             continue
 
+        existing_page_id = existing_pages.get(page_name, "")
+        if existing_page_id and args.skip_existing:
+            page_entry["pageId"] = existing_page_id
+            page_entry["skipped"] = True
+            page_entry["status"] = "skipped_existing"
+            print(f"  [跳过] 页面「{page_name}」已存在，pageId={existing_page_id}")
+            log_summary(f"[跳过] 页面「{page_name}」已存在")
+            pages_result.append(page_entry)
+            continue
+
         # 创建 Page
         try:
             print(f"  [{i}/{len(planned_pages)}] 创建 Page: {page_name}...")
@@ -372,6 +453,7 @@ def main() -> None:
                 page_name, icon, icon_color, auth_config_path,
             )
             page_entry["pageId"] = page_id
+            page_entry["skipped"] = False
             print(f"    ✓ pageId={page_id}")
             log_summary(f"✓ Page「{page_name}」已创建")
         except Exception as exc:
