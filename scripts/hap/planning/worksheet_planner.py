@@ -319,9 +319,9 @@ def build_fields_prompt_per_ws(
         existing_fields: 该表已有的字段（核心字段+关联字段）[{name, type}]
         all_worksheets_summary: 全局表名列表 [{name, purpose}]，轻量上下文
     """
+    lang = normalize_language(language)
     field_type_enum = build_field_type_enum()
     field_type_section = build_field_type_prompt_section(language=lang)
-    lang = normalize_language(language)
 
     existing_lines = "\n".join(
         f"  - {f['name']}（{f.get('type', '未知')}）"
