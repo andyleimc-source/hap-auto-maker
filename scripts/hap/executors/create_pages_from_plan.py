@@ -23,19 +23,22 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any, List
+from typing import Any, Dict, List
 
 import auth_retry
+import requests
 from utils import load_json, write_json
 
 BASE_DIR = Path(__file__).resolve().parents[3]
 CURRENT_DIR = Path(__file__).resolve().parent
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
+APP_AUTH_DIR = OUTPUT_ROOT / "app_authorizations"
 PAGE_PLAN_DIR = OUTPUT_ROOT / "page_plans"
 PAGE_CREATE_DIR = OUTPUT_ROOT / "page_create_results"
 LOG_DIR = BASE_DIR / "data" / "logs"
 AUTH_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "auth_config.py"
 
+V3_APP_URL = "https://api.mingdao.com/v3/app"
 ADD_WORKSHEET_URL = "https://www.mingdao.com/api/AppManagement/AddWorkSheet"
 SAVE_PAGE_URL = "https://api.mingdao.com/report/custom/savePage"
 GET_PAGE_URL = "https://api.mingdao.com/report/custom/getPage"
@@ -91,6 +94,62 @@ def resolve_plan_path(value: str) -> Path:
     if files:
         return files[0].resolve()
     raise FileNotFoundError(f"未找到规划文件（目录: {PAGE_PLAN_DIR}）")
+
+
+def resolve_app_api_auth(app_id: str) -> tuple[str, str]:
+    """从 app_authorize_*.json 中解析指定 appId 的 v3 凭证。"""
+    files = sorted(APP_AUTH_DIR.glob("app_authorize_*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    for path in files:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        for row in data.get("data") or []:
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("appId", "")).strip() != app_id:
+                continue
+            app_key = str(row.get("appKey", "")).strip()
+            sign = str(row.get("sign", "")).strip()
+            if app_key and sign:
+                return app_key, sign
+    raise FileNotFoundError(f"未找到 appId={app_id} 的授权信息（目录: {APP_AUTH_DIR}）")
+
+
+def fetch_existing_pages_v3(app_id: str) -> Dict[str, str]:
+    """通过 v3/app 查询现有自定义页，并返回 pageName -> pageId。
+
+    真实链路中，v3/app.sections[].items 里 type=1 表示自定义页面。
+    """
+    app_key, sign = resolve_app_api_auth(app_id)
+    headers = {
+        "HAP-Appkey": app_key,
+        "HAP-Sign": sign,
+        "Accept": "application/json, text/plain, */*",
+    }
+    resp = requests.get(V3_APP_URL, headers=headers, timeout=30, proxies={})
+    resp.raise_for_status()
+    body = resp.json()
+    if not body.get("success"):
+        raise RuntimeError(f"v3/app 查询失败: {body}")
+
+    pages: Dict[str, str] = {}
+
+    def walk(section: dict) -> None:
+        for item in section.get("items", []) or []:
+            item_type = int(item.get("type", 0) or 0)
+            if item_type != 1:
+                continue
+            page_name = str(item.get("name", "") or item.get("workSheetName", "")).strip()
+            page_id = str(item.get("id", "") or item.get("pageId", "") or item.get("workSheetId", "")).strip()
+            if page_name and page_id and page_name not in pages:
+                pages[page_name] = page_id
+        for child in section.get("childSections", []) or []:
+            walk(child)
+
+    for section in body.get("data", {}).get("sections", []) or []:
+        walk(section)
+    return pages
 
 
 # ---------------------------------------------------------------------------
@@ -217,6 +276,12 @@ def main() -> None:
     parser.add_argument("--auth-config", default=str(AUTH_CONFIG_PATH), help="auth_config.py 路径")
     parser.add_argument("--output", default="", help="结果 JSON 输出路径（可选）")
     parser.add_argument("--dry-run", action="store_true", help="仅演练，不实际创建 Page 和图表")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--skip-existing", dest="skip_existing", action="store_true",
+                       help="若页面已存在则跳过 AddWorkSheet（默认）")
+    group.add_argument("--no-skip-existing", dest="skip_existing", action="store_false",
+                       help="即使页面已存在也继续调用 AddWorkSheet")
+    parser.set_defaults(skip_existing=True)
     args = parser.parse_args()
 
     plan_path = resolve_plan_path(args.plan_json)
@@ -244,6 +309,11 @@ def main() -> None:
     log.log(f"应用: {app_name} ({app_id})")
     log.log(f"规划文件: {plan_path}")
     log.log(f"准备创建 {len(pages)} 个 Page，dry-run={args.dry_run}\n")
+
+    existing_pages: Dict[str, str] = {}
+    if args.skip_existing and not args.dry_run:
+        existing_pages = fetch_existing_pages_v3(app_id)
+        log.log(f"通过 v3/app 检测到 {len(existing_pages)} 个已有 Page")
 
     results = []
     success_count = 0
@@ -276,28 +346,44 @@ def main() -> None:
             results.append(page_result)
             continue
 
-        # Step A: 创建 Page
-        try:
-            log.log("  [A] 创建 Page...")
-            page_id = create_page(app_id, app_section_id, project_id,
-                                  page_name, icon, icon_color, auth_config_path)
-            log.log(f"  [A] OK  pageId={page_id}")
+        page_id = ""
+        skipped_existing = False
+        existing_page_id = existing_pages.get(page_name, "")
+        if existing_page_id and args.skip_existing:
+            page_id = existing_page_id
+            skipped_existing = True
             page_result["pageId"] = page_id
-        except Exception as exc:
-            log.log(f"  [A] 失败: {exc}")
-            page_result["status"] = "error_create_page"
-            page_result["error"] = str(exc)
-            results.append(page_result)
-            continue
+            page_result["skipped"] = True
+            page_result["createStatus"] = "skipped_existing"
+            log.log(f"  [跳过] 页面「{page_name}」已存在，pageId={page_id}")
+        else:
+            # Step A: 创建 Page
+            try:
+                log.log("  [A] 创建 Page...")
+                page_id = create_page(app_id, app_section_id, project_id,
+                                      page_name, icon, icon_color, auth_config_path)
+                log.log(f"  [A] OK  pageId={page_id}")
+                page_result["pageId"] = page_id
+                page_result["skipped"] = False
+                page_result["createStatus"] = "created"
+            except Exception as exc:
+                log.log(f"  [A] 失败: {exc}")
+                page_result["status"] = "error_create_page"
+                page_result["error"] = str(exc)
+                results.append(page_result)
+                continue
 
         # Step B: 初始化空白 Page
-        try:
-            log.log("  [B] 初始化 Page...")
-            initialize_page(page_id, auth_config_path)
-            log.log("  [B] OK")
-        except Exception as exc:
-            log.log(f"  [B] 警告（初始化失败，继续创建图表）: {exc}")
-            # 初始化失败不是致命错误，继续
+        if skipped_existing:
+            log.log("  [B] 跳过初始化（复用已有 Page）")
+        else:
+            try:
+                log.log("  [B] 初始化 Page...")
+                initialize_page(page_id, auth_config_path)
+                log.log("  [B] OK")
+            except Exception as exc:
+                log.log(f"  [B] 警告（初始化失败，继续创建图表）: {exc}")
+                # 初始化失败不是致命错误，继续
 
         # Step C: 创建统计图
         chart_plan_path = str((OUTPUT_ROOT / "chart_plans" /
