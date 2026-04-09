@@ -38,6 +38,7 @@ from ai_utils import (
     load_ai_config,
     parse_ai_json,
 )
+from i18n import dashboard_section_name, get_runtime_language, normalize_language
 from planning.page_planner import build_pages_prompt, validate_pages_plan
 from utils import load_json, log_summary, now_ts, write_json
 
@@ -79,7 +80,7 @@ def resolve_app_uuid(ws_id: str, auth_config_path: Path) -> str:
     return app_uuid
 
 
-def fetch_app_info(app_id: str, auth_config_path: Path) -> Dict[str, Any]:
+def fetch_app_info(app_id: str, auth_config_path: Path, language: str = "zh") -> Dict[str, Any]:
     """获取应用元数据：projectId, appSectionId, appName。
 
     app_id 可以是 UUID 格式（直接调用 GetApp）或 hex 工作表 ID（先解析出 UUID）。
@@ -100,12 +101,13 @@ def fetch_app_info(app_id: str, auth_config_path: Path) -> Dict[str, Any]:
     project_id = str(app_data.get("projectId", "")).strip()
     app_name = str(app_data.get("name", "")).strip() or app_id
 
-    # 优先取名为"仪表盘"的分组，兜底取"数据分析"相关，再兜底取第一个分组
+    dashboard_name = dashboard_section_name(language)
+    # 优先取 dashboard 分组，兜底取"数据分析"相关，再兜底取第一个分组
     sections = app_data.get("sections", [])
     app_section_id = ""
     if sections:
         dashboard_section = next(
-            (s for s in sections if s.get("name") == "仪表盘"), None
+            (s for s in sections if s.get("name") == dashboard_name), None
         ) or next(
             (s for s in sections
              if "数据" in str(s.get("name", "")) or "分析" in str(s.get("name", ""))),
@@ -215,12 +217,13 @@ def plan_pages_with_ai(
     app_name: str,
     worksheet_names: List[str],
     ai_config: Dict[str, str],
+    language: str = "zh",
     retries: int = 3,
 ) -> List[dict]:
     """调用 AI 规划 Pages，带重试和校验。"""
     client = get_ai_client(ai_config)
     model = ai_config["model"]
-    prompt = build_pages_prompt(app_name, worksheet_names)
+    prompt = build_pages_prompt(app_name, worksheet_names, language=language)
     valid_ws_names = set(worksheet_names)
 
     last_error: Optional[str] = None
@@ -356,6 +359,7 @@ def main() -> None:
     parser.add_argument("--auth-config", required=True, help="auth_config.py 路径")
     parser.add_argument("--output", default="", help="输出 page_registry.json 路径")
     parser.add_argument("--dry-run", action="store_true", help="仅规划，不实际创建 Page")
+    parser.add_argument("--language", default="", help="规划语言（zh/en，默认读取 HAP_LANGUAGE）")
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--skip-existing", dest="skip_existing", action="store_true",
                        help="若页面已存在则跳过 AddWorkSheet（默认）")
@@ -365,6 +369,7 @@ def main() -> None:
     args = parser.parse_args()
 
     app_id = args.app_id.strip()
+    lang = normalize_language(args.language or get_runtime_language())
     worksheet_plan_path = Path(args.worksheet_plan_json).expanduser().resolve()
     auth_config_path = Path(args.auth_config).expanduser().resolve()
 
@@ -379,7 +384,7 @@ def main() -> None:
 
     # Step 2: 获取应用元数据
     print(f"[2/4] 获取应用元数据: {app_id}")
-    app_info = fetch_app_info(app_id, auth_config_path)
+    app_info = fetch_app_info(app_id, auth_config_path, language=lang)
     app_name = app_info["appName"]
     project_id = app_info["projectId"]
     app_section_id = app_info["appSectionId"]
@@ -402,7 +407,7 @@ def main() -> None:
     print(f"[3/4] AI 规划 Pages...")
     ai_config = load_ai_config()
     print(f"  模型: {ai_config['model']}")
-    planned_pages = plan_pages_with_ai(app_name, worksheet_names, ai_config)
+    planned_pages = plan_pages_with_ai(app_name, worksheet_names, ai_config, language=lang)
     print(f"  规划了 {len(planned_pages)} 个 Page:")
     for i, p in enumerate(planned_pages, 1):
         ws_str = "、".join(p.get("worksheetNames", []))

@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from ai_utils import create_generation_config, get_ai_client, load_ai_config
+from i18n import get_runtime_language, normalize_language
 
 from chatbot_common import (
     CHATBOT_PLAN_DIR,
@@ -36,7 +37,8 @@ from chatbot_common import (
 DEFAULT_CHATBOT_COUNT = 2
 
 
-def build_schema_summary(schema: dict) -> str:
+def build_schema_summary(schema: dict, language: str = "zh") -> str:
+    lang = normalize_language(language)
     lines: List[str] = []
     for worksheet in schema.get("worksheets", []):
         ws_name = str(worksheet.get("worksheetName", "")).strip()
@@ -53,7 +55,8 @@ def build_schema_summary(schema: dict) -> str:
             text = f"{field_name}<{field_type}>"
             values = [str(x).strip() for x in (field.get("values", []) or []) if str(x).strip()]
             if values:
-                text += f"[可选值:{'/'.join(values[:5])}]"
+                values_label = "Options" if lang == "en" else "可选值"
+                text += f"[{values_label}:{'/'.join(values[:5])}]"
             parts.append(text)
         relation_parts: List[str] = []
         for relation in worksheet.get("relations", []) or []:
@@ -63,24 +66,27 @@ def build_schema_summary(schema: dict) -> str:
             target_name = str(relation.get("targetWorksheetName", "")).strip()
             if not source_field or not target_name:
                 continue
-            multi_text = "多条" if relation.get("multiple") else "单条"
+            multi_text = "multiple" if relation.get("multiple") else "single"
             relation_parts.append(f"{source_field}->{target_name}({multi_text})")
         preview = "；".join(parts[:10])
         if len(parts) > 10:
-            preview += "；等"
+            preview += "；etc" if lang == "en" else "；等"
         if relation_parts:
             relation_preview = "；".join(relation_parts[:5])
             if len(relation_parts) > 5:
-                relation_preview += "；等"
+                relation_preview += "；etc" if lang == "en" else "；等"
             if preview:
-                preview += f"；关联关系:{relation_preview}"
+                relation_label = "Relations" if lang == "en" else "关联关系"
+                preview += f"；{relation_label}:{relation_preview}"
             else:
-                preview = f"关联关系:{relation_preview}"
+                relation_label = "Relations" if lang == "en" else "关联关系"
+                preview = f"{relation_label}:{relation_preview}"
         lines.append(f"- {ws_name}: {preview}")
-    return "\n".join(lines) if lines else "- 该应用下暂无工作表"
+    return "\n".join(lines) if lines else ("- No worksheets in this app yet" if lang == "en" else "- 该应用下暂无工作表")
 
 
-def build_prompt(schema: dict, feedback_history: List[dict], previous_proposals: List[dict]) -> str:
+def build_prompt(schema: dict, feedback_history: List[dict], previous_proposals: List[dict], language: str = "zh") -> str:
+    lang = normalize_language(language)
     runtime = schema.get("runtime", {})
     runtime_app = runtime.get("app", {}) if isinstance(runtime, dict) else {}
     selected_section = runtime.get("selectedSection", {}) if isinstance(runtime, dict) else {}
@@ -96,13 +102,48 @@ def build_prompt(schema: dict, feedback_history: List[dict], previous_proposals:
     if previous_proposals:
         previous_text = json.dumps(previous_proposals, ensure_ascii=False, indent=2)
 
+    if lang == "en":
+        return f"""
+You are a Mingdao HAP chatbot planning consultant. Based on the application structure below, plan suitable chatbot proposals for this app. Generate 1-3 chatbots depending on the app complexity, and never exceed 3.
+
+Application name: {app_name}
+Target section: {str(selected_section.get('name', '')).strip() or 'Default Section'}
+Worksheets and fields:
+{build_schema_summary(schema, language=lang)}
+
+Previous proposals:
+{previous_text}
+
+Feedback history:
+{feedback_text}
+
+Requirements:
+1. Plan 1-3 chatbots based on application complexity, with clearly different responsibilities.
+2. Each chatbot must align with the actual worksheets in this app.
+3. Names must be concise and meaningful. Do not use generic placeholders like "Assistant".
+4. Each description must clearly explain what data it works with and what problem it solves.
+5. Output strict JSON only.
+
+JSON format:
+{{
+  "summary": "One-sentence summary of this proposal round",
+  "proposals": [
+    {{
+      "name": "Chatbot Name",
+      "description": "English chatbot description"
+    }}
+  ],
+  "notes": ["Optional note 1", "Optional note 2"]
+}}
+""".strip()
+
     return f"""
 你是明道云 HAP 对话机器人策划顾问。请基于以下应用结构，为该应用规划合适数量的对话机器人方案（1-3 个，根据应用复杂度决定，最多不超过 3 个）。
 
 应用名称：{app_name}
 目标分组：{str(selected_section.get('name', '')).strip() or '默认分组'}
 工作表与字段概览：
-{build_schema_summary(schema)}
+{build_schema_summary(schema, language=lang)}
 
 上一轮方案：
 {previous_text}
@@ -170,6 +211,7 @@ def main() -> None:
     parser.add_argument("--output", default="", help="最终输出 JSON 文件路径")
     parser.add_argument("--max-retries", type=int, default=3, help="单轮 Gemini 最大重试次数")
     parser.add_argument("--auto", action="store_true", help="自动确认第一次生成的方案，跳过人工审核（用于自动化流水线）")
+    parser.add_argument("--language", default="", help="规划语言（zh/en，默认读取 HAP_LANGUAGE）")
     args = parser.parse_args()
 
     ai_config = load_ai_config()
@@ -184,6 +226,7 @@ def main() -> None:
     selected_section = runtime.get("selectedSection", {}) if isinstance(runtime, dict) else {}
     app_id = str(runtime_app.get("appId", "")).strip()
     app_name = str(schema.get("appName", "")).strip() or str(runtime_app.get("appName", "")).strip()
+    lang = normalize_language(args.language or get_runtime_language())
 
     log_path = make_chatbot_log_path("chatbot_plan", app_id)
     append_log(log_path, "start", schemaJson=str(schema_path), appId=app_id, appName=app_name, model=model_name)
@@ -193,7 +236,7 @@ def main() -> None:
     round_no = 1
 
     while True:
-        prompt = build_prompt(schema, feedback_history, current_proposals)
+        prompt = build_prompt(schema, feedback_history, current_proposals, language=lang)
         append_log(log_path, "gemini_request", round=round_no, feedbackCount=len(feedback_history))
 
         raw: Dict[str, Any] = {}
@@ -233,6 +276,7 @@ def main() -> None:
             "runtime": {
                 "app": runtime_app,
                 "selectedSection": selected_section,
+                "language": lang,
             },
         }
         draft_path = save_round_snapshot(app_id, round_no, round_payload)
@@ -259,6 +303,7 @@ def main() -> None:
                 "runtime": {
                     "app": runtime_app,
                     "selectedSection": selected_section,
+                    "language": lang,
                 },
             }
             if args.output:

@@ -43,6 +43,33 @@ def default_business_context(lang: str) -> str:
     return "General enterprise management scenario" if normalize_language(lang) == "en" else "通用企业管理场景"
 
 
+def dashboard_section_name(lang: str) -> str:
+    return "Dashboard" if normalize_language(lang) == "en" else "仪表盘"
+
+
+def all_worksheets_section_name(lang: str) -> str:
+    return "All Worksheets" if normalize_language(lang) == "en" else "全部"
+
+
+def system_default_view_names(lang: str | None = None) -> set[str]:
+    names = {"全部", "All", "视图", "View", ""}
+    if lang:
+        normalized = normalize_language(lang)
+        if normalized == "en":
+            return {"All", "View", ""}
+        if normalized == "zh":
+            return {"全部", "视图", ""}
+    return names
+
+
+def chatbot_lang_type(lang: str) -> int:
+    return 1 if normalize_language(lang) == "en" else 0
+
+
+def chatbot_fallback_greeting(name: str, lang: str) -> str:
+    return f"Hello, I am {name}." if normalize_language(lang) == "en" else f"您好，我是{name}。"
+
+
 def chart_time_label(lang: str) -> str:
     return "Created Time" if normalize_language(lang) == "en" else "创建时间"
 

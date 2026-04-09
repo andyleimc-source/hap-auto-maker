@@ -28,6 +28,7 @@ from typing import Any, Dict, List, Optional
 
 import auth_retry
 from ai_utils import AI_CONFIG_PATH, create_generation_config, get_ai_client, load_ai_config
+from i18n import dashboard_section_name, get_runtime_language, normalize_language
 from utils import now_ts, load_json, write_json
 
 BASE_DIR = Path(__file__).resolve().parents[3]
@@ -142,7 +143,7 @@ def is_uuid(value: str) -> bool:
                          value.lower()))
 
 
-def fetch_app_info(app_id: str, auth_config_path: Path) -> dict:
+def fetch_app_info(app_id: str, auth_config_path: Path, language: str = "zh") -> dict:
     """获取应用结构：projectId, appSectionId, 工作表列表。
 
     app_id 可以是 UUID 格式（直接调用 GetApp）或 hex 工作表 ID（先解析出 UUID）。
@@ -162,14 +163,15 @@ def fetch_app_info(app_id: str, auth_config_path: Path) -> dict:
     project_id = str(app_data.get("projectId", "")).strip()
     app_name = str(app_data.get("name", "")).strip() or app_id
 
-    # 优先取名为"仪表盘"的分组（统计页面和机器人专用分组，固定排第一）
-    # 兜底取"数据分析"（旧命名），再兜底取第一个分组
+    dashboard_name = dashboard_section_name(language)
+    # 优先取 dashboard 分组（统计页面和机器人专用分组，固定排第一）
+    # 兜底取旧数据分析命名，再兜底取第一个分组
     sections = app_data.get("sections", [])
     app_section_id = ""
     worksheets = []
     if sections:
         _data_section = next(
-            (s for s in sections if s.get("name") == "仪表盘"),
+            (s for s in sections if s.get("name") == dashboard_name),
             None
         ) or next(
             (s for s in sections if "数据" in str(s.get("name", "")) or "分析" in str(s.get("name", ""))),
@@ -249,9 +251,10 @@ def simplify_controls(controls: list) -> List[dict]:
 # ---------------------------------------------------------------------------
 
 def build_prompt(app_id: str, app_name: str, worksheets_detail: List[dict],
-                 icon_candidates: List[str], color_pool: List[str]) -> str:
+                 icon_candidates: List[str], color_pool: List[str], language: str = "zh") -> str:
     ws_json = json.dumps(worksheets_detail, ensure_ascii=False, indent=2)
     colors_str = "、".join(color_pool[:6])
+    lang = normalize_language(language)
     num_ws = len(worksheets_detail)
     if num_ws <= 6:
         target_pages = 1
@@ -259,6 +262,43 @@ def build_prompt(app_id: str, app_name: str, worksheets_detail: List[dict],
         target_pages = 2
     else:
         target_pages = 3
+    if lang == "en":
+        return f"""
+You are an enterprise analytics architect. Plan custom business analytics pages for this application.
+Each page should focus on a distinct business analysis theme for decision makers.
+
+Application:
+- appId: {app_id}
+- appName: {app_name}
+
+Worksheets and fields:
+{ws_json}
+
+Requirements:
+1. Plan exactly {target_pages} pages, each with a different business theme.
+2. worksheetIds must reference worksheet IDs from the list above.
+3. Choose icon from the provided candidate list according to the business theme.
+4. Choose iconColor from {colors_str}; avoid duplicates where possible.
+5. desc must be a short English description of the page value.
+6. name must be a concise English page name, ideally 1-4 words.
+7. Every page must reference at least one worksheet.
+
+Return strict JSON only:
+{{
+  "appId": "{app_id}",
+  "appName": "{app_name}",
+  "pages": [
+    {{
+      "name": "Page Name",
+      "icon": "sys_dashboard",
+      "iconColor": "#2196F3",
+      "desc": "Short business description",
+      "worksheetIds": ["WorksheetID1", "WorksheetID2"],
+      "worksheetNames": ["Worksheet Name 1", "Worksheet Name 2"]
+    }}
+  ]
+}}
+""".strip()
     return f"""
 你是企业数据分析架构师。请根据下面的应用结构，为该应用规划自定义数据分析页（Page）。
 每个 Page 聚焦一个独立的业务分析主题，供经营层快速查看数据。
@@ -389,9 +429,11 @@ def main() -> None:
     parser.add_argument("--auth-config", default=str(AUTH_CONFIG_PATH), help="auth_config.py 路径")
     parser.add_argument("--output", default="", help="输出 JSON 文件路径（可选）")
     parser.add_argument("--gemini-retries", type=int, default=4, help="AI 最大重试次数")
+    parser.add_argument("--language", default="", help="规划语言（zh/en，默认读取 HAP_LANGUAGE）")
     args = parser.parse_args()
 
     app_id = args.app_id.strip()
+    lang = normalize_language(args.language or get_runtime_language())
     ts = now_ts()
 
     # 初始化日志
@@ -404,7 +446,7 @@ def main() -> None:
 
     # Step 1: 获取应用结构
     log.log(f"[1/3] 拉取应用结构: {app_id}")
-    app_info = fetch_app_info(app_id, auth_config_path)
+    app_info = fetch_app_info(app_id, auth_config_path, language=lang)
     app_name = app_info["appName"]
     log.log(f"  应用名称: {app_name}")
     log.log(f"  projectId: {app_info['projectId']}")
@@ -447,7 +489,7 @@ def main() -> None:
     # Step 3: Gemini 规划
     log.log(f"\n[3/3] 调用 AI 规划 Page（模型: {model_name}）...")
     client = get_ai_client(ai_config)
-    prompt = build_prompt(app_id, app_name, worksheets_detail, ICON_CANDIDATES, COLOR_POOL)
+    prompt = build_prompt(app_id, app_name, worksheets_detail, ICON_CANDIDATES, COLOR_POOL, language=lang)
 
     validated: Optional[List[dict]] = None
     last_error: Optional[str] = None
@@ -476,6 +518,7 @@ def main() -> None:
         "appName": app_name,
         "projectId": app_info["projectId"],
         "appSectionId": app_info["appSectionId"],
+        "language": lang,
         "logFile": str(log.path),
         "pages": validated,
     }

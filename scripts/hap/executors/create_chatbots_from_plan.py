@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
+from i18n import chatbot_fallback_greeting, chatbot_lang_type, normalize_language
 from utils import log_summary
 
 from chatbot_common import (
@@ -41,16 +42,27 @@ BASE_DIR = Path(__file__).resolve().parents[3]
 AUTH_CONFIG_PATH = BASE_DIR / "config" / "credentials" / "auth_config.py"
 
 
+def _contains_cjk(text: str) -> bool:
+    return any("\u4e00" <= ch <= "\u9fff" for ch in str(text or ""))
+
+
+def _english_chatbot_prompt(proposal: dict) -> str:
+    return (
+        f"You are {proposal['name']}. Help users using the app data described here: "
+        f"{proposal['description']}. Respond in English, stay concise, and rely on business data in this app."
+    )
+
+
 def build_referer(app_id: str, app_section_id: str) -> str:
     return f"https://www.mingdao.com/app/{app_id}/{app_section_id}"
 
 
-def call_generate_chatbot_info(app_id: str, description: str, auth_config_path: Path, referer: str) -> dict:
+def call_generate_chatbot_info(app_id: str, description: str, auth_config_path: Path, referer: str, language: str) -> dict:
     payload = {
         "appId": app_id,
         "type": 2,
         "robotDescription": description,
-        "langType": 0,
+        "langType": chatbot_lang_type(language),
         "hasIcon": True,
     }
     data = post_json(GENERATE_CHATBOT_INFO_URL, payload, auth_config_path, referer=referer)
@@ -95,13 +107,19 @@ def call_save_chatbot_config(
     upload_permission: str,
     auth_config_path: Path,
     referer: str,
+    language: str,
 ) -> dict:
     generated_data = generated.get("response", {}).get("data", {}) if isinstance(generated.get("response"), dict) else {}
-    greeting = str(generated_data.get("greeting", "")).strip() or f"您好，我是{proposal['name']}。"
+    lang = normalize_language(language)
+    greeting = str(generated_data.get("greeting", "")).strip()
+    if not greeting or (lang == "en" and _contains_cjk(greeting)):
+        greeting = chatbot_fallback_greeting(proposal["name"], lang)
     suggested_questions = generated_data.get("suggestedQuestions", [])
     preset_question = "\n".join(
         [str(item).strip() for item in suggested_questions if str(item).strip()]
     )
+    if lang == "en" and _contains_cjk(preset_question):
+        preset_question = ""
     payload = {
         "chatbotId": chatbot_id,
         "name": proposal["name"],
@@ -120,6 +138,7 @@ def main() -> None:
     parser.add_argument("--upload-permission", default="11", help="上传权限，默认 11")
     parser.add_argument("--dry-run", action="store_true", help="仅生成请求计划，不真正创建")
     parser.add_argument("--output", default="", help="输出 JSON 文件路径")
+    parser.add_argument("--language", default="", help="创建语言（zh/en，默认优先读 runtime.language）")
     args = parser.parse_args()
 
     ensure_chatbot_dirs()
@@ -138,6 +157,7 @@ def main() -> None:
         raise ValueError("plan.runtime.selectedSection 缺失，无法创建机器人")
     app_section_id = str(app_section["appSectionId"]).strip()
     project_id = str(app.get("projectId", "")).strip()
+    lang = normalize_language(args.language or runtime.get("language", ""))
     if not project_id:
         raise ValueError("plan.app.projectId 为空，无法创建机器人")
 
@@ -173,7 +193,7 @@ def main() -> None:
                         "appId": app_id,
                         "type": 2,
                         "robotDescription": proposal["description"],
-                        "langType": 0,
+                        "langType": chatbot_lang_type(lang),
                         "hasIcon": True,
                     },
                     "addWorkSheet": {
@@ -199,10 +219,12 @@ def main() -> None:
                 continue
 
             generated = call_generate_chatbot_info(
-                app_id, proposal["description"], AUTH_CONFIG_PATH, referer=referer
+                app_id, proposal["description"], AUTH_CONFIG_PATH, referer=referer, language=lang
             )
             generated_data = generated["response"].get("data", {}) if isinstance(generated["response"], dict) else {}
             prompt = str(generated_data.get("systemPrompt", "")).strip() or proposal["description"]
+            if lang == "en" and (not prompt or _contains_cjk(prompt)):
+                prompt = _english_chatbot_prompt(proposal)
             item_result["generated"] = generated
 
             add_chatbot = call_add_chatbot(
@@ -224,6 +246,7 @@ def main() -> None:
                 upload_permission=args.upload_permission,
                 auth_config_path=AUTH_CONFIG_PATH,
                 referer=referer,
+                language=lang,
             )
             item_result["config"] = save_config
             item_result["ok"] = True

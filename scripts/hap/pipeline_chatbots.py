@@ -31,6 +31,7 @@ from chatbot_common import (
     now_iso,
     write_json_with_latest,
 )
+from i18n import get_runtime_language, normalize_language
 from script_locator import resolve_script
 
 SCRIPT_SCHEMA = resolve_script("select_chatbot_app_schema.py")
@@ -82,7 +83,9 @@ def main() -> None:
     parser.add_argument("--upload-permission", default="11", help="上传权限，默认 11")
     parser.add_argument("--dry-run-create", action="store_true", help="创建阶段仅 dry-run")
     parser.add_argument("--auto", action="store_true", help="自动确认机器人规划方案，不等待人工审核（用于自动化流水线）")
+    parser.add_argument("--language", default="", help="规划语言（zh/en，默认读取 HAP_LANGUAGE）")
     args = parser.parse_args()
+    lang = normalize_language(args.language or get_runtime_language())
 
     ensure_chatbot_dirs()
     pipeline_log = make_chatbot_log_path("chatbot_pipeline")
@@ -118,6 +121,8 @@ def main() -> None:
             str(schema_output),
             "--output",
             str(plan_output),
+            "--language",
+            lang,
         ]
         if args.auto:
             step2_cmd.append("--auto")
@@ -134,6 +139,8 @@ def main() -> None:
             args.upload_permission,
             "--output",
             str(create_output),
+            "--language",
+            lang,
         ]
         if args.dry_run_create:
             step3_cmd.append("--dry-run")

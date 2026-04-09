@@ -24,6 +24,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import requests
 import auth_retry
 from ai_utils import AI_CONFIG_PATH, create_generation_config, get_ai_client, load_ai_config
+from i18n import system_default_view_names
 from utils import now_ts, latest_file
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -102,7 +103,7 @@ def fetch_worksheet_views(worksheet_id: str, app_key: str, sign: str) -> List[di
 
 
 def find_default_all_view(views: List[dict]) -> Optional[dict]:
-    """从视图列表中找到系统默认的"全部"视图（viewType=0 且 name="全部"的第一个）。"""
+    """从视图列表中找到系统默认的 All/全部 视图（viewType=0）。"""
     for v in views:
         if not isinstance(v, dict):
             continue
@@ -112,10 +113,11 @@ def find_default_all_view(views: List[dict]) -> Optional[dict]:
                 vtype = int(vtype)
             except ValueError:
                 continue
-        if vtype == 0 and str(v.get("name", "")).strip() == "全部":
+        view_name = str(v.get("name", "")).strip()
+        if vtype == 0 and view_name in DEFAULT_ALL_VIEW_NAMES:
             view_id = str(v.get("viewId") or v.get("id") or "").strip()
             if view_id:
-                return {"viewId": view_id, "viewName": "全部", "viewType": "0"}
+                return {"viewId": view_id, "viewName": view_name, "viewType": "0"}
     return None
 
 
@@ -839,3 +841,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+DEFAULT_ALL_VIEW_NAMES = system_default_view_names()

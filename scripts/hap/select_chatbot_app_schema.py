@@ -14,6 +14,7 @@ CURRENT_DIR = Path(__file__).resolve().parent
 if str(CURRENT_DIR) not in sys.path:
     sys.path.insert(0, str(CURRENT_DIR))
 
+from i18n import dashboard_section_name, get_runtime_language, normalize_language
 from chatbot_common import (
     CHATBOT_SCHEMA_DIR,
     append_log,
@@ -34,9 +35,14 @@ DEFAULT_BASE_URL = "https://api.mingdao.com"
 def auto_pick_section(sections: list[dict]) -> dict:
     if not sections:
         raise RuntimeError("当前应用没有可用分组，无法创建对话机器人")
-    # 优先找"仪表盘"分组（统计页面和机器人专用）
+    dashboard_name = dashboard_section_name(get_runtime_language())
+    # 优先找 dashboard 分组（统计页面和机器人专用）
     for section in sections:
-        if section.get("name") == "仪表盘" and str(section.get("appSectionId", "")).strip():
+        if section.get("name") == dashboard_name and str(section.get("appSectionId", "")).strip():
+            return section
+    # 兼容旧中文命名和英文命名。
+    for section in sections:
+        if section.get("name") in {dashboard_section_name("zh"), dashboard_section_name("en")} and str(section.get("appSectionId", "")).strip():
             return section
     # 兜底：第一个有 ID 的分组
     for section in sections:
@@ -54,6 +60,7 @@ def main() -> None:
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="API 基础地址")
     parser.add_argument("--output", default="", help="输出 JSON 文件路径")
     args = parser.parse_args()
+    lang = normalize_language(get_runtime_language())
 
     apps = discover_authorized_apps(base_url=args.base_url)
     selected_apps = choose_apps_for_chatbot(apps, app_id=args.app_id, app_index=args.app_index)
@@ -163,6 +170,7 @@ def main() -> None:
                     "authPath": app["authPath"],
                 },
                 "selectedSection": section,
+                "language": lang,
             },
         }
         schema_items.append(item)

@@ -23,7 +23,7 @@ if str(_HAP_DIR) not in sys.path:
 
 from pipeline.step_runner import execute_step
 from pipeline.context import PipelineContext
-from i18n import default_app_name, default_business_context, normalize_language, set_runtime_language
+from i18n import default_app_name, default_business_context, normalize_language, set_runtime_language, system_default_view_names
 from utils import load_json, write_json, now_ts, log_summary
 
 
@@ -353,6 +353,7 @@ def run_all_waves(
                     sys.executable, str(scripts["plan_sections"]),
                     "--plan-json", str(plan_output),
                     "--output", str(sections_plan_output_ts),
+                    "--language", lang,
                 ]
                 ok2c = _exec(2, "sections_plan", "AI 规划工作表分组", cmd2c, uses_gemini=True)
                 if ok2c and not execution_dry_run and sections_plan_output_ts.exists():
@@ -364,6 +365,7 @@ def run_all_waves(
                 sys.executable, str(scripts["plan_sections"]),
                 "--plan-json", str(plan_output),
                 "--output", str(sections_plan_output_ts),
+                "--language", lang,
             ]
             ok2c = _exec(2, "sections_plan", "AI 规划工作表分组", cmd2c, uses_gemini=True)
             if ok2c and not execution_dry_run and sections_plan_output_ts.exists():
@@ -427,6 +429,7 @@ def run_all_waves(
                 "--worksheet-plan-json", str(plan_output),
                 "--auth-config", str(config_web_auth),
                 "--output", str(page_registry_path_ts),
+                "--language", lang,
             ]
             if bool(pages_cfg.get("skip_existing", True)):
                 cmd_pages_early.append("--skip-existing")
@@ -897,7 +900,7 @@ def run_all_waves(
             with steps_lock:
                 steps_report.append({"step_id": 10, "step_key": "chatbots", "title": "创建对话机器人", "skipped": True, "reason": "disabled_by_spec", "result": {}})
             return True
-        cmd10 = [sys.executable, str(scripts["chatbots"]), "--app-id", app_id]
+        cmd10 = [sys.executable, str(scripts["chatbots"]), "--app-id", app_id, "--language", lang]
         if chatbots.get("auto", True):
             cmd10.append("--auto")
         if chatbots.get("dry_run", False) or execution_dry_run:
@@ -970,9 +973,15 @@ def run_all_waves(
             _ddv_deleted = 0
             for _ddv_ws in _ddv_worksheets:
                 _ddv_views = _ddv_fetch_views(_ddv_ws["worksheetId"], _ddv_key, _ddv_sign)
+                _ddv_non_default = [
+                    _ddv_v for _ddv_v in _ddv_views
+                    if str(_ddv_v.get("name", "")).strip() not in system_default_view_names()
+                ]
+                if not _ddv_non_default:
+                    continue
                 for _ddv_v in _ddv_views:
                     _ddv_name = str(_ddv_v.get("name", "")).strip()
-                    if _ddv_name in ("视图", ""):
+                    if _ddv_name in system_default_view_names():
                         _ddv_vid = str(_ddv_v.get("viewId", "") or _ddv_v.get("id", "")).strip()
                         if _ddv_vid:
                             ok = _ddv_delete_view(app_id, _ddv_ws["worksheetId"], _ddv_vid, config_web_auth)

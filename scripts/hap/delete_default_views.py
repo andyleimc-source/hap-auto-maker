@@ -17,6 +17,8 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+from i18n import system_default_view_names
+
 _PROXY_VARS = {"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy",
                "ALL_PROXY", "all_proxy", "SOCKS_PROXY", "socks_proxy"}
 
@@ -42,7 +44,8 @@ APP_INFO_URL = f"{HAP_BASE}/v3/app"
 WORKSHEET_INFO_URL = f"{HAP_BASE}/v3/app/worksheets/{{worksheet_id}}"
 DELETE_VIEW_URL = "https://www.mingdao.com/api/Worksheet/DeleteWorksheetView"
 
-TARGET_VIEW_NAMES = {"视图", ""}  # 空名称视图也是系统默认产生的垃圾视图
+# 系统默认视图的常见名称集合。英文应用也可能出现 All / View。
+TARGET_VIEW_NAMES = system_default_view_names()
 DELETE_ALL_VIEWS = False  # 由 --all-views 参数覆盖
 
 
@@ -181,7 +184,10 @@ def main() -> None:
             # 删除所有视图（至少保留一个，防止工作表无视图）
             target_views = views[:-1] if len(views) > 1 else []
         else:
-            target_views = [v for v in views if str(v.get("name", "")).strip() in TARGET_VIEW_NAMES]
+            default_views = [v for v in views if str(v.get("name", "")).strip() in TARGET_VIEW_NAMES]
+            non_default_views = [v for v in views if str(v.get("name", "")).strip() not in TARGET_VIEW_NAMES]
+            # 只有存在其他视图时才清系统默认视图，避免工作表无视图。
+            target_views = default_views if non_default_views else []
 
         if not target_views:
             continue

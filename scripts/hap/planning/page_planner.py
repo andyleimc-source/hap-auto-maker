@@ -12,6 +12,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from i18n import normalize_language
+
 # ---------------------------------------------------------------------------
 # 常量
 # ---------------------------------------------------------------------------
@@ -48,7 +50,7 @@ COLOR_POOL: list[str] = [
 # Prompt 构建
 # ---------------------------------------------------------------------------
 
-def build_pages_prompt(app_name: str, worksheet_names: list[str]) -> str:
+def build_pages_prompt(app_name: str, worksheet_names: list[str], language: str = "zh") -> str:
     """生成 Pages 规划 prompt，仅需工作表名称列表。
 
     根据工作表数量决定 Pages 数量：
@@ -57,6 +59,7 @@ def build_pages_prompt(app_name: str, worksheet_names: list[str]) -> str:
       - 16+ 表  → 3 页
     """
     num_ws = len(worksheet_names)
+    lang = normalize_language(language)
     if num_ws <= 6:
         target_pages = 1
     elif num_ws <= 15:
@@ -69,6 +72,41 @@ def build_pages_prompt(app_name: str, worksheet_names: list[str]) -> str:
         f"   - {ic['name']}（{ic['desc']}）" for ic in ICON_CANDIDATES
     )
     colors_str = "、".join(COLOR_POOL[:6])
+
+    if lang == "en":
+        return f"""You are an enterprise analytics architect. Plan custom analytics pages for this application.
+Each page should focus on one distinct business analysis theme for business users.
+
+Application:
+- appName: {app_name}
+
+Worksheet names:
+{ws_list_str}
+
+Requirements:
+1. Plan exactly {target_pages} pages, each covering a different business theme.
+2. Each page must include worksheetNames selected from the list above.
+3. Every worksheet must appear in at least one page.
+4. Choose each page icon from the candidate list below:
+{icon_desc_lines}
+   Try not to repeat icons.
+5. Choose iconColor from: {colors_str}. Avoid duplicates when possible.
+6. desc must be a short English business description.
+7. name must be a concise English page name, ideally 1-4 words.
+8. Every page must include at least one worksheet.
+
+Return strict JSON only:
+{{
+  "pages": [
+    {{
+      "name": "Page Name",
+      "icon": "sys_dashboard",
+      "iconColor": "#2196F3",
+      "desc": "Short business description",
+      "worksheetNames": ["Worksheet A", "Worksheet B"]
+    }}
+  ]
+}}"""
 
     return f"""你是企业数据分析架构师。请根据下面的应用结构，为该应用规划自定义数据分析页（Page）。
 每个 Page 聚焦一个独立的业务分析主题，供经营层快速查看数据。

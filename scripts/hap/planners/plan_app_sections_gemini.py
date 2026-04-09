@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Set
 BASE_DIR = Path(__file__).resolve().parents[3]
 
 from ai_utils import AI_CONFIG_PATH, create_generation_config, get_ai_client, load_ai_config, parse_ai_json
+from i18n import all_worksheets_section_name, dashboard_section_name, get_runtime_language, normalize_language
 from utils import now_ts, load_json, write_json
 
 OUTPUT_ROOT = BASE_DIR / "data" / "outputs"
@@ -35,11 +36,46 @@ SECTIONS_PLAN_DIR = OUTPUT_ROOT / "sections_plans"
 # AI 规划
 # ---------------------------------------------------------------------------
 
-def build_prompt(app_name: str, worksheets: List[dict]) -> str:
+def build_prompt(app_name: str, worksheets: List[dict], language: str = "zh") -> str:
+    lang = normalize_language(language)
+    dashboard_name = dashboard_section_name(lang)
     ws_list = "\n".join(
         f"- {ws['name']}: {str(ws.get('purpose', '') or '').strip()}"
         for ws in worksheets
     )
+    if lang == "en":
+        return f"""You are an enterprise app architect. Plan the worksheet section structure for "{app_name}".
+
+## Worksheets ({len(worksheets)} total)
+
+{ws_list}
+
+## Task
+
+Split the worksheets into 2-9 business sections. Each section should group worksheets that belong to the same business capability.
+
+Rules:
+1. The first section must be "{dashboard_name}" and its worksheets must be an empty array []. This section is reserved for analytics pages and chatbots.
+2. Group related worksheets together by business domain, for example customer operations, finance, delivery, or support.
+3. Each business section should contain 2-12 worksheets whenever possible.
+4. Every worksheet must be assigned exactly once.
+5. Section names must be concise English business labels, ideally 1-3 words.
+6. If a section would contain only one worksheet, merge it into the most related section.
+7. Inside each section, place primary worksheets before detail or helper worksheets.
+
+Return strict JSON only:
+{{
+  "sections": [
+    {{
+      "name": "{dashboard_name}",
+      "worksheets": []
+    }},
+    {{
+      "name": "Business Section Name",
+      "worksheets": ["Worksheet A", "Worksheet B"]
+    }}
+  ]
+}}"""
     return f"""你是一名企业应用架构师，正在为「{app_name}」规划应用内的工作表分组结构。
 
 ## 工作表列表（共 {len(worksheets)} 张）
@@ -51,7 +87,7 @@ def build_prompt(app_name: str, worksheets: List[dict]) -> str:
 请将上述工作表划分为 2-9 个业务分组（Section），每个分组包含功能或业务上相关的工作表。
 
 分组原则：
-1. 第一个分组必须固定为"仪表盘"，worksheets 为空数组 []，用于放置统计页面和对话机器人
+1. 第一个分组必须固定为"{dashboard_name}"，worksheets 为空数组 []，用于放置统计页面和对话机器人
 2. 同一业务领域的工作表放一组（如客户相关、财务相关、生产相关）
 3. 每个业务分组最少 2 张工作表，最多 12 张工作表
 4. 所有工作表都必须被分配，不能遗漏
@@ -64,7 +100,7 @@ def build_prompt(app_name: str, worksheets: List[dict]) -> str:
 {{
   "sections": [
     {{
-      "name": "仪表盘",
+      "name": "{dashboard_name}",
       "worksheets": []
     }},
     {{
@@ -138,12 +174,17 @@ def main() -> None:
     parser.add_argument("--plan-json", required=True, help="worksheet_plan.json 路径")
     parser.add_argument("--output", default="", help="输出 sections_plan.json 路径")
     parser.add_argument("--app-name", default="", help="应用名称（可选，优先从 plan 中读取）")
+    parser.add_argument("--language", default="", help="规划语言（zh/en，默认读取 HAP_LANGUAGE）")
     args = parser.parse_args()
 
     plan_path = Path(args.plan_json).expanduser().resolve()
     plan = load_json(plan_path)
 
-    app_name = args.app_name.strip() or str(plan.get("app_name", "") or plan.get("name", "") or "企业应用").strip()
+    lang = normalize_language(args.language or get_runtime_language())
+    default_app_name = "Enterprise App" if lang == "en" else "企业应用"
+    dashboard_name = dashboard_section_name(lang)
+    all_name = all_worksheets_section_name(lang)
+    app_name = args.app_name.strip() or str(plan.get("app_name", "") or plan.get("name", "") or default_app_name).strip()
     worksheets = plan.get("worksheets", [])
 
     if not worksheets:
@@ -153,30 +194,30 @@ def main() -> None:
     worksheet_names: Set[str] = {str(ws.get("name", "")).strip() for ws in worksheets if ws.get("name")}
 
     if len(worksheets) < 4:
-        # 工作表数量不足以形成多分组，全部放一个默认分组；"仪表盘"排第一
+        # 工作表数量不足以形成多分组，全部放一个默认分组；dashboard 分组排第一。
         result = {
             "app_name": app_name,
             "sections": [
-                {"name": "仪表盘", "worksheets": []},
-                {"name": "全部", "worksheets": list(worksheet_names)},
+                {"name": dashboard_name, "worksheets": []},
+                {"name": all_name, "worksheets": list(worksheet_names)},
             ]
         }
     else:
         ai_config = load_ai_config(AI_CONFIG_PATH)
         client = get_ai_client(ai_config)
-        prompt = build_prompt(app_name, worksheets)
+        prompt = build_prompt(app_name, worksheets, language=lang)
 
         print(f"[{datetime.now().strftime('%H:%M:%S')}] 调用 AI 规划分组（{len(worksheets)} 张工作表）...")
         plan_result = call_ai_plan(prompt, ai_config, client)
 
         validate_sections_plan(plan_result, worksheet_names)
         sections = plan_result["sections"]
-        # 确保"仪表盘"分组存在且排第一（防止 AI 不遵守）
-        dashboard = next((s for s in sections if s.get("name") == "仪表盘"), None)
+        # 确保 dashboard 分组存在且排第一（防止 AI 不遵守）。
+        dashboard = next((s for s in sections if s.get("name") == dashboard_name), None)
         if dashboard is None:
-            dashboard = {"name": "仪表盘", "worksheets": []}
+            dashboard = {"name": dashboard_name, "worksheets": []}
             sections.insert(0, dashboard)
-        elif sections[0].get("name") != "仪表盘":
+        elif sections[0].get("name") != dashboard_name:
             sections.remove(dashboard)
             sections.insert(0, dashboard)
         result = {"app_name": app_name, "sections": sections}
