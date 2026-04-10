@@ -35,4 +35,4 @@ jobs:
       - name: Smoke no-execute
         run: |
           source .venv/bin/activate
-          python make_app.py --requirements "Create a simple CRM app with customer and contact worksheets" --no-execute --language en --deps-mode check
+          python make_app.py --spec-json .github/fixtures/smoke_spec.json --no-execute --language en --deps-mode check

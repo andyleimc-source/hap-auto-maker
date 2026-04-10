@@ -1,0 +1,7 @@
+{
+  "version": "workflow_requirement_v1",
+  "app": {
+    "name": "SmokeSpec"
+  },
+  "worksheets": []
+}
